@@ -1,0 +1,211 @@
+//! Interactive input primitives for the custom shell.
+//!
+//! Reedline supplies terminal input, key handling, and history navigation. This
+//! crate keeps that dependency behind [`LineReader`] so the REPL remains
+//! testable and the application does not depend on terminal details.
+
+mod editor;
+mod prompt;
+
+pub use editor::{LineEditorError, LineEvent, LineReader, ShellEditor};
+
+use std::collections::VecDeque;
+use std::error::Error;
+use std::fmt;
+
+/// Bounded command history with previous/next navigation.
+#[derive(Debug)]
+pub struct History {
+    entries: VecDeque<String>,
+    limit: usize,
+    cursor: Option<usize>,
+}
+
+impl History {
+    /// Creates an empty history that retains at most `limit` entries.
+    pub fn new(limit: usize) -> Result<Self, HistoryError> {
+        if limit == 0 {
+            return Err(HistoryError::ZeroCapacity);
+        }
+
+        Ok(Self {
+            entries: VecDeque::with_capacity(limit.min(64)),
+            limit,
+            cursor: None,
+        })
+    }
+
+    /// Appends a command, ignoring empty input and consecutive duplicates.
+    ///
+    /// When capacity is exceeded, the oldest entry is discarded.
+    pub fn push(&mut self, entry: impl Into<String>) {
+        let entry = entry.into();
+        self.cursor = None;
+
+        if entry.is_empty() || self.entries.back() == Some(&entry) {
+            return;
+        }
+
+        if self.entries.len() == self.limit {
+            self.entries.pop_front();
+        }
+
+        self.entries.push_back(entry);
+    }
+
+    /// Moves to the previous entry and returns it.
+    ///
+    /// Repeated calls walk toward the oldest entry and stop there.
+    pub fn previous_entry(&mut self) -> Option<&str> {
+        if self.entries.is_empty() {
+            return None;
+        }
+
+        let index = match self.cursor {
+            None => self.entries.len() - 1,
+            Some(0) => 0,
+            Some(index) => index - 1,
+        };
+        self.cursor = Some(index);
+        self.entries.get(index).map(String::as_str)
+    }
+
+    /// Moves to the next entry and returns it.
+    ///
+    /// Moving past the newest entry resets navigation and returns `None`.
+    pub fn next_entry(&mut self) -> Option<&str> {
+        let index = self.cursor?;
+
+        if index + 1 >= self.entries.len() {
+            self.cursor = None;
+            return None;
+        }
+
+        let index = index + 1;
+        self.cursor = Some(index);
+        self.entries.get(index).map(String::as_str)
+    }
+
+    /// Leaves navigation mode without changing stored entries.
+    pub fn reset_navigation(&mut self) {
+        self.cursor = None;
+    }
+
+    /// Iterates over entries from oldest to newest.
+    pub fn entries(&self) -> impl DoubleEndedIterator<Item = &str> {
+        self.entries.iter().map(String::as_str)
+    }
+
+    /// Number of stored entries.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns `true` when no entries are stored.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Maximum number of entries this history retains.
+    #[must_use]
+    pub const fn limit(&self) -> usize {
+        self.limit
+    }
+}
+
+/// Errors produced when creating a history buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryError {
+    /// History was configured with zero capacity.
+    ZeroCapacity,
+}
+
+impl fmt::Display for HistoryError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ZeroCapacity => formatter.write_str("history capacity must be greater than zero"),
+        }
+    }
+}
+
+impl Error for HistoryError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn zero_capacity_is_rejected() {
+        let error = History::new(0).expect_err("zero capacity should fail");
+
+        assert_eq!(error, HistoryError::ZeroCapacity);
+    }
+
+    #[test]
+    fn oldest_entries_are_evicted_at_capacity() {
+        let mut history = History::new(2).expect("history should be created");
+
+        history.push("first");
+        history.push("second");
+        history.push("third");
+
+        assert_eq!(history.len(), 2);
+        assert_eq!(history.entries().collect::<Vec<_>>(), ["second", "third"]);
+    }
+
+    #[test]
+    fn empty_and_consecutive_duplicate_entries_are_ignored() {
+        let mut history = History::new(4).expect("history should be created");
+
+        history.push("");
+        history.push("ls");
+        history.push("ls");
+        history.push("pwd");
+
+        assert_eq!(history.entries().collect::<Vec<_>>(), ["ls", "pwd"]);
+    }
+
+    #[test]
+    fn navigation_walks_from_newest_to_oldest_and_back() {
+        let mut history = History::new(4).expect("history should be created");
+        history.push("one");
+        history.push("two");
+        history.push("three");
+
+        assert_eq!(history.previous_entry(), Some("three"));
+        assert_eq!(history.previous_entry(), Some("two"));
+        assert_eq!(history.previous_entry(), Some("one"));
+        assert_eq!(history.previous_entry(), Some("one"));
+        assert_eq!(history.next_entry(), Some("two"));
+        assert_eq!(history.next_entry(), Some("three"));
+        assert_eq!(history.next_entry(), None);
+        assert_eq!(history.next_entry(), None);
+    }
+
+    #[test]
+    fn pushing_resets_navigation() {
+        let mut history = History::new(4).expect("history should be created");
+        history.push("one");
+        history.push("two");
+        assert_eq!(history.previous_entry(), Some("two"));
+
+        history.push("three");
+
+        assert_eq!(history.previous_entry(), Some("three"));
+    }
+
+    #[test]
+    fn reset_navigation_returns_to_the_newest_position() {
+        let mut history = History::new(4).expect("history should be created");
+        history.push("one");
+        history.push("two");
+        assert_eq!(history.previous_entry(), Some("two"));
+        assert_eq!(history.previous_entry(), Some("one"));
+
+        history.reset_navigation();
+
+        assert_eq!(history.previous_entry(), Some("two"));
+    }
+}

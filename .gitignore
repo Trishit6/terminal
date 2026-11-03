@@ -1,0 +1,10 @@
+# Cargo build output
+/target/
+**/*.rs.bk
+
+# Local environment and editor files
+.env
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

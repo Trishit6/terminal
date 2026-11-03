@@ -1,0 +1,18 @@
+[package]
+name = "shell-cli"
+description = "Command-line entry point for the custom shell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "custom-shell"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+shell-builtins.workspace = true
+shell-config.workspace = true
+shell-core.workspace = true
+shell-line-editor.workspace = true
+shell-runtime.workspace = true

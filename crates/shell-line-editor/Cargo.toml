@@ -1,0 +1,10 @@
+[package]
+name = "shell-line-editor"
+description = "Interactive line editing and history primitives for the custom shell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+crossterm.workspace = true
+reedline.workspace = true
