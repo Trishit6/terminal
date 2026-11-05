@@ -9,19 +9,23 @@
 //! ## Words
 //!
 //! Unquoted words end at whitespace or at one of the operator/quoting
-//! characters `| & > < ; ( ) ' " $`. Other Unicode text, including punctuation,
-//! is allowed in a word. There are no comments or glob expansions in Phase 3;
-//! `#`, `*`, and `?` are ordinary word characters. `=` is also an ordinary word
-//! character; assignment semantics are not part of Phase 3.
+//! characters ``| & > < ; ( ) ' " $ =``. Other Unicode text, including
+//! punctuation, is allowed in a word. There are no comments or glob expansions
+//! in Phase 3; `#`, `*`, and `?` are ordinary word characters. `=` produces
+//! [`Token::Equals`] so the parser can distinguish assignment syntax from
+//! ordinary arguments without losing escape information.
 //!
 //! ## Quoting
 //!
 //! - `"double quoted"` and `'single quoted'` strings produce [`Token::String`].
 //! - Quotes are removed from the token payload.
 //! - A quoted string may span physical lines.
-//! - Quote style is not retained by the Phase 3 token model.
+//! - Quote style is retained by the spanned-token API.
 //! - Adjacent word/string segments are separate tokens. For example,
 //!   `foo"bar"` becomes `Word("foo")`, `String("bar")`.
+//! - Double-quoted variable references are emitted as adjacent text and
+//!   variable tokens, so `"Hello $name"` still forms one shell word. Single
+//!   quotes suppress expansion entirely.
 //!
 //! ## Escaping
 //!
@@ -38,7 +42,7 @@
 //! | `\t` | tab |
 //! | `\r` | carriage return |
 //! | `\ ` | space |
-//! | `\|` `\&` `\>` `\<` `\;` `\(` `\)` | literal operator character |
+//! | `\|` `\&` `\>` `\<` `\;` `\(` `\)` `\=` | literal operator character |
 //!
 //! Any other escape is an error. A trailing backslash is also an error.
 //! Backslash-newline is not treated as line continuation in Phase 3.
@@ -56,6 +60,7 @@
 //! | `>>` | [`Token::AppendRedirect`] |
 //! | `<` | [`Token::InputRedirect`] |
 //! | `;` | [`Token::Semicolon`] |
+//! | `=` | [`Token::Equals`] |
 //! | `(` | [`Token::LeftParenthesis`] |
 //! | `)` | [`Token::RightParenthesis`] |
 //!
@@ -63,11 +68,12 @@
 //!
 //! ## Variables
 //!
-//! `$name` produces [`Token::Variable`] containing `name` without the `$`.
-//! Variable names begin with an ASCII underscore or a Unicode alphabetic
-//! character, followed by underscores or Unicode alphanumeric characters.
-//! `$` inside quoted strings is literal text. Braced forms such as `${name}`
-//! are not supported in Phase 3.
+//! `$name` and `${name}` produce [`Token::Variable`] containing `name` without
+//! the `$`. Variable names begin with an ASCII underscore or a Unicode
+//! alphabetic character, followed by underscores or Unicode alphanumeric
+//! characters. `$?` and `$$` produce [`Token::SpecialVariable`] values.
+//! `$` inside single-quoted strings is literal text. Inside double quotes,
+//! variables are tokenized for expansion.
 //!
 //! ## Whitespace and end of input
 //!
@@ -90,14 +96,24 @@
 //!     ]
 //! );
 //! ```
+//!
+//! # Source metadata
+//!
+//! [`lex_spanned`] returns [`SpannedToken`] values that pair each token with a
+//! [`Span`] and, for quoted strings, the active [`QuoteKind`]. This preserves
+//! quote style and exact source locations for the parser without changing the
+//! Phase 3 [`lex`] API.
 
 mod error;
 mod scanner;
 mod token;
 
 pub use error::{LexerError, LexerErrorKind};
-pub use scanner::lex;
-pub use token::Token;
+pub use scanner::{lex, lex_spanned};
+pub use token::{
+    Position, QuoteKind, Span, SpannedToken, SpecialVariable, Token, is_valid_variable_name,
+    is_variable_name_continue, is_variable_name_start,
+};
 
 #[cfg(test)]
 mod tests;

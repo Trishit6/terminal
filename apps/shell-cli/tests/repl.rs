@@ -139,6 +139,52 @@ fn empty_and_whitespace_lines_produce_no_command_output() {
 }
 
 #[test]
+fn repl_continues_after_a_failed_external_command() {
+    let reader = ScriptedReader::new([
+        line("definitely-not-a-real-command-xyz"),
+        line("version"),
+        line("exit"),
+    ]);
+    let mut output = Vec::new();
+    let mut repl = Repl::new(session(), reader, &mut output);
+
+    repl.run().expect("REPL should shut down cleanly");
+
+    assert!(repl.session().is_stopped());
+    assert_eq!(repl.reader().reads, 3);
+
+    drop(repl);
+    let output = String::from_utf8(output).expect("output should be UTF-8");
+
+    assert!(output.contains("Command not found: definitely-not-a-real-command-xyz"));
+    assert!(output.contains(&format!("Custom Shell v{VERSION}")));
+    assert!(output.contains("Goodbye."));
+}
+
+#[test]
+fn repl_continues_after_a_failed_pipeline() {
+    let reader = ScriptedReader::new([
+        line("definitely-not-a-real-command-xyz | echo nope"),
+        line("version"),
+        line("exit"),
+    ]);
+    let mut output = Vec::new();
+    let mut repl = Repl::new(session(), reader, &mut output);
+
+    repl.run().expect("REPL should shut down cleanly");
+
+    assert!(repl.session().is_stopped());
+    assert_eq!(repl.reader().reads, 3);
+
+    drop(repl);
+    let output = String::from_utf8(output).expect("output should be UTF-8");
+
+    assert!(output.contains("Command not found: definitely-not-a-real-command-xyz"));
+    assert!(output.contains(&format!("Custom Shell v{VERSION}")));
+    assert!(output.contains("Goodbye."));
+}
+
+#[test]
 fn clear_requests_a_terminal_clear_and_continues() {
     let reader = ScriptedReader::new([line("clear"), line("exit")]);
     let mut output = Vec::new();

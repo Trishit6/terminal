@@ -1,18 +1,39 @@
 //! Deterministic, UTF-8-safe scanner for the custom shell language.
 
 use super::error::{LexerError, LexerErrorKind};
-use super::token::Token;
+use super::token::{
+    Position, QuoteKind, Span, SpannedToken, SpecialVariable, Token, is_variable_name_continue,
+    is_variable_name_start,
+};
 
-/// Converts raw shell input into tokens.
+/// Converts raw shell input into compact tokens.
 ///
 /// The returned vector always ends with [`Token::EndOfInput`]. Whitespace is
 /// skipped, but physical newlines are emitted as [`Token::Newline`].
+///
+/// Use [`lex_spanned`] when source locations or quote metadata are needed.
 ///
 /// # Errors
 ///
 /// Returns a [`LexerError`] for unterminated quotes, invalid or dangling
 /// escapes, invalid variable references, and rejected characters.
 pub fn lex(input: &str) -> Result<Vec<Token>, LexerError> {
+    Ok(lex_spanned(input)?
+        .into_iter()
+        .map(|spanned| spanned.token)
+        .collect())
+}
+
+/// Converts raw shell input into tokens with source spans and quote metadata.
+///
+/// The token values are identical to those produced by [`lex`]. The returned
+/// vector always ends with a zero-width [`Token::EndOfInput`] token.
+///
+/// # Errors
+///
+/// Returns a [`LexerError`] for unterminated quotes, invalid or dangling
+/// escapes, invalid variable references, and rejected characters.
+pub fn lex_spanned(input: &str) -> Result<Vec<SpannedToken>, LexerError> {
     Lexer::new(input).tokenize()
 }
 
@@ -33,41 +54,47 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn tokenize(mut self) -> Result<Vec<Token>, LexerError> {
+    fn tokenize(mut self) -> Result<Vec<SpannedToken>, LexerError> {
         let mut tokens = Vec::new();
 
         while let Some(character) = self.peek() {
             if character.is_whitespace() {
                 if character == '\n' || character == '\r' {
+                    let start = self.position();
                     self.consume_newline();
-                    tokens.push(Token::Newline);
+                    let end = self.position();
+                    tokens.push(SpannedToken::new(
+                        Token::Newline,
+                        Span::new(start, end),
+                        None,
+                    ));
                 } else {
                     self.bump();
                 }
                 continue;
             }
 
-            match character {
+            let start = self.position();
+            let (token, quote) = match character {
                 '|' => {
                     self.bump();
                     if self.peek() == Some('|') {
                         self.bump();
-                        tokens.push(Token::Or);
+                        (Token::Or, None)
                     } else {
-                        tokens.push(Token::Pipe);
+                        (Token::Pipe, None)
                     }
                 }
                 '&' => {
-                    let (line, column) = self.position();
                     self.bump();
                     if self.peek() == Some('&') {
                         self.bump();
-                        tokens.push(Token::And);
+                        (Token::And, None)
                     } else {
                         return Err(LexerError::new(
                             LexerErrorKind::UnexpectedCharacter { character: '&' },
-                            line,
-                            column,
+                            start.line(),
+                            start.column(),
                         ));
                     }
                 }
@@ -75,50 +102,76 @@ impl<'a> Lexer<'a> {
                     self.bump();
                     if self.peek() == Some('>') {
                         self.bump();
-                        tokens.push(Token::AppendRedirect);
+                        (Token::AppendRedirect, None)
                     } else {
-                        tokens.push(Token::OutputRedirect);
+                        (Token::OutputRedirect, None)
+                    }
+                }
+                // `2>` and `2>>` are recognised only when the digit starts a
+                // token. A digit embedded in a word (`file2>log`) stays part of
+                // that word, matching standard shell behaviour.
+                '2' if self.peek_second() == Some('>') => {
+                    self.bump();
+                    self.bump();
+                    if self.peek() == Some('>') {
+                        self.bump();
+                        (Token::ErrorAppendRedirect, None)
+                    } else {
+                        (Token::ErrorRedirect, None)
                     }
                 }
                 '<' => {
                     self.bump();
-                    tokens.push(Token::InputRedirect);
+                    (Token::InputRedirect, None)
                 }
                 ';' => {
                     self.bump();
-                    tokens.push(Token::Semicolon);
+                    (Token::Semicolon, None)
                 }
                 '(' => {
                     self.bump();
-                    tokens.push(Token::LeftParenthesis);
+                    (Token::LeftParenthesis, None)
                 }
                 ')' => {
                     self.bump();
-                    tokens.push(Token::RightParenthesis);
+                    (Token::RightParenthesis, None)
                 }
                 '\'' => {
-                    let (line, column) = self.position();
-                    tokens.push(self.lex_string('\'', line, column)?);
+                    let token = self.lex_string('\'', start.line(), start.column())?;
+                    let end = self.position();
+                    tokens.push(SpannedToken::new(
+                        token,
+                        Span::new(start, end),
+                        Some(QuoteKind::Single),
+                    ));
+                    continue;
                 }
                 '"' => {
-                    let (line, column) = self.position();
-                    tokens.push(self.lex_string('"', line, column)?);
+                    tokens.extend(self.lex_double_quoted(start)?);
+                    continue;
                 }
-                '$' => tokens.push(self.lex_variable()?),
-                '\\' => tokens.push(self.lex_word()?),
+                '=' => {
+                    self.bump();
+                    (Token::Equals, None)
+                }
+                '$' => (self.lex_variable()?, None),
+                '\\' => (self.lex_word()?, None),
                 _ if character.is_control() => {
-                    let (line, column) = self.position();
                     return Err(LexerError::new(
                         LexerErrorKind::UnexpectedCharacter { character },
-                        line,
-                        column,
+                        start.line(),
+                        start.column(),
                     ));
                 }
-                _ => tokens.push(self.lex_word()?),
-            }
+                _ => (self.lex_word()?, None),
+            };
+
+            let end = self.position();
+            tokens.push(SpannedToken::new(token, Span::new(start, end), quote));
         }
 
-        tokens.push(Token::EndOfInput);
+        let end = self.position();
+        tokens.push(SpannedToken::new(Token::EndOfInput, Span::empty(end), None));
         Ok(tokens)
     }
 
@@ -129,7 +182,7 @@ impl<'a> Lexer<'a> {
             if character.is_whitespace()
                 || matches!(
                     character,
-                    '|' | '&' | '>' | '<' | ';' | '(' | ')' | '\'' | '"' | '$'
+                    '|' | '&' | '>' | '<' | ';' | '(' | ')' | '\'' | '"' | '$' | '='
                 )
             {
                 break;
@@ -137,7 +190,7 @@ impl<'a> Lexer<'a> {
 
             match character {
                 '\\' => {
-                    let (line, column) = self.position();
+                    let (line, column) = self.position_pair();
                     self.bump();
                     let Some(escaped) = self.peek() else {
                         return Err(LexerError::new(
@@ -150,7 +203,7 @@ impl<'a> Lexer<'a> {
                     value.push(self.decode_escape(escaped, line, column)?);
                 }
                 _ if character.is_control() => {
-                    let (line, column) = self.position();
+                    let (line, column) = self.position_pair();
                     return Err(LexerError::new(
                         LexerErrorKind::UnexpectedCharacter { character },
                         line,
@@ -193,7 +246,7 @@ impl<'a> Lexer<'a> {
 
             match character {
                 '\\' => {
-                    let (line, column) = self.position();
+                    let (line, column) = self.position_pair();
                     self.bump();
                     let Some(escaped) = self.peek() else {
                         return Err(LexerError::new(
@@ -229,9 +282,115 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn lex_variable(&mut self) -> Result<Token, LexerError> {
-        let (line, column) = self.position();
+    fn lex_double_quoted(
+        &mut self,
+        quote_start: Position,
+    ) -> Result<Vec<SpannedToken>, LexerError> {
         self.bump();
+
+        let mut pieces: Vec<(Token, Span, Option<QuoteKind>)> = Vec::new();
+        let mut text = String::new();
+        let mut text_start = self.position();
+
+        loop {
+            let Some(character) = self.peek() else {
+                return Err(LexerError::new(
+                    LexerErrorKind::UnterminatedDoubleQuote,
+                    quote_start.line(),
+                    quote_start.column(),
+                ));
+            };
+
+            match character {
+                '"' => {
+                    self.bump();
+                    let close_end = self.position();
+                    push_double_text(&mut pieces, &mut text, text_start, close_end);
+
+                    if pieces.is_empty() {
+                        pieces.push((
+                            Token::String(String::new()),
+                            Span::new(quote_start, close_end),
+                            Some(QuoteKind::Double),
+                        ));
+                    }
+
+                    // Attach the quote characters to the outermost segments so
+                    // adjacent parts of the same shell word remain contiguous.
+                    if let Some((_, span, _)) = pieces.first_mut() {
+                        *span = Span::new(quote_start, span.end());
+                    }
+                    if let Some((_, span, _)) = pieces.last_mut() {
+                        *span = Span::new(span.start(), close_end);
+                    }
+
+                    return Ok(pieces
+                        .into_iter()
+                        .map(|(token, span, quote)| SpannedToken::new(token, span, quote))
+                        .collect());
+                }
+                '$' => {
+                    let variable_start = self.position();
+                    push_double_text(&mut pieces, &mut text, text_start, variable_start);
+
+                    let token = self.lex_variable()?;
+                    let variable_end = self.position();
+                    pieces.push((token, Span::new(variable_start, variable_end), None));
+                    text_start = self.position();
+                }
+                '\\' => {
+                    let (line, column) = self.position_pair();
+                    self.bump();
+                    let Some(escaped) = self.peek() else {
+                        return Err(LexerError::new(
+                            LexerErrorKind::DanglingEscape,
+                            line,
+                            column,
+                        ));
+                    };
+                    self.bump();
+                    text.push(self.decode_escape(escaped, line, column)?);
+                }
+                '\n' => {
+                    self.bump();
+                    text.push('\n');
+                    self.line += 1;
+                    self.column = 1;
+                }
+                '\r' => {
+                    self.bump();
+                    text.push('\r');
+                    if self.peek() == Some('\n') {
+                        self.bump();
+                        text.push('\n');
+                    }
+                    self.line += 1;
+                    self.column = 1;
+                }
+                _ => {
+                    self.bump();
+                    text.push(character);
+                }
+            }
+        }
+    }
+
+    fn lex_variable(&mut self) -> Result<Token, LexerError> {
+        let (line, column) = self.position_pair();
+        self.bump();
+
+        match self.peek() {
+            Some('?') => {
+                self.bump();
+                return Ok(Token::SpecialVariable(SpecialVariable::LastStatus));
+            }
+            Some('$') => {
+                self.bump();
+                return Ok(Token::SpecialVariable(SpecialVariable::ProcessId));
+            }
+            Some('{') => return self.lex_braced_variable(line, column),
+            _ => {}
+        }
 
         let Some(first) = self.peek() else {
             return Err(LexerError::new(
@@ -241,7 +400,7 @@ impl<'a> Lexer<'a> {
             ));
         };
 
-        if first != '_' && !first.is_alphabetic() {
+        if !is_variable_name_start(first) {
             return Err(LexerError::new(
                 LexerErrorKind::InvalidVariable,
                 line,
@@ -251,7 +410,7 @@ impl<'a> Lexer<'a> {
 
         let mut name = String::new();
         while let Some(character) = self.peek() {
-            if character == '_' || character.is_alphanumeric() {
+            if is_variable_name_continue(character) {
                 self.bump();
                 name.push(character);
             } else {
@@ -260,6 +419,62 @@ impl<'a> Lexer<'a> {
         }
 
         Ok(Token::Variable(name))
+    }
+
+    fn lex_braced_variable(&mut self, line: usize, column: usize) -> Result<Token, LexerError> {
+        self.bump();
+
+        let Some(first) = self.peek() else {
+            return Err(LexerError::new(
+                LexerErrorKind::UnterminatedBracedVariable,
+                line,
+                column,
+            ));
+        };
+
+        if first == '}' {
+            self.bump();
+            return Err(LexerError::new(
+                LexerErrorKind::EmptyBracedVariable,
+                line,
+                column,
+            ));
+        }
+
+        if !is_variable_name_start(first) {
+            return Err(LexerError::new(
+                LexerErrorKind::InvalidBracedVariable,
+                line,
+                column,
+            ));
+        }
+
+        let mut name = String::new();
+        while let Some(character) = self.peek() {
+            if is_variable_name_continue(character) {
+                self.bump();
+                name.push(character);
+            } else {
+                break;
+            }
+        }
+
+        match self.peek() {
+            Some('}') => {
+                self.bump();
+                Ok(Token::Variable(name))
+            }
+            None => Err(LexerError::new(
+                LexerErrorKind::UnterminatedBracedVariable,
+                line,
+                column,
+            )),
+            Some(_) => Err(LexerError::new(
+                LexerErrorKind::InvalidBracedVariable,
+                line,
+                column,
+            )),
+        }
     }
 
     fn decode_escape(
@@ -277,7 +492,7 @@ impl<'a> Lexer<'a> {
             't' => Ok('\t'),
             'r' => Ok('\r'),
             ' ' => Ok(' '),
-            '|' | '&' | '>' | '<' | ';' | '(' | ')' => Ok(character),
+            '|' | '&' | '>' | '<' | ';' | '(' | ')' | '=' => Ok(character),
             _ => Err(LexerError::new(
                 LexerErrorKind::InvalidEscape { character },
                 line,
@@ -288,6 +503,10 @@ impl<'a> Lexer<'a> {
 
     fn peek(&self) -> Option<char> {
         self.input[self.offset..].chars().next()
+    }
+
+    fn peek_second(&self) -> Option<char> {
+        self.input[self.offset..].chars().nth(1)
     }
 
     fn bump(&mut self) -> Option<char> {
@@ -313,7 +532,28 @@ impl<'a> Lexer<'a> {
         self.column = 1;
     }
 
-    const fn position(&self) -> (usize, usize) {
+    const fn position(&self) -> Position {
+        Position::new(self.offset, self.line, self.column)
+    }
+
+    const fn position_pair(&self) -> (usize, usize) {
         (self.line, self.column)
     }
+}
+
+fn push_double_text(
+    pieces: &mut Vec<(Token, Span, Option<QuoteKind>)>,
+    text: &mut String,
+    start: Position,
+    end: Position,
+) {
+    if text.is_empty() {
+        return;
+    }
+
+    pieces.push((
+        Token::String(std::mem::take(text)),
+        Span::new(start, end),
+        Some(QuoteKind::Double),
+    ));
 }

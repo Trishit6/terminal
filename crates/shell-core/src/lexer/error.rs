@@ -49,13 +49,19 @@ pub enum LexerErrorKind {
     },
     /// A backslash appeared at the end of input.
     DanglingEscape,
+    /// `$` was not followed by a valid variable name.
+    InvalidVariable,
+    /// `${}` contained no variable name.
+    EmptyBracedVariable,
+    /// A `${name` reference reached the end of input without `}`.
+    UnterminatedBracedVariable,
+    /// A `${...}` reference contained an invalid variable name.
+    InvalidBracedVariable,
     /// A character cannot appear at the current position.
     UnexpectedCharacter {
         /// The rejected character.
         character: char,
     },
-    /// `$` was not followed by a valid variable name.
-    InvalidVariable,
 }
 
 impl fmt::Display for LexerError {
@@ -91,6 +97,13 @@ impl fmt::Display for LexerErrorKind {
                 )
             }
             Self::InvalidVariable => formatter.write_str("expected a variable name after `$`"),
+            Self::EmptyBracedVariable => formatter.write_str("empty variable name inside `${}`"),
+            Self::UnterminatedBracedVariable => {
+                formatter.write_str("unterminated `${` variable reference")
+            }
+            Self::InvalidBracedVariable => {
+                formatter.write_str("invalid variable name inside `${...}`")
+            }
         }
     }
 }

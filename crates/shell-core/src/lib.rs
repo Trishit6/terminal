@@ -1,12 +1,21 @@
 //! Shared primitives for the custom shell.
 //!
 //! This crate deliberately contains no I/O policy of its own. It owns the
-//! application identity, the error type that crosses crate boundaries, and the
-//! language lexer.
+//! application identity, the error type that crosses crate boundaries, the
+//! language lexer, and the parser/AST.
 
 pub mod lexer;
+pub mod parser;
 
-pub use lexer::{LexerError, LexerErrorKind, Token, lex};
+pub use lexer::{
+    LexerError, LexerErrorKind, Position, QuoteKind, Span, SpannedToken, SpecialVariable, Token,
+    is_valid_variable_name, is_variable_name_continue, is_variable_name_start, lex, lex_spanned,
+};
+pub use parser::{
+    AndOr, Assignment, Ast, Command, Expression, Group, List, ListItem, LogicalOperator,
+    ParseError, ParseErrorKind, Pipeline, PipelineStage, Redirection, RedirectionKind, Separator,
+    Word, WordPart, parse,
+};
 
 use std::error::Error;
 use std::fmt;

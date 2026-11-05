@@ -1,6 +1,6 @@
 //! Comprehensive lexer tests.
 
-use super::{LexerError, LexerErrorKind, Token, lex};
+use super::{LexerError, LexerErrorKind, QuoteKind, Token, lex, lex_spanned};
 
 fn tokens(input: &str) -> Vec<Token> {
     lex(input).expect("input should lex")
@@ -176,6 +176,46 @@ fn redirection_operators_are_recognized() {
 }
 
 #[test]
+fn error_redirection_operators_are_recognized() {
+    assert_eq!(
+        tokens("cmd 2> errors.txt 2>> more.txt"),
+        [
+            word("cmd"),
+            Token::ErrorRedirect,
+            word("errors.txt"),
+            Token::ErrorAppendRedirect,
+            word("more.txt"),
+            Token::EndOfInput,
+        ]
+    );
+}
+
+#[test]
+fn a_digit_inside_a_word_is_not_an_error_redirection() {
+    assert_eq!(
+        tokens("echo file2>log"),
+        [
+            word("echo"),
+            word("file2"),
+            Token::OutputRedirect,
+            word("log"),
+            Token::EndOfInput,
+        ]
+    );
+
+    assert_eq!(
+        tokens("echo 2 > log"),
+        [
+            word("echo"),
+            word("2"),
+            Token::OutputRedirect,
+            word("log"),
+            Token::EndOfInput,
+        ]
+    );
+}
+
+#[test]
 fn command_chaining_operators_are_recognized() {
     assert_eq!(
         tokens("mkdir projects && cd projects ; echo Hello"),
@@ -263,12 +303,12 @@ fn variables_can_be_adjacent_to_words() {
 }
 
 #[test]
-fn variables_inside_quotes_are_literal_text() {
+fn double_quoted_variables_are_tokenized_and_single_quotes_stay_literal() {
     assert_eq!(
         tokens(r#"echo "$username" '$username'"#),
         [
             word("echo"),
-            string("$username"),
+            variable("username"),
             string("$username"),
             Token::EndOfInput,
         ]
@@ -282,7 +322,7 @@ fn assignment_syntax_uses_words_and_a_string() {
         [
             word("set"),
             word("username"),
-            word("="),
+            Token::Equals,
             string("Trishit"),
             Token::EndOfInput,
         ]
@@ -492,8 +532,72 @@ fn variable_with_a_digit_is_rejected() {
 }
 
 #[test]
-fn braced_variables_are_not_supported() {
-    assert_error("echo ${name}", LexerErrorKind::InvalidVariable, 1, 6);
+fn braced_variables_are_supported() {
+    assert_eq!(
+        tokens("echo ${name}${other}"),
+        [
+            word("echo"),
+            variable("name"),
+            variable("other"),
+            Token::EndOfInput,
+        ]
+    );
+}
+
+#[test]
+fn empty_braced_variable_is_rejected() {
+    assert_error("echo ${}", LexerErrorKind::EmptyBracedVariable, 1, 6);
+}
+
+#[test]
+fn unterminated_braced_variable_is_rejected() {
+    assert_error(
+        "echo ${name",
+        LexerErrorKind::UnterminatedBracedVariable,
+        1,
+        6,
+    );
+}
+
+#[test]
+fn invalid_braced_variable_is_rejected() {
+    assert_error("echo ${na-me}", LexerErrorKind::InvalidBracedVariable, 1, 6);
+}
+
+#[test]
+fn special_variables_are_tokenized() {
+    use super::SpecialVariable;
+
+    assert_eq!(
+        tokens("echo $? $$"),
+        [
+            word("echo"),
+            Token::SpecialVariable(SpecialVariable::LastStatus),
+            Token::SpecialVariable(SpecialVariable::ProcessId),
+            Token::EndOfInput,
+        ]
+    );
+}
+
+#[test]
+fn escaped_equals_stays_inside_a_word() {
+    assert_eq!(
+        tokens(r"echo a\=b"),
+        [word("echo"), word("a=b"), Token::EndOfInput]
+    );
+}
+
+#[test]
+fn equals_is_a_distinct_token() {
+    assert_eq!(
+        tokens("name=Trishit"),
+        [
+            word("name"),
+            Token::Equals,
+            word("Trishit"),
+            Token::EndOfInput,
+        ]
+    );
 }
 
 #[test]
@@ -541,4 +645,50 @@ fn unexpected_character_display_is_readable() {
         error.to_string(),
         "lex error at line 1, column 6: unexpected character `&`"
     );
+}
+
+#[test]
+fn spanned_tokens_record_quote_metadata() {
+    let tokens = lex_spanned(r#"echo 'one' "two""#).expect("input should lex");
+
+    assert_eq!(tokens[0].quote, None);
+    assert_eq!(tokens[1].quote, Some(QuoteKind::Single));
+    assert_eq!(tokens[2].quote, Some(QuoteKind::Double));
+    assert_eq!(tokens[3].quote, None);
+}
+
+#[test]
+fn spanned_tokens_record_exact_source_ranges() {
+    let tokens = lex_spanned(r#"echo "Hello World""#).expect("input should lex");
+
+    assert_eq!(tokens[0].span.start().offset(), 0);
+    assert_eq!(tokens[0].span.end().offset(), 4);
+    assert_eq!(tokens[1].span.start().offset(), 5);
+    assert_eq!(tokens[1].span.end().offset(), 18);
+    assert_eq!(tokens[1].span.start().column(), 6);
+    assert_eq!(tokens[1].span.end().column(), 19);
+}
+
+#[test]
+fn spanned_tokens_track_unicode_offsets_and_columns() {
+    let tokens = lex_spanned("é x").expect("input should lex");
+
+    assert_eq!(tokens[0].span.start().offset(), 0);
+    assert_eq!(tokens[0].span.end().offset(), 2);
+    assert_eq!(tokens[0].span.start().column(), 1);
+    assert_eq!(tokens[0].span.end().column(), 2);
+    assert_eq!(tokens[1].span.start().offset(), 3);
+    assert_eq!(tokens[1].span.start().column(), 3);
+}
+
+#[test]
+fn spanned_newlines_and_end_of_input_have_ranges() {
+    let tokens = lex_spanned("a\nb").expect("input should lex");
+
+    assert_eq!(tokens[1].token, Token::Newline);
+    assert_eq!(tokens[1].span.start().line(), 1);
+    assert_eq!(tokens[1].span.end().line(), 2);
+    assert_eq!(tokens[3].token, Token::EndOfInput);
+    assert!(tokens[3].span.is_empty());
+    assert_eq!(tokens[3].span.start().offset(), 3);
 }

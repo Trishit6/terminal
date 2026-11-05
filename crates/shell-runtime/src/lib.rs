@@ -4,11 +4,15 @@
 //! application version, and running/stopped state. Terminal I/O stays in the
 //! CLI and line-editor crates.
 
-use shell_config::Config;
+pub mod variables;
+
+pub use shell_config::Config;
 use shell_core::{ShellError, VERSION as SHELL_VERSION};
 use std::env;
 use std::fmt;
 use std::path::{Path, PathBuf};
+
+use crate::variables::VariableStore;
 
 /// Operating-system information detected from the Rust standard library.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,13 +79,14 @@ pub enum SessionState {
 }
 
 /// A running shell session.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Session {
     platform: Platform,
     working_directory: PathBuf,
     config: Config,
     version: &'static str,
     state: SessionState,
+    variables: VariableStore,
 }
 
 impl Session {
@@ -99,6 +104,25 @@ impl Session {
             config,
             version: SHELL_VERSION,
             state: SessionState::Running,
+            variables: VariableStore::new(),
+        })
+    }
+
+    /// Creates a session with a custom variable store for testing.
+    pub fn with_environment(
+        config: Config,
+        env: Vec<(String, String)>,
+    ) -> Result<Self, ShellError> {
+        let working_directory = env::current_dir()
+            .map_err(|source| ShellError::io("determine the current working directory", source))?;
+
+        Ok(Self {
+            platform: Platform::detect(),
+            working_directory,
+            config,
+            version: SHELL_VERSION,
+            state: SessionState::Running,
+            variables: VariableStore::with_environment(env),
         })
     }
 
@@ -108,10 +132,20 @@ impl Session {
         self.platform
     }
 
-    /// Absolute working directory captured when the session started.
+    /// Current working directory of the shell session.
     #[must_use]
     pub fn working_directory(&self) -> &Path {
         &self.working_directory
+    }
+
+    /// Replaces the session working directory and synchronizes PWD.
+    ///
+    /// Callers are responsible for validating that the path exists and is a
+    /// directory. The session owns this state instead of the process-wide
+    /// current directory so independent sessions remain isolated.
+    pub fn set_working_directory(&mut self, directory: PathBuf) {
+        self.variables.set_pwd(directory.as_path());
+        self.working_directory = directory;
     }
 
     /// Configuration associated with this session.
@@ -147,6 +181,84 @@ impl Session {
     /// Requests a clean session shutdown.
     pub fn stop(&mut self) {
         self.state = SessionState::Stopped;
+    }
+
+    /// Returns a reference to the variable store.
+    #[must_use]
+    pub fn variables(&self) -> &VariableStore {
+        &self.variables
+    }
+
+    /// Returns a mutable reference to the variable store.
+    pub fn variables_mut(&mut self) -> &mut VariableStore {
+        &mut self.variables
+    }
+
+    /// Gets a variable value (checks locals, then inherited, then specials).
+    #[must_use]
+    pub fn get_variable(&self, name: &str) -> Option<String> {
+        self.variables.get(name)
+    }
+
+    /// Sets a local variable.
+    pub fn set_variable(&mut self, name: &str, value: String, exported: bool) {
+        self.variables.set_local(name, value, exported);
+    }
+
+    /// Exports a variable.
+    pub fn export_variable(&mut self, name: &str) -> bool {
+        self.variables.export(name)
+    }
+
+    /// Sets and exports a variable in one operation.
+    pub fn set_exported_variable(&mut self, name: &str, value: String) {
+        self.variables.set_exported(name, value);
+    }
+
+    /// Unsets a variable.
+    pub fn unset_variable(&mut self, name: &str) -> bool {
+        self.variables.unset(name)
+    }
+
+    /// Returns the environment for child processes.
+    pub fn child_environment(
+        &self,
+        overrides: &[(std::ffi::OsString, std::ffi::OsString)],
+    ) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+        self.variables.child_environment(overrides)
+    }
+
+    /// Returns all local variables with their export status.
+    pub fn local_variables(&self) -> Vec<(String, String, bool)> {
+        self.variables.local_variables()
+    }
+
+    /// Returns all inherited environment variables.
+    pub fn inherited_variables(&self) -> Vec<(String, String)> {
+        self.variables.inherited_variables()
+    }
+
+    /// Gets a local variable value (not inherited or special).
+    #[must_use]
+    pub fn get_local(&self, name: &str) -> Option<String> {
+        self.variables.get_local(name)
+    }
+
+    /// Gets the last command exit status ($?).
+    #[must_use]
+    pub fn last_status(&self) -> i32 {
+        self.variables.last_status()
+    }
+
+    /// Sets the last command exit status ($?).
+    pub fn set_last_status(&mut self, status: i32) {
+        self.variables.set_last_status(status);
+    }
+
+    /// Gets the shell process ID ($$).
+    #[must_use]
+    pub fn process_id(&self) -> u32 {
+        self.variables.process_id()
     }
 }
 
@@ -205,5 +317,15 @@ mod tests {
         assert_eq!(session.state(), SessionState::Stopped);
         assert!(!session.is_running());
         assert!(session.is_stopped());
+    }
+
+    #[test]
+    fn working_directory_can_be_replaced() {
+        let mut session = Session::new(Config::default()).expect("session should start");
+        let target = env::temp_dir();
+
+        session.set_working_directory(target.clone());
+
+        assert_eq!(session.working_directory(), target);
     }
 }

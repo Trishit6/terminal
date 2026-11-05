@@ -41,7 +41,7 @@ where
                 Ok(LineEvent::Interrupted) => self.write_line("")?,
                 Ok(LineEvent::Eof) => {
                     self.session.stop();
-                    self.write_line("Goodbye.")?;
+                    self.write_output("Goodbye.")?;
                 }
                 Err(error) => {
                     return Err(ShellError::message(
@@ -68,12 +68,12 @@ where
     }
 
     fn handle_command(&mut self, input: &str) -> Result<(), ShellError> {
-        let outcome = self.dispatcher.execute(&self.session, input);
+        let outcome = self.dispatcher.execute(&mut self.session, input);
 
         match outcome.action() {
             CommandAction::Continue => {
                 if let Some(output) = outcome.output() {
-                    self.write_line(output)?;
+                    self.write_output(output)?;
                 }
             }
             CommandAction::ClearScreen => {
@@ -82,18 +82,33 @@ where
                 })?;
 
                 if let Some(output) = outcome.output() {
-                    self.write_line(output)?;
+                    self.write_output(output)?;
                 }
             }
             CommandAction::Exit => {
                 if let Some(output) = outcome.output() {
-                    self.write_line(output)?;
+                    self.write_output(output)?;
                 }
                 self.session.stop();
             }
         }
 
         Ok(())
+    }
+
+    /// Writes command output exactly, adding a final newline only when the
+    /// output does not already end with one.
+    fn write_output(&mut self, text: &str) -> Result<(), ShellError> {
+        self.output
+            .write_all(text.as_bytes())
+            .and_then(|()| {
+                if text.ends_with('\n') {
+                    Ok(())
+                } else {
+                    writeln!(self.output)
+                }
+            })
+            .map_err(|source| ShellError::io("write shell output", source))
     }
 
     fn write_line(&mut self, text: &str) -> Result<(), ShellError> {
