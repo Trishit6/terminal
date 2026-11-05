@@ -227,6 +227,8 @@ pub enum Token {
     Run,
     /// Range operator: `..`.
     Range,
+    /// Background execution operator: `&`.
+    Background,
 }
 
 /// A [`Token`] together with its source span and quote metadata.

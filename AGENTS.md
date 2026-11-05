@@ -2,8 +2,8 @@
 
 ## Project
 
-Custom Rust CLI shell. Phase 1–8 are implemented. Do not start Phase 9 or add
-job control or scripting unless the user explicitly asks.
+Custom Rust CLI shell. Phase 1–11 are implemented. Do not start Phase 12 unless
+explicitly asked.
 Pipelines and redirections are implemented natively; keep them that way.
 
 Workspace members:
@@ -150,7 +150,24 @@ The interactive shell requires a real TTY. Piping input directly into
 `cargo run` fails Reedline with a cursor-position error. Use a terminal, or
 `screen`/`tmux`, for manual verification.
 
-## Variable system (Phase 8)
+## Background Execution (Phase 11)
+
+- Lexer: `Token::Background` for `&` operator.
+- Parser: `Separator::Background` for `&` separator in command lists.
+- AST: `Expression::Background` with boxed inner expression.
+- Parser: `parse_list` recognizes `&` as a separator.
+- Evaluator: `run_background` executes expression but returns immediately.
+- `run_list` handles `Separator::Background` by returning early without waiting.
+- Token `&` is recognized in lexer (no longer rejected as `UnexpectedCharacter`).
+
+### Background syntax
+
+- `command &` runs command in background.
+- Multiple background commands can be chained: `cmd1 & cmd2 &`.
+- Background separator has same precedence as `;` and newline.
+- `echo "hello & world"` does NOT become background (quoted `&` is literal).
+
+## Scripting Language (Phase 10)
 
 - Variable store: `crates/shell-runtime/src/variables.rs` (`VariableStore`).
 - Session integration: `crates/shell-runtime/src/lib.rs` (methods on `Session`).

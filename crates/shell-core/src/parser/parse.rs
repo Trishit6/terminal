@@ -95,6 +95,9 @@ impl<'tokens> Parser<'tokens> {
             } else if self.check(&Token::Newline) {
                 self.advance();
                 Some(Separator::Newline)
+            } else if self.check(&Token::Background) {
+                self.advance();
+                Some(Separator::Background)
             } else {
                 None
             };
@@ -129,7 +132,7 @@ impl<'tokens> Parser<'tokens> {
 
             return Err(ParseError::new(
                 ParseErrorKind::InvalidCommandStructure {
-                    message: "expected `;`, a newline, or end of input".to_string(),
+                    message: "expected `;`, a newline, `&`, or end of input".to_string(),
                 },
                 self.current_span(),
             ));

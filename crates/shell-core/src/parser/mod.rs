@@ -92,9 +92,9 @@ mod error;
 mod parse;
 
 pub use ast::{
-    AndOr, Assignment, Ast, Block, Break, Command, Continue, Expression, ForLoop, FunctionDef,
-    Group, IfElse, List, ListItem, LogicalOperator, Pipeline, PipelineStage, Redirection,
-    RedirectionKind, Return, Separator, WhileLoop, Word, WordPart,
+    AndOr, Assignment, Ast, Background, Block, Break, Command, Continue, Expression, ForLoop,
+    FunctionDef, Group, IfElse, List, ListItem, LogicalOperator, Pipeline, PipelineStage,
+    Redirection, RedirectionKind, Return, Separator, WhileLoop, Word, WordPart,
 };
 pub use error::{ParseError, ParseErrorKind};
 pub use parse::parse;

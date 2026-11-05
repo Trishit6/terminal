@@ -91,11 +91,7 @@ impl<'a> Lexer<'a> {
                         self.bump();
                         (Token::And, None)
                     } else {
-                        return Err(LexerError::new(
-                            LexerErrorKind::UnexpectedCharacter { character: '&' },
-                            start.line(),
-                            start.column(),
-                        ));
+                        (Token::Background, None)
                     }
                 }
                 '>' => {

@@ -79,6 +79,8 @@ pub enum Separator {
     Semicolon,
     /// A physical newline.
     Newline,
+    /// Background execution: `&`.
+    Background,
 }
 
 /// A shell expression.
@@ -110,6 +112,8 @@ pub enum Expression {
     Continue(Continue),
     /// A block expression (for function bodies, loop bodies, etc.).
     Block(Block),
+    /// A background execution expression.
+    Background(Background),
 }
 
 impl Expression {
@@ -130,6 +134,7 @@ impl Expression {
             Self::Break(brk) => brk.span,
             Self::Continue(cont) => cont.span,
             Self::Block(block) => block.span,
+            Self::Background(bg) => bg.span,
         }
     }
 }
@@ -275,6 +280,15 @@ pub struct Block {
     /// Statements in the block.
     pub list: List,
     /// Source range including the opening and closing braces.
+    pub span: Span,
+}
+
+/// A background execution expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Background {
+    /// The expression to run in the background.
+    pub expression: Box<Expression>,
+    /// Source range covered by the background expression.
     pub span: Span,
 }
 

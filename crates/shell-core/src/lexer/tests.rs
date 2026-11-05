@@ -500,12 +500,17 @@ fn dangling_escape_inside_strings_is_rejected() {
 }
 
 #[test]
-fn lone_ampersand_is_rejected() {
-    assert_error(
-        "echo Hello & echo World",
-        LexerErrorKind::UnexpectedCharacter { character: '&' },
-        1,
-        12,
+fn background_operator_is_recognized() {
+    assert_eq!(
+        tokens("echo Hello & echo World"),
+        [
+            word("echo"),
+            word("Hello"),
+            Token::Background,
+            word("echo"),
+            word("World"),
+            Token::EndOfInput,
+        ]
     );
 }
 
@@ -638,12 +643,15 @@ fn invalid_escape_display_is_readable() {
 }
 
 #[test]
-fn unexpected_character_display_is_readable() {
-    let error = error("echo &");
-
+fn background_operator_display_is_readable() {
+    let tokens = lex("echo &").expect("input should lex");
     assert_eq!(
-        error.to_string(),
-        "lex error at line 1, column 6: unexpected character `&`"
+        tokens,
+        [
+            Token::Word("echo".to_owned()),
+            Token::Background,
+            Token::EndOfInput
+        ]
     );
 }
 
