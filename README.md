@@ -1,4 +1,4 @@
-# custom-shell
+# custom-terminal
 
 A cross-platform command-line shell written in Rust. It runs inside an existing
 terminal (Windows Terminal, PowerShell, CMD, Linux terminals, and macOS
