@@ -12,9 +12,9 @@ pub use lexer::{
     is_valid_variable_name, is_variable_name_continue, is_variable_name_start, lex, lex_spanned,
 };
 pub use parser::{
-    AndOr, Assignment, Ast, Command, Expression, Group, List, ListItem, LogicalOperator,
-    ParseError, ParseErrorKind, Pipeline, PipelineStage, Redirection, RedirectionKind, Separator,
-    Word, WordPart, parse,
+    AndOr, Assignment, Ast, Block, Break, Command, Continue, Expression, ForLoop, FunctionDef,
+    Group, IfElse, List, ListItem, LogicalOperator, Pipeline, PipelineStage, Redirection,
+    RedirectionKind, Return, Separator, WhileLoop, Word, WordPart, parse,
 };
 
 use std::error::Error;

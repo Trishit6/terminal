@@ -13,6 +13,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use crate::variables::VariableStore;
+use shell_core::FunctionDef;
 
 /// Operating-system information detected from the Rust standard library.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +88,8 @@ pub struct Session {
     version: &'static str,
     state: SessionState,
     variables: VariableStore,
+    functions: std::collections::HashMap<String, FunctionDef>,
+    return_value: Option<String>,
 }
 
 impl Session {
@@ -105,6 +108,8 @@ impl Session {
             version: SHELL_VERSION,
             state: SessionState::Running,
             variables: VariableStore::new(),
+            functions: std::collections::HashMap::new(),
+            return_value: None,
         })
     }
 
@@ -123,6 +128,8 @@ impl Session {
             version: SHELL_VERSION,
             state: SessionState::Running,
             variables: VariableStore::with_environment(env),
+            functions: std::collections::HashMap::new(),
+            return_value: None,
         })
     }
 
@@ -260,6 +267,31 @@ impl Session {
     pub fn process_id(&self) -> u32 {
         self.variables.process_id()
     }
+
+    /// Sets a function definition in the session.
+    pub fn set_function(&mut self, name: String, func_def: FunctionDef) {
+        self.functions.insert(name, func_def);
+    }
+
+    /// Gets a function definition from the session.
+    pub fn get_function(&self, name: &str) -> Option<&FunctionDef> {
+        self.functions.get(name)
+    }
+
+    /// Sets a return value for the current function.
+    pub fn set_return_value(&mut self, value: Option<String>) {
+        self.return_value = value;
+    }
+
+    /// Gets the return value from the current function.
+    pub fn get_return_value(&self) -> Option<&String> {
+        self.return_value.as_ref()
+    }
+
+    /// Takes the return value, clearing it.
+    pub fn take_return_value(&mut self) -> Option<String> {
+        self.return_value.take()
+    }
 }
 
 #[cfg(test)]
@@ -291,6 +323,11 @@ mod tests {
             prompt: "test> ".to_owned(),
             history_size: 12,
             color: false,
+            history_enabled: true,
+            history_file: "history.txt".to_owned(),
+            history_filter_secrets: true,
+            suggestions_enabled: true,
+            completion_hidden_files: false,
         };
 
         let session = Session::new(config.clone()).expect("session should start");

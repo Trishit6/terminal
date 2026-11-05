@@ -698,7 +698,7 @@ fn missing_separator_is_reported() {
     assert_error(
         "echo hello (echo world)",
         ParseErrorKind::InvalidCommandStructure {
-            message: "expected `;`, a newline, or end of input",
+            message: "expected `;`, a newline, or end of input".to_string(),
         },
         1,
         12,

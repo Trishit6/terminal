@@ -1,8 +1,9 @@
 //! Recursive-descent parser for the custom shell language.
 
 use super::ast::{
-    AndOr, Assignment, Ast, Command, Expression, Group, List, ListItem, LogicalOperator, Pipeline,
-    PipelineStage, Redirection, RedirectionKind, Separator, Word, WordPart,
+    AndOr, Assignment, Ast, Block, Break, Command, Continue, Expression, ForLoop, FunctionDef,
+    Group, IfElse, List, ListItem, LogicalOperator, Pipeline, PipelineStage, Redirection,
+    RedirectionKind, Return, Separator, WhileLoop, Word, WordPart,
 };
 use super::error::{ParseError, ParseErrorKind};
 use crate::lexer::{Position, QuoteKind, Span, SpannedToken, Token, is_valid_variable_name};
@@ -25,6 +26,7 @@ pub fn parse(tokens: &[SpannedToken]) -> Result<Ast, ParseError> {
 enum Stop {
     EndOfInput,
     RightParenthesis,
+    RightBrace,
 }
 
 struct Parser<'tokens> {
@@ -44,7 +46,7 @@ impl<'tokens> Parser<'tokens> {
         if !self.at_end() {
             return Err(ParseError::new(
                 ParseErrorKind::InvalidCommandStructure {
-                    message: "unexpected token after the command list",
+                    message: "unexpected token after the command list".to_string(),
                 },
                 self.current_span(),
             ));
@@ -74,6 +76,13 @@ impl<'tokens> Parser<'tokens> {
             if self.check(&Token::RightParenthesis) {
                 return Err(ParseError::new(
                     ParseErrorKind::UnexpectedClosingParenthesis,
+                    self.current_span(),
+                ));
+            }
+
+            if self.check(&Token::RightBrace) {
+                return Err(ParseError::new(
+                    ParseErrorKind::UnexpectedClosingBrace,
                     self.current_span(),
                 ));
             }
@@ -111,9 +120,16 @@ impl<'tokens> Parser<'tokens> {
                 ));
             }
 
+            if self.check(&Token::RightBrace) {
+                return Err(ParseError::new(
+                    ParseErrorKind::UnexpectedClosingBrace,
+                    self.current_span(),
+                ));
+            }
+
             return Err(ParseError::new(
                 ParseErrorKind::InvalidCommandStructure {
-                    message: "expected `;`, a newline, or end of input",
+                    message: "expected `;`, a newline, or end of input".to_string(),
                 },
                 self.current_span(),
             ));
@@ -165,6 +181,27 @@ impl<'tokens> Parser<'tokens> {
     }
 
     fn parse_operand(&mut self) -> Result<Expression, ParseError> {
+        if self.check(&Token::If) {
+            return self.parse_if_else();
+        }
+        if self.check(&Token::While) {
+            return self.parse_while_loop();
+        }
+        if self.check(&Token::For) {
+            return self.parse_for_loop();
+        }
+        if self.check(&Token::Function) {
+            return self.parse_function_def();
+        }
+        if self.check(&Token::Return) {
+            return self.parse_return();
+        }
+        if self.check(&Token::Break) {
+            return self.parse_break();
+        }
+        if self.check(&Token::Continue) {
+            return self.parse_continue();
+        }
         if self.looks_like_assignment() {
             Ok(Expression::Assignment(self.parse_assignment()?))
         } else {
@@ -210,7 +247,7 @@ impl<'tokens> Parser<'tokens> {
         if self.current_token().is_some_and(is_word_token) {
             return Err(ParseError::new(
                 ParseErrorKind::InvalidCommandStructure {
-                    message: "assignment values with spaces must be quoted",
+                    message: "assignment values with spaces must be quoted".to_string(),
                 },
                 self.current_span(),
             ));
@@ -219,7 +256,7 @@ impl<'tokens> Parser<'tokens> {
         if self.current_token().and_then(redirection_kind).is_some() {
             return Err(ParseError::new(
                 ParseErrorKind::InvalidCommandStructure {
-                    message: "an assignment cannot have a redirection",
+                    message: "an assignment cannot have a redirection".to_string(),
                 },
                 self.current_span(),
             ));
@@ -228,7 +265,7 @@ impl<'tokens> Parser<'tokens> {
         if self.check(&Token::Pipe) {
             return Err(ParseError::new(
                 ParseErrorKind::InvalidCommandStructure {
-                    message: "an assignment cannot be a pipeline stage",
+                    message: "an assignment cannot be a pipeline stage".to_string(),
                 },
                 self.current_span(),
             ));
@@ -237,7 +274,7 @@ impl<'tokens> Parser<'tokens> {
         if self.check(&Token::LeftParenthesis) {
             return Err(ParseError::new(
                 ParseErrorKind::InvalidCommandStructure {
-                    message: "assignment values must be words",
+                    message: "assignment values must be words".to_string(),
                 },
                 self.current_span(),
             ));
@@ -293,7 +330,7 @@ impl<'tokens> Parser<'tokens> {
         if self.looks_like_assignment() {
             return Err(ParseError::new(
                 ParseErrorKind::InvalidCommandStructure {
-                    message: "an assignment cannot be used as a pipeline stage",
+                    message: "an assignment cannot be used as a pipeline stage".to_string(),
                 },
                 self.current_span(),
             ));
@@ -308,7 +345,7 @@ impl<'tokens> Parser<'tokens> {
 
     fn parse_group(&mut self) -> Result<Group, ParseError> {
         let open_span = self.current_span();
-        self.advance();
+        self.expect(&Token::LeftParenthesis)?;
 
         let list = self.parse_list(Stop::RightParenthesis)?;
 
@@ -331,6 +368,196 @@ impl<'tokens> Parser<'tokens> {
             list,
             span: group_span,
         })
+    }
+
+    fn parse_block(&mut self) -> Result<Block, ParseError> {
+        let open_span = self.current_span();
+        self.expect(&Token::LeftBrace)?;
+
+        let list = self.parse_list(Stop::RightBrace)?;
+
+        if !self.check(&Token::RightBrace) {
+            return Err(ParseError::new(
+                ParseErrorKind::UnclosedParenthesis,
+                open_span,
+            ));
+        }
+
+        let close_span = self.current_span();
+        self.advance();
+        let block_span = Span::new(open_span.start(), close_span.end());
+
+        Ok(Block {
+            list,
+            span: block_span,
+        })
+    }
+
+    fn parse_if_else(&mut self) -> Result<Expression, ParseError> {
+        let if_span = self.current_span();
+        self.expect(&Token::If)?;
+
+        let condition = Box::new(self.parse_and_or()?);
+
+        let then_branch = self.parse_block()?;
+
+        let else_branch = if self.check(&Token::Else) {
+            self.advance();
+            Some(self.parse_block()?)
+        } else {
+            None
+        };
+
+        let end_span = else_branch
+            .as_ref()
+            .map_or_else(|| then_branch.span.end(), |b| b.span.end());
+        let span = Span::new(if_span.start(), end_span);
+
+        Ok(Expression::IfElse(IfElse {
+            condition,
+            then_branch,
+            else_branch,
+            span,
+        }))
+    }
+
+    fn parse_while_loop(&mut self) -> Result<Expression, ParseError> {
+        let while_span = self.current_span();
+        self.expect(&Token::While)?;
+
+        let condition = Box::new(self.parse_and_or()?);
+
+        let body = self.parse_block()?;
+
+        let span = Span::new(while_span.start(), body.span.end());
+
+        Ok(Expression::WhileLoop(WhileLoop {
+            condition,
+            body,
+            span,
+        }))
+    }
+
+    fn parse_for_loop(&mut self) -> Result<Expression, ParseError> {
+        let for_span = self.current_span();
+        self.expect(&Token::For)?;
+
+        let variable = self.expect_word()?;
+
+        self.expect(&Token::In)?;
+
+        let iterable = Box::new(self.parse_and_or()?);
+
+        let body = self.parse_block()?;
+
+        let span = Span::new(for_span.start(), body.span.end());
+
+        Ok(Expression::ForLoop(ForLoop {
+            variable,
+            iterable,
+            body,
+            span,
+        }))
+    }
+
+    fn parse_function_def(&mut self) -> Result<Expression, ParseError> {
+        let func_span = self.current_span();
+        self.expect(&Token::Function)?;
+
+        let name = self.expect_word()?;
+
+        self.expect(&Token::LeftParenthesis)?;
+
+        let mut parameters = Vec::new();
+        while !self.check(&Token::RightParenthesis) {
+            let param = self.expect_word()?;
+            parameters.push(param);
+
+            if !self.check(&Token::Comma) {
+                break;
+            }
+            self.advance();
+        }
+
+        self.expect(&Token::RightParenthesis)?;
+
+        let body = self.parse_block()?;
+
+        let span = Span::new(func_span.start(), body.span.end());
+
+        Ok(Expression::FunctionDef(FunctionDef {
+            name,
+            parameters,
+            body,
+            span,
+        }))
+    }
+
+    fn parse_return(&mut self) -> Result<Expression, ParseError> {
+        let return_span = self.current_span();
+        self.expect(&Token::Return)?;
+
+        let value = if self.current_token().is_some_and(|t| {
+            matches!(
+                t,
+                Token::Word(_)
+                    | Token::String(_)
+                    | Token::Variable(_)
+                    | Token::SpecialVariable(_)
+                    | Token::LeftParenthesis
+            )
+        }) {
+            Some(Box::new(self.parse_and_or()?))
+        } else {
+            None
+        };
+
+        let span = Span::new(return_span.start(), self.current_span().end());
+
+        Ok(Expression::Return(Return { value, span }))
+    }
+
+    fn parse_break(&mut self) -> Result<Expression, ParseError> {
+        let break_span = self.current_span();
+        self.expect(&Token::Break)?;
+        let span = Span::new(break_span.start(), self.current_span().end());
+        Ok(Expression::Break(Break { span }))
+    }
+
+    fn parse_continue(&mut self) -> Result<Expression, ParseError> {
+        let continue_span = self.current_span();
+        self.expect(&Token::Continue)?;
+        let span = Span::new(continue_span.start(), self.current_span().end());
+        Ok(Expression::Continue(Continue { span }))
+    }
+
+    fn expect(&mut self, expected: &Token) -> Result<(), ParseError> {
+        if self.check(expected) {
+            self.advance();
+            Ok(())
+        } else {
+            let msg = format!("expected `{expected:?}`");
+            Err(ParseError::new(
+                ParseErrorKind::InvalidCommandStructure { message: msg },
+                self.current_span(),
+            ))
+        }
+    }
+
+    fn expect_word(&mut self) -> Result<String, ParseError> {
+        let name = match self.current_token() {
+            Some(Token::Word(name)) if is_valid_variable_name(name) => name.clone(),
+            _ => {
+                return Err(ParseError::new(
+                    ParseErrorKind::InvalidCommandStructure {
+                        message: "expected a valid identifier".to_string(),
+                    },
+                    self.current_span(),
+                ));
+            }
+        };
+        self.advance();
+        Ok(name)
     }
 
     fn parse_simple_command(&mut self) -> Result<Command, ParseError> {
@@ -428,7 +655,7 @@ impl<'tokens> Parser<'tokens> {
         let Some(first_part) = word_part(first) else {
             return Err(ParseError::new(
                 ParseErrorKind::InvalidCommandStructure {
-                    message: "expected a word",
+                    message: "expected a word".to_string(),
                 },
                 first.span,
             ));
@@ -444,7 +671,7 @@ impl<'tokens> Parser<'tokens> {
             let Some(part) = word_part(next) else {
                 return Err(ParseError::new(
                     ParseErrorKind::InvalidCommandStructure {
-                        message: "expected a word",
+                        message: "expected a word".to_string(),
                     },
                     next_span,
                 ));
@@ -499,6 +726,7 @@ impl<'tokens> Parser<'tokens> {
         match stop {
             Stop::EndOfInput => self.at_end(),
             Stop::RightParenthesis => self.at_end() || self.check(&Token::RightParenthesis),
+            Stop::RightBrace => self.at_end() || self.check(&Token::RightBrace),
         }
     }
 
@@ -523,6 +751,7 @@ fn is_word_token(token: &Token) -> bool {
             | Token::Variable(_)
             | Token::SpecialVariable(_)
             | Token::Equals
+            | Token::Range
     )
 }
 
@@ -584,6 +813,10 @@ fn word_part(token: &SpannedToken) -> Option<WordPart> {
         Token::SpecialVariable(kind) => Some(WordPart::Special { kind: *kind, span }),
         Token::Equals => Some(WordPart::Unquoted {
             text: "=".to_owned(),
+            span,
+        }),
+        Token::Range => Some(WordPart::Unquoted {
+            text: "..".to_owned(),
             span,
         }),
         _ => None,

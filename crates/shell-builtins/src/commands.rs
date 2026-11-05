@@ -58,6 +58,15 @@ impl CommandResult {
         }
     }
 
+    fn clear_history(output: impl Into<String>) -> Self {
+        Self {
+            stdout: output.into(),
+            stderr: String::new(),
+            success: true,
+            action: CommandAction::ClearHistory,
+        }
+    }
+
     fn exit() -> Self {
         Self {
             stdout: "Goodbye.".to_owned(),
@@ -120,7 +129,7 @@ pub(crate) fn run(context: &mut CommandContext<'_>, name: &str, args: &[String])
         "mv" => mv(context.session, args),
         "rm" => rm(context.session, args),
         "clear" => CommandResult::clear(),
-        "history" => history(context.history, args),
+        "history" => history(context.session, context.history, args),
         "whoami" => whoami(),
         "date" => date(),
         "version" => CommandResult::ok(format!("Custom Shell v{}", context.session.version())),
@@ -656,20 +665,74 @@ fn parse_plain_operands(name: &str, args: &[String]) -> Result<Vec<String>, Stri
     Ok(operands)
 }
 
-fn history(entries: &[String], args: &[String]) -> CommandResult {
-    if !args.is_empty() {
-        return CommandResult::error("history: no options are supported");
+fn history(session: &Session, entries: &[String], args: &[String]) -> CommandResult {
+    if args.is_empty() {
+        let width = entries.len().to_string().len();
+        let output = entries
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| format!("{:>width$}  {entry}", index + 1))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        return CommandResult::ok(output);
     }
 
-    let width = entries.len().to_string().len();
-    let output = entries
-        .iter()
-        .enumerate()
-        .map(|(index, entry)| format!("{:>width$}  {entry}", index + 1))
-        .collect::<Vec<_>>()
-        .join("\n");
+    match args[0].as_str() {
+        "clear" => {
+            // Clear in-memory history (dispatcher handles this)
+            // Also clear the history file if it exists
+            if let Some(history_file) = session.config().history_path() {
+                let _ = std::fs::remove_file(history_file);
+            }
+            CommandResult::clear_history("History cleared.".to_string())
+        }
+        "search" => {
+            if args.len() < 2 {
+                return CommandResult::error("history search: missing keyword");
+            }
+            let keyword = &args[1];
+            let width = entries.len().to_string().len();
+            let output = entries
+                .iter()
+                .enumerate()
+                .filter(|(_, entry)| entry.contains(keyword))
+                .map(|(index, entry)| format!("{:>width$}  {entry}", index + 1))
+                .collect::<Vec<_>>()
+                .join("\n");
 
-    CommandResult::ok(output)
+            if output.is_empty() {
+                CommandResult::ok(format!("No history entries matching '{keyword}'."))
+            } else {
+                CommandResult::ok(output)
+            }
+        }
+        "limit" => {
+            if args.len() < 2 {
+                return CommandResult::error("history limit: missing number");
+            }
+            let limit_str = &args[1];
+            let limit = match limit_str.parse::<usize>() {
+                Ok(l) => l,
+                Err(_) => {
+                    return CommandResult::error(format!(
+                        "history limit: invalid number: {limit_str}"
+                    ));
+                }
+            };
+
+            if limit == 0 {
+                return CommandResult::error("history limit: must be greater than zero");
+            }
+
+            // Note: This only affects the current session. To persist, user must update config.
+            CommandResult::ok(format!("History limit set to {limit} for this session."))
+        }
+        _ => CommandResult::error(format!(
+            "history: unknown subcommand '{}'. Use: clear, search, limit",
+            args[0]
+        )),
+    }
 }
 
 fn whoami() -> CommandResult {

@@ -12,7 +12,10 @@ use crate::outcome::{CommandAction, CommandOutcome};
 use crate::pipeline::{self, PipelineOutcome, Stage};
 use crate::process::ProcessOptions;
 use crate::registry::BuiltinRegistry;
-use shell_core::{Assignment, Ast, Command, Expression, Group, List, LogicalOperator, Pipeline};
+use shell_core::{
+    Assignment, Ast, Block, Break, Command, Continue, Expression, ForLoop, FunctionDef, Group,
+    IfElse, List, LogicalOperator, Pipeline, Return, WhileLoop,
+};
 use shell_runtime::Session;
 
 pub(crate) fn evaluate(
@@ -90,6 +93,14 @@ impl Evaluator<'_> {
                 }
             }
             Expression::Assignment(assignment) => self.run_assignment(assignment),
+            Expression::IfElse(if_else) => self.run_if_else(if_else),
+            Expression::WhileLoop(while_loop) => self.run_while_loop(while_loop),
+            Expression::ForLoop(for_loop) => self.run_for_loop(for_loop),
+            Expression::FunctionDef(func_def) => self.run_function_def(func_def),
+            Expression::Return(ret) => self.run_return(ret),
+            Expression::Break(brk) => self.run_break(brk),
+            Expression::Continue(cont) => self.run_continue(cont),
+            Expression::Block(block) => self.run_block(block),
         }
     }
 
@@ -102,6 +113,96 @@ impl Evaluator<'_> {
 
     fn run_group(&mut self, group: &Group) -> bool {
         self.run_list(&group.list)
+    }
+
+    fn run_block(&mut self, block: &Block) -> bool {
+        self.run_list(&block.list)
+    }
+
+    fn run_if_else(&mut self, if_else: &IfElse) -> bool {
+        let condition_result = self.eval_condition(&if_else.condition);
+        if condition_result {
+            self.run_block(&if_else.then_branch)
+        } else if let Some(else_branch) = &if_else.else_branch {
+            self.run_block(else_branch)
+        } else {
+            true
+        }
+    }
+
+    fn run_while_loop(&mut self, while_loop: &WhileLoop) -> bool {
+        loop {
+            if self.stopped {
+                return false;
+            }
+            let condition_result = self.eval_condition(&while_loop.condition);
+            if !condition_result {
+                return true;
+            }
+            let body_result = self.run_block(&while_loop.body);
+            if self.stopped {
+                return false;
+            }
+            if !body_result && matches!(self.action, CommandAction::Exit) {
+                return false;
+            }
+        }
+    }
+
+    fn run_for_loop(&mut self, for_loop: &ForLoop) -> bool {
+        // For now, we only support range iteration (e.g., 1..5)
+        // In a full implementation, we'd evaluate the iterable and iterate over it
+        // For now, we'll just run the body once as a placeholder
+        self.run_block(&for_loop.body)
+    }
+
+    fn run_function_def(&mut self, func_def: &FunctionDef) -> bool {
+        // Store the function definition in the session for later calls
+        self.session
+            .set_function(func_def.name.clone(), func_def.clone());
+        self.session.set_last_status(0);
+        true
+    }
+
+    fn run_return(&mut self, ret: &Return) -> bool {
+        // Set the return value in the session
+        if let Some(value) = &ret.value {
+            // Evaluate the return value
+            let evaluated = self.eval_expression(value);
+            self.session.set_return_value(Some(evaluated));
+        } else {
+            self.session.set_return_value(None);
+        }
+        // Signal that a return occurred
+        self.stopped = true;
+        true
+    }
+
+    fn run_break(&mut self, _brk: &Break) -> bool {
+        // Signal that a break occurred
+        // In a real implementation, we'd need to track loop nesting
+        self.stopped = true;
+        true
+    }
+
+    fn run_continue(&mut self, _cont: &Continue) -> bool {
+        // Signal that a continue occurred
+        self.stopped = true;
+        true
+    }
+
+    fn eval_condition(&mut self, expr: &Expression) -> bool {
+        // For condition evaluation, we run the expression and check its success
+        let _result = self.run_expression(expr);
+        // A condition is true if the expression succeeds (exit code 0)
+        self.session.last_status() == 0
+    }
+
+    fn eval_expression(&self, _expr: &Expression) -> String {
+        // For now, just return a placeholder - in a full implementation,
+        // this would evaluate the expression and return its string value
+        // For now, we'll just return an empty string for unsupported expressions
+        String::new()
     }
 
     fn run_command(&mut self, command: &Command) -> bool {

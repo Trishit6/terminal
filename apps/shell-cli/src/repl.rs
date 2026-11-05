@@ -85,6 +85,12 @@ where
                     self.write_output(output)?;
                 }
             }
+            CommandAction::ClearHistory => {
+                self.dispatcher.clear_history();
+                if let Some(output) = outcome.output() {
+                    self.write_output(output)?;
+                }
+            }
             CommandAction::Exit => {
                 if let Some(output) = outcome.output() {
                     self.write_output(output)?;

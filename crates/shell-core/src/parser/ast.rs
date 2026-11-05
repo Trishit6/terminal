@@ -94,6 +94,22 @@ pub enum Expression {
     Group(Group),
     /// A variable assignment such as `name = value`.
     Assignment(Assignment),
+    /// An if-else expression.
+    IfElse(IfElse),
+    /// A while loop expression.
+    WhileLoop(WhileLoop),
+    /// A for loop expression.
+    ForLoop(ForLoop),
+    /// A function definition.
+    FunctionDef(FunctionDef),
+    /// A return statement.
+    Return(Return),
+    /// A break statement.
+    Break(Break),
+    /// A continue statement.
+    Continue(Continue),
+    /// A block expression (for function bodies, loop bodies, etc.).
+    Block(Block),
 }
 
 impl Expression {
@@ -106,6 +122,14 @@ impl Expression {
             Self::AndOr(expression) => expression.span,
             Self::Group(group) => group.span,
             Self::Assignment(assignment) => assignment.span,
+            Self::IfElse(if_else) => if_else.span,
+            Self::WhileLoop(while_loop) => while_loop.span,
+            Self::ForLoop(for_loop) => for_loop.span,
+            Self::FunctionDef(func_def) => func_def.span,
+            Self::Return(ret) => ret.span,
+            Self::Break(brk) => brk.span,
+            Self::Continue(cont) => cont.span,
+            Self::Block(block) => block.span,
         }
     }
 }
@@ -242,6 +266,88 @@ pub struct Group {
     /// Commands inside the parentheses.
     pub list: List,
     /// Source range including the opening and closing parentheses.
+    pub span: Span,
+}
+
+/// A block expression (for function bodies, loop bodies, etc.).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Block {
+    /// Statements in the block.
+    pub list: List,
+    /// Source range including the opening and closing braces.
+    pub span: Span,
+}
+
+/// An if-else expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IfElse {
+    /// The condition expression.
+    pub condition: Box<Expression>,
+    /// The then branch.
+    pub then_branch: Block,
+    /// The else branch (if present).
+    pub else_branch: Option<Block>,
+    /// Source range covered by the whole expression.
+    pub span: Span,
+}
+
+/// A while loop expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WhileLoop {
+    /// The condition expression.
+    pub condition: Box<Expression>,
+    /// The loop body.
+    pub body: Block,
+    /// Source range covered by the whole expression.
+    pub span: Span,
+}
+
+/// A for loop expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForLoop {
+    /// The loop variable name.
+    pub variable: String,
+    /// The iterable expression (e.g., a range or list).
+    pub iterable: Box<Expression>,
+    /// The loop body.
+    pub body: Block,
+    /// Source range covered by the whole expression.
+    pub span: Span,
+}
+
+/// A function definition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionDef {
+    /// Function name.
+    pub name: String,
+    /// Parameter names.
+    pub parameters: Vec<String>,
+    /// Function body.
+    pub body: Block,
+    /// Source range covered by the whole definition.
+    pub span: Span,
+}
+
+/// A return statement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Return {
+    /// Optional return value expression.
+    pub value: Option<Box<Expression>>,
+    /// Source range covered by the return statement.
+    pub span: Span,
+}
+
+/// A break statement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Break {
+    /// Source range covered by the break statement.
+    pub span: Span,
+}
+
+/// A continue statement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Continue {
+    /// Source range covered by the continue statement.
     pub span: Span,
 }
 

@@ -29,7 +29,20 @@ pub struct Config {
     pub history_size: usize,
     /// Whether interactive output may use ANSI colors.
     pub color: bool,
+    /// Whether command history persistence is enabled.
+    pub history_enabled: bool,
+    /// Path to the history file (relative to config dir if not absolute).
+    pub history_file: String,
+    /// Whether to filter sensitive-looking commands from history.
+    pub history_filter_secrets: bool,
+    /// Whether inline command suggestions are enabled.
+    pub suggestions_enabled: bool,
+    /// Whether to show hidden files in completion.
+    pub completion_hidden_files: bool,
 }
+
+/// Default history file name.
+pub const DEFAULT_HISTORY_FILE: &str = "history.txt";
 
 impl Default for Config {
     fn default() -> Self {
@@ -37,6 +50,11 @@ impl Default for Config {
             prompt: DEFAULT_PROMPT.to_owned(),
             history_size: DEFAULT_HISTORY_SIZE,
             color: false,
+            history_enabled: true,
+            history_file: DEFAULT_HISTORY_FILE.to_owned(),
+            history_filter_secrets: true,
+            suggestions_enabled: true,
+            completion_hidden_files: false,
         }
     }
 }
@@ -121,11 +139,56 @@ impl Config {
         Some(base.join(SHELL_NAME).join("config.toml"))
     }
 
+    /// Resolves the conventional per-user history file path on this platform.
+    ///
+    /// Uses the same base directory as `default_path()` but places the history
+    /// file alongside the config file. Returns `None` if the base directory
+    /// cannot be determined.
+    #[must_use]
+    pub fn default_history_path() -> Option<PathBuf> {
+        let base = if cfg!(target_os = "windows") {
+            env::var_os("APPDATA").map(PathBuf::from)
+        } else if cfg!(target_os = "macos") {
+            env::var_os("HOME").map(|home| {
+                PathBuf::from(home)
+                    .join("Library")
+                    .join("Application Support")
+            })
+        } else {
+            env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .or_else(|| env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
+        }?;
+
+        Some(base.join(SHELL_NAME).join(DEFAULT_HISTORY_FILE))
+    }
+
+    /// Returns the effective history file path for this configuration.
+    ///
+    /// If `history_file` is an absolute path, it is used directly.
+    /// Otherwise, it is resolved relative to the config directory (same as
+    /// `default_history_path()`'s parent).
+    #[must_use]
+    pub fn history_path(&self) -> Option<PathBuf> {
+        let path = PathBuf::from(&self.history_file);
+        if path.is_absolute() {
+            Some(path)
+        } else {
+            Self::default_history_path().map(|p| p.parent().unwrap().join(&self.history_file))
+        }
+    }
+
     /// Checks values that would be invalid at runtime.
     pub fn validate(&self) -> Result<(), ConfigError> {
         if self.history_size == 0 {
             return Err(ConfigError::Invalid {
                 message: "history_size must be greater than zero".to_owned(),
+            });
+        }
+
+        if self.history_file.trim().is_empty() {
+            return Err(ConfigError::Invalid {
+                message: "history_file must not be empty".to_owned(),
             });
         }
 
@@ -245,6 +308,11 @@ mod tests {
         assert_eq!(config.prompt, DEFAULT_PROMPT);
         assert_eq!(config.history_size, DEFAULT_HISTORY_SIZE);
         assert!(!config.color);
+        assert!(config.history_enabled);
+        assert_eq!(config.history_file, DEFAULT_HISTORY_FILE);
+        assert!(config.history_filter_secrets);
+        assert!(config.suggestions_enabled);
+        assert!(!config.completion_hidden_files);
     }
 
     #[test]
@@ -254,6 +322,11 @@ mod tests {
         assert_eq!(config.prompt, DEFAULT_PROMPT);
         assert_eq!(config.history_size, DEFAULT_HISTORY_SIZE);
         assert!(!config.color);
+        assert!(config.history_enabled);
+        assert_eq!(config.history_file, DEFAULT_HISTORY_FILE);
+        assert!(config.history_filter_secrets);
+        assert!(config.suggestions_enabled);
+        assert!(!config.completion_hidden_files);
     }
 
     #[test]
@@ -262,6 +335,11 @@ mod tests {
             prompt: "dev> ".to_owned(),
             history_size: 42,
             color: false,
+            history_enabled: false,
+            history_file: "custom_history.txt".to_owned(),
+            history_filter_secrets: false,
+            suggestions_enabled: false,
+            completion_hidden_files: true,
         };
 
         let encoded = original.to_toml().expect("config should serialize");
@@ -286,6 +364,23 @@ mod tests {
     }
 
     #[test]
+    fn empty_history_file_is_rejected() {
+        let error = Config::from_toml("history_file = \"\"\n")
+            .expect_err("empty history_file should be invalid");
+
+        assert!(matches!(error, ConfigError::Invalid { .. }));
+    }
+
+    #[test]
+    fn history_path_resolves_relative_to_config_dir() {
+        let config = Config::default();
+        let path = config.history_path();
+        assert!(path.is_some());
+        let path = path.unwrap();
+        assert!(path.ends_with("custom-shell/history.txt"));
+    }
+
+    #[test]
     fn save_and_load_round_trip_on_disk() {
         let directory = temporary_directory();
         let path = directory.join("nested").join("config.toml");
@@ -293,6 +388,11 @@ mod tests {
             prompt: "test> ".to_owned(),
             history_size: 7,
             color: false,
+            history_enabled: false,
+            history_file: "custom_history.txt".to_owned(),
+            history_filter_secrets: false,
+            suggestions_enabled: false,
+            completion_hidden_files: true,
         };
 
         original.save(&path).expect("config should save");

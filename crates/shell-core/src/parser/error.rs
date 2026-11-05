@@ -62,12 +62,14 @@ pub enum ParseErrorKind {
     },
     /// A closing parenthesis appeared outside a group.
     UnexpectedClosingParenthesis,
+    /// A closing brace appeared outside a block.
+    UnexpectedClosingBrace,
     /// A group was opened but never closed.
     UnclosedParenthesis,
     /// The token sequence does not form a valid command structure.
     InvalidCommandStructure {
         /// Human-readable explanation.
-        message: &'static str,
+        message: String,
     },
     /// Input ended where more tokens were required.
     UnexpectedEndOfInput,
@@ -100,6 +102,7 @@ impl fmt::Display for ParseErrorKind {
             Self::UnexpectedClosingParenthesis => {
                 formatter.write_str("unexpected closing parenthesis `)`")
             }
+            Self::UnexpectedClosingBrace => formatter.write_str("unexpected closing brace `}`"),
             Self::UnclosedParenthesis => formatter.write_str("unclosed opening parenthesis `(`"),
             Self::InvalidCommandStructure { message } => {
                 write!(formatter, "invalid command structure: {message}")

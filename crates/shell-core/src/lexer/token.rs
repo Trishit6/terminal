@@ -199,6 +199,34 @@ pub enum Token {
     ///
     /// This token is always appended, including for empty input.
     EndOfInput,
+    /// Opening brace: `{`.
+    LeftBrace,
+    /// Closing brace: `}`.
+    RightBrace,
+    /// Comma: `,`.
+    Comma,
+    /// Keyword: `if`.
+    If,
+    /// Keyword: `else`.
+    Else,
+    /// Keyword: `while`.
+    While,
+    /// Keyword: `for`.
+    For,
+    /// Keyword: `in`.
+    In,
+    /// Keyword: `function`.
+    Function,
+    /// Keyword: `return`.
+    Return,
+    /// Keyword: `break`.
+    Break,
+    /// Keyword: `continue`.
+    Continue,
+    /// Keyword: `run`.
+    Run,
+    /// Range operator: `..`.
+    Range,
 }
 
 /// A [`Token`] together with its source span and quote metadata.

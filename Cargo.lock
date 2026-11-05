@@ -636,6 +636,7 @@ name = "shell-line-editor"
 version = "0.1.0"
 dependencies = [
  "crossterm",
+ "nu-ansi-term",
  "reedline",
 ]
 

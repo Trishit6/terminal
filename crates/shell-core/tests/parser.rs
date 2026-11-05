@@ -1,8 +1,9 @@
 //! Public-API integration tests for the parser and AST.
 
+use shell_core::parser::ParseErrorKind;
 use shell_core::{
-    Command, Expression, LogicalOperator, ParseErrorKind, PipelineStage, RedirectionKind,
-    Separator, WordPart, lex_spanned, parse,
+    Command, Expression, LogicalOperator, PipelineStage, RedirectionKind, Separator, WordPart,
+    lex_spanned, parse,
 };
 
 fn parse_input(input: &str) -> shell_core::Ast {

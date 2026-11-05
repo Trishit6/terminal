@@ -7,6 +7,8 @@ pub enum CommandAction {
     Continue,
     /// Clear the terminal and keep the shell running.
     ClearScreen,
+    /// Clear the command history.
+    ClearHistory,
     /// Shut the shell down cleanly.
     Exit,
 }

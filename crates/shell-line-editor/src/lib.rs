@@ -7,7 +7,9 @@
 mod editor;
 mod prompt;
 
-pub use editor::{LineEditorError, LineEvent, LineReader, ShellEditor};
+pub use editor::{
+    CompletionContext, LineEditorError, LineEvent, LineReader, ShellCompleter, ShellEditor,
+};
 
 use std::collections::VecDeque;
 use std::error::Error;
@@ -207,5 +209,97 @@ mod tests {
         history.reset_navigation();
 
         assert_eq!(history.previous_entry(), Some("two"));
+    }
+}
+
+#[cfg(test)]
+mod editor_tests {
+    use super::*;
+    use reedline::Completer;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    struct MockContext;
+
+    impl CompletionContext for MockContext {
+        fn builtins(&self) -> &[String] {
+            static BUILTINS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+            BUILTINS.get_or_init(|| vec!["help".to_string(), "exit".to_string()])
+        }
+
+        fn executables(&self) -> Vec<String> {
+            vec!["ls".to_string(), "cat".to_string()]
+        }
+
+        fn variables(&self) -> Vec<String> {
+            vec!["HOME".to_string(), "PATH".to_string()]
+        }
+
+        fn exported_variables(&self) -> Vec<String> {
+            vec!["HOME".to_string()]
+        }
+
+        fn working_directory(&self) -> PathBuf {
+            PathBuf::from("/tmp")
+        }
+    }
+
+    #[test]
+    fn editor_can_be_created_with_configured_history() {
+        let editor = ShellEditor::new("test > ", 25, false, None, vec!["help".to_string()]);
+
+        assert!(editor.is_ok());
+    }
+
+    #[test]
+    fn editor_can_be_created_with_history_file() {
+        let temp_dir = std::env::temp_dir();
+        let history_file = temp_dir.join("test_history.txt");
+        let editor = ShellEditor::new(
+            "test > ",
+            25,
+            false,
+            Some(history_file.clone()),
+            vec!["help".to_string()],
+        );
+
+        assert!(editor.is_ok());
+        let _ = std::fs::remove_file(history_file);
+    }
+
+    #[test]
+    fn editor_can_be_created_with_session() {
+        let session = Arc::new(MockContext);
+        let editor = ShellEditor::with_session(
+            "test > ",
+            25,
+            false,
+            None,
+            vec!["help".to_string()],
+            session,
+        );
+
+        assert!(editor.is_ok());
+    }
+
+    #[test]
+    fn completer_completes_builtins() {
+        let mut completer = ShellCompleter::new(vec![
+            "help".to_string(),
+            "history".to_string(),
+            "exit".to_string(),
+        ]);
+        let suggestions = completer.complete("he", 2);
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].value, "help");
+    }
+
+    #[test]
+    fn completer_completes_variables() {
+        let session = Arc::new(MockContext);
+        let mut completer = ShellCompleter::new(vec!["help".to_string()]).with_session(session);
+        let suggestions = completer.complete("$HO", 3);
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].value, "$HOME");
     }
 }

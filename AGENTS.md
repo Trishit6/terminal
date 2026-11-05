@@ -106,26 +106,21 @@ Default `cargo check/build/test/run` from `terminal` therefore fails while
 compiling build scripts/proc macros. Do not misinterpret this as a code bug.
 Do not change mount options without explicit permission.
 
-Approved build workflow (confirmed by the user on 2026-11-05):
-
-```bash
-cd "/run/media/trishit/UBUNTU 26_0/Projects/terminal"
-export CARGO_TARGET_DIR="$HOME/.cache/terminal-target"
-cargo check --workspace --all-targets
-cargo test --workspace
-```
+**Permanent fix:** `.cargo/config.toml` sets `build.target-dir = "/home/trishit/.cache/terminal-target"`.
+All Cargo commands automatically use the ext4 target directory.
+No `export CARGO_TARGET_DIR` is required.
 
 Sources stay only in `terminal`; all build artifacts land on ext4. Do not
 hardcode a target directory in `Cargo.toml` or add OS-specific linker settings.
-There is no `.cargo/config.toml` and no `build.rs`. Do not change mount options
-without explicit permission.
+Do not change mount options without explicit permission.
 
 A source tree on vfat can still be inspected, edited, diffed, formatted, and
 used by `cargo metadata --no-deps`.
 
 ## Commands
 
-Run from the workspace root of the buildable checkout:
+Run from the workspace root of the buildable checkout.
+The `.cargo/config.toml` automatically routes build artifacts to `/home/trishit/.cache/terminal-target`.
 
 ```bash
 cargo fmt --all -- --check

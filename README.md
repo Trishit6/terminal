@@ -64,20 +64,26 @@ cargo run -p shell-cli
 The binary is `custom-shell` (`custom-shell.exe` on Windows). `--help` and
 `--version` are handled by Clap without starting a session.
 
-### Mounted-drive build note
+### VFAT / `showexec` mount note
 
-If the project is stored on a filesystem that cannot execute extensionless
-files (for example a `vfat` mount with `showexec`), keep build artifacts on a
-normal filesystem:
+This project lives on a VFAT filesystem mounted with `showexec`.
+`showexec` only allows execution of files with `.exe/.com/.bat/.btm/.cmd` extensions,
+which breaks Cargo's build scripts and test binaries (extensionless).
+
+**Permanent fix:** `.cargo/config.toml` sets `build.target-dir = "/home/trishit/.cache/terminal-target"`.
+All Cargo commands automatically use the ext4 target directory on the host system.
+No `export CARGO_TARGET_DIR` is required.
 
 ```sh
-export CARGO_TARGET_DIR="$HOME/.cache/terminal-target"
+# Just run cargo commands directly — the config handles it
 cargo check --workspace --all-targets
+cargo build --workspace
 cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo run -p shell-cli
 ```
 
-Do not create a `target/` directory inside such a repository. On a normal
-filesystem, the variable is not needed.
+Do not create a `target/` directory inside the repository.
 
 ## Architecture
 

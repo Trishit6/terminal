@@ -136,6 +136,28 @@ impl<'a> Lexer<'a> {
                     self.bump();
                     (Token::RightParenthesis, None)
                 }
+                '{' => {
+                    self.bump();
+                    (Token::LeftBrace, None)
+                }
+                '}' => {
+                    self.bump();
+                    (Token::RightBrace, None)
+                }
+                ',' => {
+                    self.bump();
+                    (Token::Comma, None)
+                }
+                '.' => {
+                    self.bump();
+                    if self.peek() == Some('.') {
+                        self.bump();
+                        (Token::Range, None)
+                    } else {
+                        // Single dot is part of a word (e.g., file.txt)
+                        (self.lex_word()?, None)
+                    }
+                }
                 '\'' => {
                     let token = self.lex_string('\'', start.line(), start.column())?;
                     let end = self.position();
@@ -182,7 +204,19 @@ impl<'a> Lexer<'a> {
             if character.is_whitespace()
                 || matches!(
                     character,
-                    '|' | '&' | '>' | '<' | ';' | '(' | ')' | '\'' | '"' | '$' | '='
+                    '|' | '&'
+                        | '>'
+                        | '<'
+                        | ';'
+                        | '('
+                        | ')'
+                        | '{'
+                        | '}'
+                        | ','
+                        | '\''
+                        | '"'
+                        | '$'
+                        | '='
                 )
             {
                 break;
@@ -217,7 +251,22 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        Ok(Token::Word(value))
+        // Check if the word is a keyword
+        let token = match value.as_str() {
+            "if" => Token::If,
+            "else" => Token::Else,
+            "while" => Token::While,
+            "for" => Token::For,
+            "in" => Token::In,
+            "function" => Token::Function,
+            "return" => Token::Return,
+            "break" => Token::Break,
+            "continue" => Token::Continue,
+            "run" => Token::Run,
+            _ => Token::Word(value),
+        };
+
+        Ok(token)
     }
 
     fn lex_string(

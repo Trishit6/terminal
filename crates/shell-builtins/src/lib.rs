@@ -75,6 +75,11 @@ impl Dispatcher {
         &self.history
     }
 
+    /// Clears the in-memory command history.
+    pub fn clear_history(&mut self) {
+        self.history.clear();
+    }
+
     /// Dispatches a command line through the lexer, parser, and AST evaluator.
     ///
     /// Empty input is silent. Lexical and syntax errors produce a readable

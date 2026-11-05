@@ -15,10 +15,28 @@
 //! separator      := ';' | NEWLINE
 //!
 //! expression     := operand (('&&' | '||') operand)*
+//!                |  if_else
+//!                |  while_loop
+//!                |  for_loop
+//!                |  function_def
+//!                |  return_stmt
+//!                |  break_stmt
+//!                |  continue_stmt
+//!                |  block
 //! operand        := assignment | pipeline
 //! assignment     := NAME '=' word?
 //! pipeline       := stage ('|' stage)*
 //! stage          := simple_command | group
+//!
+//! if_else        := 'if' expression '{' list '}' ('else' '{' list '}')?
+//! while_loop     := 'while' expression '{' list '}'
+//! for_loop       := 'for' NAME 'in' expression '{' list '}'
+//! function_def   := 'function' NAME '(' parameter_list? ')' '{' list '}'
+//! parameter_list := NAME (',' NAME)*
+//! return_stmt    := 'return' expression?
+//! break_stmt     := 'break'
+//! continue_stmt  := 'continue'
+//! block          := '{' list '}'
 //!
 //! group          := '(' list ')'
 //! simple_command := command_element+
@@ -27,7 +45,7 @@
 //! word           := WORD | STRING | VARIABLE | SPECIAL | '=' | adjacent word segments
 //! ```
 //!
-//! Newlines may also appear immediately after `|`, `&&`, or `||`; they are
+//! Newlines may also appear immediately after `|`, `&&`, `||`, `in`, or `{`; they are
 //! treated as line continuations there rather than as list separators.
 //!
 //! # Precedence and associativity
@@ -38,6 +56,7 @@
 //! 2. Logical AND and OR (`&&`, `||`), equal precedence and left-associative.
 //! 3. Pipelines (`|`), left-associative.
 //! 4. Simple commands, redirections, and grouped expressions.
+//! 5. Control flow constructs (`if`, `while`, `for`, `function`).
 //!
 //! Because `&&` and `||` have equal precedence, `a && b || c` parses as
 //! `((a && b) || c)`, matching the left-to-right short-circuit behavior of
@@ -73,8 +92,9 @@ mod error;
 mod parse;
 
 pub use ast::{
-    AndOr, Assignment, Ast, Command, Expression, Group, List, ListItem, LogicalOperator, Pipeline,
-    PipelineStage, Redirection, RedirectionKind, Separator, Word, WordPart,
+    AndOr, Assignment, Ast, Block, Break, Command, Continue, Expression, ForLoop, FunctionDef,
+    Group, IfElse, List, ListItem, LogicalOperator, Pipeline, PipelineStage, Redirection,
+    RedirectionKind, Return, Separator, WhileLoop, Word, WordPart,
 };
 pub use error::{ParseError, ParseErrorKind};
 pub use parse::parse;
