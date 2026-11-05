@@ -1,4 +1,4 @@
-# custom-shell
+# custom-terminal
 
 An independent, cross-platform command-line shell written in Rust. It runs
 inside an existing terminal and contains its own lexer, parser, AST, command
