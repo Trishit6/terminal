@@ -4,6 +4,7 @@
 //! application version, and running/stopped state. Terminal I/O stays in the
 //! CLI and line-editor crates.
 
+pub mod history;
 pub mod variables;
 
 pub use shell_config::Config;
@@ -90,6 +91,7 @@ pub struct Session {
     variables: VariableStore,
     functions: std::collections::HashMap<String, FunctionDef>,
     return_value: Option<String>,
+    history_limit: Option<usize>,
 }
 
 impl Session {
@@ -110,6 +112,7 @@ impl Session {
             variables: VariableStore::new(),
             functions: std::collections::HashMap::new(),
             return_value: None,
+            history_limit: None,
         })
     }
 
@@ -130,6 +133,7 @@ impl Session {
             variables: VariableStore::with_environment(env),
             functions: std::collections::HashMap::new(),
             return_value: None,
+            history_limit: None,
         })
     }
 
@@ -251,6 +255,25 @@ impl Session {
         self.variables.get_local(name)
     }
 
+    /// Removes a local variable without hiding an inherited variable of the
+    /// same name. Used to restore function-parameter scope.
+    pub fn remove_local(&mut self, name: &str) {
+        self.variables.remove_local(name);
+    }
+
+    /// Session-only history limit set by `history limit`.
+    ///
+    /// `None` means the configured `history_size` applies.
+    #[must_use]
+    pub const fn history_limit(&self) -> Option<usize> {
+        self.history_limit
+    }
+
+    /// Overrides the configured history limit for this session.
+    pub fn set_history_limit(&mut self, limit: usize) {
+        self.history_limit = Some(limit.max(1));
+    }
+
     /// Gets the last command exit status ($?).
     #[must_use]
     pub fn last_status(&self) -> i32 {
@@ -328,6 +351,9 @@ mod tests {
             history_filter_secrets: true,
             suggestions_enabled: true,
             completion_hidden_files: false,
+            startup_animation: true,
+            quiet_startup: false,
+            ..Config::default()
         };
 
         let session = Session::new(config.clone()).expect("session should start");

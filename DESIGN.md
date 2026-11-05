@@ -1,5 +1,5 @@
 ---
-name: "Custom Shell"
+name: "KERNEXT"
 description: "A cross-platform command-line shell built in Rust"
 colors:
   primary: "#4F46E5"
@@ -192,7 +192,13 @@ components:
     padding: "0 1"
 ---
 
-# Design System: Custom Shell
+# Design System: KERNEXT
+
+> **Scope note:** This document preserves the extended KERNEXT design language
+> for future graphical surfaces. The implemented terminal CLI is governed by
+> `docs/BRANDING.md`: it uses the block KERNEXT wordmark (not a 40-column rules
+> frame), the ANSI palette, and a bounded startup reveal. Where this document
+> and the CLI differ, `docs/BRANDING.md` and the shipped code are authoritative.
 
 ## Overview
 
@@ -253,7 +259,7 @@ A single monospace font stack — the terminal's configured font — with weight
 **Character:** Uniform character grid. Hierarchy through weight (400/500/700), case (UPPERCASE for headers), letter-spacing (0.02–0.05em for display), and structural characters — never through proportional fonts or size variation.
 
 ### Hierarchy
-- **Banner Title** (700, 1em, 1.0, +0.05em, UPPERCASE): Shell identity. Centered within box-drawing frame.
+- **Banner Title** (700, 1em, 1.0, +0.05em, UPPERCASE): KERNEXT wordmark. Centered; block mark on wide terminals.
 - **Banner Subtitle** (400, 1em, 1.0, +0.02em): Tagline. Centered, muted.
 - **Prompt** (400, 1em, 1.0): Default input line. Primary color for symbol (`>`), text color for path/context.
 - **Prompt Context** (500, 1em, 1.0): Git branch, venv, exit code — inline, surface background, padded.
@@ -278,8 +284,8 @@ A single monospace font stack — the terminal's configured font — with weight
 Terminal character grid. Single-column flow with aligned sub-structures.
 
 ### Spatial Model
-- **Banner**: 40-char wide box-drawing frame (`=`), centered content, 1-line vertical padding inside frame.
-- **Prompt**: Single line by default. `custom-shell > ` (15 chars) + working directory (truncated at 50% terminal width).
+- **Startup wordmark**: Block KERNEXT mark with tagline and values, 1 blank line above and below.
+- **Prompt**: Single line by default. `kernext ~ $ ` (11 chars) + the shell's working-directory context where configured.
 - **Prompt with Context**: Multi-line. Line 1: context badges (git, venv, $?) in surface boxes. Line 2: prompt symbol + path.
 - **Help Table**: Two columns. Column 1: command name, 10 chars fixed, left-aligned. Column 2: summary, wraps at terminal width minus 12 chars.
 - **Completion Menu**: Popup below cursor. Max 10 rows, scrollable. Item: `[type-badge] name`. Selected row highlighted.
@@ -289,7 +295,7 @@ Terminal character grid. Single-column flow with aligned sub-structures.
 ### Density
 - **Compact**: Default. Single-line prompt, no blank lines between commands.
 - **Breathing**: When context badges appear, 1 blank line before prompt.
-- **Banner**: 1 blank line above and below the framed block.
+- **Startup wordmark**: 1 blank line above and below.
 
 ### Responsive Behavior
 - **< 60 cols**: Prompt truncates path aggressively (`…/dir`). Help wraps summary at 40 chars. Completion menu narrows.
@@ -306,7 +312,7 @@ Terminal character grid. Single-column flow with aligned sub-structures.
 No shadows. No blur. Depth conveyed through **structural characters** and **surface contrast**.
 
 ### Structural Vocabulary
-- **Box-drawing frame** (`=`, `│`, `┌`, `┐`, `└`, `┘`): Banner. Highest visual weight. Encloses identity.
+- **Block wordmark** (`█`, `╗`, `╔`, `╝`, `╚`): Startup identity. Highest visual weight. No enclosing frame.
 - **Surface boxes** (`[`, `]`, `▌`, `▐`): Prompt context badges (git, venv, exit code). Inline, padded.
 - **Continuation arrow** (`::: `): Multiline input. Visual continuation, not elevation.
 - **Search bracket** (`(reverse-search: )`): History search mode. Encloses mode + term.
@@ -315,22 +321,22 @@ No shadows. No blur. Depth conveyed through **structural characters** and **surf
 - **Indent** (`  `): Two-space continuation for error detail, wrapped help summaries.
 
 ### Named Rules
-**The Frame Rule.** Only the startup banner uses a full box-drawing frame. No other element frames itself.
+**The Wordmark Rule.** Only the startup identity uses the block KERNEXT wordmark. No other element frames itself.
 
 **The Surface Rule.** Elevated UI (completion, history search, context badges) uses `Surface` background + `Stone` border. Base UI (prompt, output, help) uses transparent background.
 
-**The Instant Transition Rule.** Terminal UI has no animation. State changes are immediate. Reduce-motion is inherent.
+**The Instant Transition Rule.** Interactive terminal state changes are immediate. The one exception is the startup reveal, which is a short, bounded presentation layer and is disabled by `--no-animation`, `--quiet`, non-interactive output, or `startup_animation = false`.
 
 ## Shapes
 
 **Corner Language:** Sharp (0 radius). Terminal character grid has no curves. Box-drawing characters create perceived corners.
 
-**Border Language:** Single-line box-drawing (`│`, `─`, `┌`, `┐`, `└`, `┘`) for banner. Single-character brackets (`[`, `]`) for inline surfaces. No double-line, no rounded.
+**Border Language:** Single-character brackets (`[`, `]`) for inline surfaces. No double-line borders, no rounded corners. The startup wordmark uses block glyphs as letterforms, not as a border.
 
 **Clipping:** Text truncates with `…` (U+2026) when exceeding allocated columns. No ellipsis in middle — only left-truncate paths, right-truncate command names.
 
 **Recurring Silhouettes:**
-- **Banner frame**: 40-char wide, 5-line tall (top rule, title, subtitle, bottom rule, blank).
+- **Wordmark block**: Six-row block mark at 80+ columns, compact three-row mark at 24–79, plain `KERNEXT` below 24.
 - **Context badge**: `[main]` `[(venv)]` `[0]` — variable width, fixed height (1 line), surface bg.
 - **Completion row**: `[F] filename` ` [C] command` — type badge + name, 1 line each.
 - **Error block**: `command: error message` + `  detail line` — 2+ lines, left-aligned.
@@ -339,19 +345,22 @@ No shadows. No blur. Depth conveyed through **structural characters** and **surf
 
 ### Prompt
 **Character:** Compact, informative, color-accented symbol.
-- **Default**: `custom-shell > ` (Primary color `>`, Text color path).
+- **Default**: `kernext ~ $ ` (Primary color `$`, Text color `kernext ~`).
 - **With Context**: Multi-line. Line 1: `[git:main] [(venv)] [0]` (Surface bg, Text fg, Stone border). Line 2: prompt symbol + truncated path.
 - **Continuation**: `::: ` (Muted).
 - **States**: Default / Context / Continuation / History Search.
 - **Color**: `>` in Primary. Context badges: git=Primary, venv=Success, $!=Error (when non-zero).
 
-### Banner
-**Character:** Framed identity block. Appears once at startup.
-- **Frame**: 40-char `=` rules top/bottom. `│` sides implicit via centered content.
-- **Title**: "CUSTOM SHELL" (Banner Title style, centered).
-- **Subtitle**: "Independent Rust CLI" (Banner Subtitle style, centered, Muted).
-- **Info lines**: Version, Platform, Working directory (left-aligned inside frame, Muted label + Text value).
-- **Hints**: "Type 'help'…", "Type 'exit'…" (Muted, centered).
+### Startup wordmark
+**Character:** Cinematic but honest identity block. Appears once at startup.
+- **Wordmark**: Six-row block KERNEXT logo at 80+ columns, compact three-row mark at 24–79, plain `KERNEXT` below 24. No decorative frame.
+- **Identity**: `KERNEXT  [v<version>]`, followed by `THE NEXT CORE OF COMPUTING.` and `OPEN • POWERFUL • INDEPENDENT`.
+- **Checklist**: Real initialization stages with `[OK]` or `[FAIL]` prefixes; never fake progress.
+- **Session line**: Version, platform, architecture, and working directory in muted text.
+- **Welcome**: `Welcome to KERNEXT.` plus `Build. Execute. Innovate.` and a `help` hint.
+- **Modes**: Animated on an interactive terminal; static for piped output, `NO_COLOR`, `TERM=dumb`, or `--no-animation`; nothing for `--quiet` or `quiet_startup`.
+- **Narrow terminals**: Reduce the wordmark rather than wrapping or clipping it.
+- **Accessibility**: Restore the cursor and reset colors on error; honor reduced-motion expectations through the plain and quiet modes.
 
 ### Help
 **Character:** Scannable two-column reference. Dense but aligned.
@@ -390,13 +399,13 @@ No shadows. No blur. Depth conveyed through **structural characters** and **surf
 ## Do's and Don'ts
 
 ### Do:
-- **Do** use box-drawing (`=`, `│`, `┌`, `┐`, `└`, `┘`) only for the startup banner frame.
+- **Do** use block glyphs only for the startup KERNEXT wordmark, and only where the mark requires them.
 - **Do** use square brackets (`[`, `]`) for inline context badges (git, venv, exit code).
 - **Do** align help command names to exactly 10 characters. Truncate with `…` or pad with spaces.
 - **Do** truncate prompt path at 50% terminal width, left-truncating with `…/`.
 - **Do** prefix every error with `command: ` in bold (Oxblood when colored).
 - **Do** indent error detail lines by exactly 2 spaces.
-- **Do** use Primary (Deep Indigo) only for: prompt symbol `>`, active completion row, history search, version in banner.
+- **Do** use Primary (Deep Indigo) only for: prompt symbol `$`, active completion row, history search, version in the startup identity.
 - **Do** use semantic colors (Success/Warning/Error) only for state — never for decoration.
 - **Do** render all UI fully functional in 16-color monochrome. Color is progressive enhancement.
 - **Do** keep completion menu to max 10 rows with scroll indicator.
@@ -406,10 +415,10 @@ No shadows. No blur. Depth conveyed through **structural characters** and **surf
 - **Don't** use double-line box-drawing (`═`, `║`, `╔`, `╗`, `╚`, `╝`) anywhere.
 - **Don't** use rounded corners or Unicode box-drawing with curves — terminal grid is sharp.
 - **Don't** add decorative colors, gradients, or background washes.
-- **Don't** frame command output, help sections, or error blocks — only the banner frames.
+- **Don't** frame command output, help sections, or error blocks — nothing frames itself.
 - **Don't** exceed 10% Primary color coverage on any screen.
 - **Don't** use Success/Warning/Error colors for non-state purposes (e.g., don't color command names in help).
-- **Don't** animate, fade, or transition any UI element. Terminal changes are instant.
+- **Don't** animate, fade, or transition UI state changes — the only permitted motion is the bounded startup reveal, which must honor `--no-animation`, `--quiet`, and non-interactive output.
 - **Don't** show a cursor/pointer in completion menu — highlight the whole row.
 - **Don't** wrap command names in help — truncate at 10 chars with `…`.
 - **Don't** use proportional fonts, variable font sizes, or letter-spacing outside defined scale.

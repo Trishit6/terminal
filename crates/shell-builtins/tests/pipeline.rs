@@ -78,7 +78,7 @@ impl TempDirectory {
     fn new(label: &str) -> Self {
         let unique = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
         let path = env::temp_dir().join(format!(
-            "custom-shell-pipeline-{label}-{}-{unique}",
+            "kernext-pipeline-{label}-{}-{unique}",
             std::process::id()
         ));
         fs::create_dir_all(&path).expect("temp directory should be created");
@@ -680,6 +680,30 @@ fn quoted_operators_are_ordinary_argument_text() {
 
     assert_eq!(outcome.output(), Some("a | b && c > d\n"), "{outcome:?}");
     assert!(outcome.success(), "{outcome:?}");
+}
+
+#[test]
+fn external_after_a_redirected_producer_receives_empty_input() {
+    let directory = TempDirectory::new("redirected-external-input");
+    let emit = install_helper(&directory, "emit-helper");
+    let count = install_helper(&directory, "count-helper");
+    let mut dispatcher = dispatcher(&directory);
+    let mut session = session(&directory);
+
+    let command = format!(
+        "{} > out.txt | {}",
+        helper_invocation(&emit, "emit"),
+        helper_invocation(&count, "count")
+    );
+    let outcome = dispatcher.execute(&mut session, &command);
+
+    assert!(outcome.success(), "{outcome:?}");
+    let output = outcome.output().unwrap_or("");
+    assert!(
+        output.contains("PIPELINE:count=0"),
+        "later stage must not read the terminal: {output}"
+    );
+    assert!(read(&directory, "out.txt").contains("PIPELINE:alpha"));
 }
 
 #[test]

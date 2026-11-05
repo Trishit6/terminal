@@ -1,6 +1,6 @@
 [package]
 name = "shell-config"
-description = "Configuration model and persistence for the custom shell"
+description = "Configuration model and persistence for KERNEXT"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

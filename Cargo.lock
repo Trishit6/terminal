@@ -611,6 +611,7 @@ name = "shell-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "crossterm",
  "shell-builtins",
  "shell-config",
  "shell-core",
@@ -638,6 +639,7 @@ dependencies = [
  "crossterm",
  "nu-ansi-term",
  "reedline",
+ "shell-runtime",
 ]
 
 [[package]]

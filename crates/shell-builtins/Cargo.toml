@@ -1,6 +1,6 @@
 [package]
 name = "shell-builtins"
-description = "Built-in registry, AST evaluator, and external process execution for the custom shell"
+description = "Built-in registry, AST evaluator, and external process execution for KERNEXT"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

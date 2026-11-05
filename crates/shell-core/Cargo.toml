@@ -1,6 +1,6 @@
 [package]
 name = "shell-core"
-description = "Shared primitives, errors, and lexer for the custom shell"
+description = "Shared primitives, errors, and language engine for KERNEXT"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

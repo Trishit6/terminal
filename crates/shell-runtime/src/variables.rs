@@ -185,6 +185,16 @@ impl VariableStore {
         self.locals.get(&key).map(|e| e.value.clone())
     }
 
+    /// Removes a local variable without hiding an inherited variable of the
+    /// same name.
+    ///
+    /// This is used to restore function-parameter scope after a call. Unlike
+    /// [`VariableStore::unset`], it does not shadow the inherited environment.
+    pub fn remove_local(&mut self, name: &str) {
+        let key = NormalizedKey::new(name);
+        self.locals.remove(&key);
+    }
+
     /// Sets a local variable.
     ///
     /// If `exported` is true, the variable will be passed to child processes.

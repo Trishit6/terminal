@@ -2,12 +2,15 @@
 //! programs.
 //!
 //! The evaluator walks the Phase 4 AST directly. It supports command lists
-//! (`;` and newlines), groups, short-circuiting `&&`/`||`, pipelines, and
-//! redirections. Every simple command is checked against the native registry
-//! first; only names that are not built-ins are handed to the process executor
-//! through the pipeline engine.
+//! (`;` and newlines), groups, short-circuiting `&&`/`||`, pipelines,
+//! redirections, assignments, `if`/`else`, `while`, `for`, function definitions
+//! and calls, `return`, `break`, `continue`, and background syntax.
+//!
+//! Every simple command is checked against the native registry first; only
+//! names that are not built-ins are handed to the process executor through the
+//! pipeline engine.
 
-use crate::expand::expand_assignment_value;
+use crate::expand::{expand_assignment_value, expand_word};
 use crate::outcome::{CommandAction, CommandOutcome};
 use crate::pipeline::{self, PipelineOutcome, Stage};
 use crate::process::ProcessOptions;
@@ -17,6 +20,14 @@ use shell_core::{
     Group, IfElse, List, LogicalOperator, Pipeline, Return, Separator, WhileLoop,
 };
 use shell_runtime::Session;
+
+/// Hard ceiling on nested function calls. It prevents an accidental runaway
+/// recursion from exhausting the native stack.
+const MAX_FUNCTION_DEPTH: usize = 128;
+
+/// Hard ceiling on loop iterations. It protects the shell from a programming
+/// mistake that would otherwise spin forever and consume the machine.
+const MAX_LOOP_ITERATIONS: usize = 1_000_000;
 
 pub(crate) fn evaluate(
     registry: &BuiltinRegistry,
@@ -35,10 +46,27 @@ pub(crate) fn evaluate(
         success: true,
         exit_code: None,
         stopped: false,
+        flow: Flow::Normal,
+        return_value: None,
+        call_depth: 0,
+        loop_depth: 0,
     };
 
     evaluator.run_list(&ast.list);
     evaluator.finish()
+}
+
+/// Non-local control flow requested by a statement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Flow {
+    /// Continue evaluating normally.
+    Normal,
+    /// Leave the nearest enclosing loop.
+    Break,
+    /// Skip to the next iteration of the nearest enclosing loop.
+    Continue,
+    /// Leave the current function.
+    Return,
 }
 
 struct Evaluator<'a> {
@@ -51,6 +79,10 @@ struct Evaluator<'a> {
     success: bool,
     exit_code: Option<i32>,
     stopped: bool,
+    flow: Flow,
+    return_value: Option<String>,
+    call_depth: usize,
+    loop_depth: usize,
 }
 
 impl Evaluator<'_> {
@@ -58,18 +90,48 @@ impl Evaluator<'_> {
         let mut status = true;
 
         for item in &list.items {
-            if self.stopped {
+            if self.stopped || self.flow != Flow::Normal {
                 break;
+            }
+
+            // `&` is parsed as a list separator. Background execution is
+            // currently synchronous, but it is isolated: an `exit`, `clear`,
+            // `break`, or `continue` inside it must not control the foreground
+            // shell or the enclosing loop.
+            if item.separator == Some(Separator::Background) {
+                let stopped = self.stopped;
+                let action = self.action;
+                let flow = self.flow;
+
+                status = self.run_expression(&item.expression);
+
+                self.stopped = stopped;
+                self.action = action;
+                self.flow = flow;
+
+                if !stopped {
+                    self.session.set_last_status(0);
+                }
+
+                self.success = status;
+                continue;
             }
 
             status = self.run_expression(&item.expression);
 
-            // Handle background separator - return immediately without waiting
-            if matches!(item.separator, Some(Separator::Background)) {
-                // Background execution - return immediately without waiting for completion
-                // The background job has already been started in run_background
-                return true;
+            if self.stopped || self.flow != Flow::Normal {
+                break;
             }
+
+            debug_assert!(
+                matches!(
+                    item.separator,
+                    None | Some(Separator::Semicolon)
+                        | Some(Separator::Newline)
+                        | Some(Separator::Background)
+                ),
+                "the parser only produces known separators"
+            );
 
             self.success = status;
         }
@@ -85,7 +147,7 @@ impl Evaluator<'_> {
             Expression::AndOr(expression) => {
                 let left = self.run_expression(&expression.left);
 
-                if self.stopped {
+                if self.stopped || self.flow != Flow::Normal {
                     return left;
                 }
 
@@ -129,18 +191,31 @@ impl Evaluator<'_> {
     }
 
     fn run_background(&mut self, bg: &Background) -> bool {
-        // For background execution, we run the expression but don't wait for it
-        // In a full implementation, we'd track the job and return immediately
-        // For now, we run it but don't wait (simulate background by not blocking)
-        // In a real implementation, we'd track the job ID and process
+        // Background syntax is evaluated synchronously for now. Preserve the
+        // parent's exit/return state so a `exit` inside the background
+        // expression cannot terminate the foreground shell.
+        let stopped = self.stopped;
+        let action = self.action;
+        let flow = self.flow;
         let _ = self.run_expression(&bg.expression);
-        // Background jobs always return success immediately
-        self.session.set_last_status(0);
+        self.stopped = stopped;
+        self.action = action;
+        self.flow = flow;
+
+        if !stopped {
+            self.session.set_last_status(0);
+        }
+
         true
     }
 
     fn run_if_else(&mut self, if_else: &IfElse) -> bool {
         let condition_result = self.eval_condition(&if_else.condition);
+
+        if self.stopped || self.flow == Flow::Return {
+            return condition_result;
+        }
+
         if condition_result {
             self.run_block(&if_else.then_branch)
         } else if let Some(else_branch) = &if_else.else_branch {
@@ -151,33 +226,141 @@ impl Evaluator<'_> {
     }
 
     fn run_while_loop(&mut self, while_loop: &WhileLoop) -> bool {
+        let mut last_status = true;
+        let mut iterations = 0usize;
+
         loop {
-            if self.stopped {
-                return false;
+            if self.stopped || self.flow == Flow::Return {
+                return last_status;
             }
+
             let condition_result = self.eval_condition(&while_loop.condition);
+
+            if self.stopped || self.flow == Flow::Return {
+                return last_status;
+            }
+
             if !condition_result {
-                return true;
+                return last_status;
             }
-            let body_result = self.run_block(&while_loop.body);
+
+            iterations += 1;
+            if iterations > MAX_LOOP_ITERATIONS {
+                return self.fail(format!(
+                    "while: iteration limit of {MAX_LOOP_ITERATIONS} exceeded"
+                ));
+            }
+
+            self.loop_depth += 1;
+            last_status = self.run_block(&while_loop.body);
+            self.loop_depth -= 1;
+
+            match self.flow {
+                Flow::Break => {
+                    self.flow = Flow::Normal;
+                    return true;
+                }
+                Flow::Continue => {
+                    self.flow = Flow::Normal;
+                }
+                Flow::Return => return last_status,
+                Flow::Normal => {}
+            }
+
             if self.stopped {
-                return false;
-            }
-            if !body_result && matches!(self.action, CommandAction::Exit) {
-                return false;
+                return last_status;
             }
         }
     }
 
     fn run_for_loop(&mut self, for_loop: &ForLoop) -> bool {
-        // For now, we only support range iteration (e.g., 1..5)
-        // In a full implementation, we'd evaluate the iterable and iterate over it
-        // For now, we'll just run the body once as a placeholder
-        self.run_block(&for_loop.body)
+        let values = match self.collect_for_values(&for_loop.iterable) {
+            Ok(values) => values,
+            Err(message) => return self.fail(message),
+        };
+
+        if values.len() > MAX_LOOP_ITERATIONS {
+            return self.fail(format!(
+                "for: iteration limit of {MAX_LOOP_ITERATIONS} exceeded"
+            ));
+        }
+
+        let mut last_status = true;
+
+        for value in values {
+            if self.stopped || self.flow == Flow::Return {
+                return last_status;
+            }
+
+            self.session.set_variable(&for_loop.variable, value, false);
+
+            self.loop_depth += 1;
+            last_status = self.run_block(&for_loop.body);
+            self.loop_depth -= 1;
+
+            match self.flow {
+                Flow::Break => {
+                    self.flow = Flow::Normal;
+                    return true;
+                }
+                Flow::Continue => {
+                    self.flow = Flow::Normal;
+                }
+                Flow::Return => return last_status,
+                Flow::Normal => {}
+            }
+
+            if self.stopped {
+                return last_status;
+            }
+        }
+
+        last_status
+    }
+
+    /// Turns the iterable of a `for` loop into concrete string values.
+    ///
+    /// Supported forms:
+    /// - a list of words: `for name in alice bob`
+    /// - a numeric range: `for i in 1..5` or `for i in 5..1`
+    /// - a variable whose value contains whitespace-separated words
+    fn collect_for_values(&self, iterable: &Expression) -> Result<Vec<String>, String> {
+        let Expression::Command(command) = iterable else {
+            return Err(
+                "for: iterable must be a word list, a variable, or a numeric range".to_owned(),
+            );
+        };
+
+        let mut values = Vec::new();
+
+        for word in std::iter::once(&command.name).chain(command.arguments.iter()) {
+            let expanded = expand_word(word, self.session);
+
+            if word.has_variable() && expanded.split_whitespace().count() > 1 {
+                values.extend(expanded.split_whitespace().map(str::to_owned));
+            } else {
+                values.push(expanded);
+            }
+        }
+
+        if values.len() == 1
+            && let Some((start, end)) = parse_range_endpoints(&values[0])
+        {
+            let length = start.abs_diff(end) as usize + 1;
+            if length > MAX_LOOP_ITERATIONS {
+                return Err(format!(
+                    "for: range length exceeds the iteration limit of {MAX_LOOP_ITERATIONS}"
+                ));
+            }
+
+            return Ok(expand_range(start, end));
+        }
+
+        Ok(values)
     }
 
     fn run_function_def(&mut self, func_def: &FunctionDef) -> bool {
-        // Store the function definition in the session for later calls
+        // Store the function definition in the session for later calls.
         self.session
             .set_function(func_def.name.clone(), func_def.clone());
         self.session.set_last_status(0);
@@ -185,47 +368,89 @@ impl Evaluator<'_> {
     }
 
     fn run_return(&mut self, ret: &Return) -> bool {
-        // Set the return value in the session
-        if let Some(value) = &ret.value {
-            // Evaluate the return value
-            let evaluated = self.eval_expression(value);
-            self.session.set_return_value(Some(evaluated));
-        } else {
-            self.session.set_return_value(None);
+        if self.call_depth == 0 {
+            return self.fail("return: not inside a function");
         }
-        // Signal that a return occurred
-        self.stopped = true;
+
+        self.return_value = ret.value.as_ref().map(|value| self.eval_value(value));
+        self.flow = Flow::Return;
         true
     }
 
     fn run_break(&mut self, _brk: &Break) -> bool {
-        // Signal that a break occurred
-        // In a real implementation, we'd need to track loop nesting
-        self.stopped = true;
+        if self.loop_depth == 0 {
+            return self.fail("break: not inside a loop");
+        }
+
+        self.flow = Flow::Break;
         true
     }
 
     fn run_continue(&mut self, _cont: &Continue) -> bool {
-        // Signal that a continue occurred
-        self.stopped = true;
+        if self.loop_depth == 0 {
+            return self.fail("continue: not inside a loop");
+        }
+
+        self.flow = Flow::Continue;
         true
     }
 
     fn eval_condition(&mut self, expr: &Expression) -> bool {
-        // For condition evaluation, we run the expression and check its success
-        let _result = self.run_expression(expr);
-        // A condition is true if the expression succeeds (exit code 0)
+        let result = self.run_expression(expr);
+
+        if self.stopped || self.flow == Flow::Return {
+            return result;
+        }
+
+        // A condition is true when the expression succeeds (exit code 0).
         self.session.last_status() == 0
     }
 
-    fn eval_expression(&self, _expr: &Expression) -> String {
-        // For now, just return a placeholder - in a full implementation,
-        // this would evaluate the expression and return its string value
-        // For now, we'll just return an empty string for unsupported expressions
-        String::new()
+    /// Evaluates a value-like expression without running it as a command.
+    ///
+    /// `return 5` and `return $name` are not commands; they are values. This
+    /// helper expands their words and joins them with single spaces.
+    fn eval_value(&self, expr: &Expression) -> String {
+        match expr {
+            Expression::Command(command) => {
+                let mut words = Vec::with_capacity(command.arguments.len() + 1);
+                words.push(expand_word(&command.name, self.session));
+                words.extend(
+                    command
+                        .arguments
+                        .iter()
+                        .map(|argument| expand_word(argument, self.session)),
+                );
+                words.join(" ")
+            }
+            Expression::Assignment(assignment) => expand_assignment_value(assignment, self.session),
+            _ => String::new(),
+        }
     }
 
     fn run_command(&mut self, command: &Command) -> bool {
+        let name = expand_word(&command.name, self.session);
+
+        // Built-ins always win. Functions are checked next, before external
+        // process resolution.
+        if self.registry.get(&name).is_none()
+            && let Some(function) = self.session.get_function(&name).cloned()
+        {
+            if !command.redirections.is_empty() {
+                return self.fail(format!(
+                    "{name}: redirections on function calls are not supported yet"
+                ));
+            }
+
+            let arguments: Vec<String> = command
+                .arguments
+                .iter()
+                .map(|argument| expand_word(argument, self.session))
+                .collect();
+
+            return self.call_function(&name, &function, &arguments);
+        }
+
         let outcome = pipeline::execute(
             &[Stage::Command(command)],
             self.session,
@@ -236,6 +461,63 @@ impl Evaluator<'_> {
         );
 
         self.apply(outcome)
+    }
+
+    fn call_function(&mut self, name: &str, function: &FunctionDef, arguments: &[String]) -> bool {
+        if self.call_depth >= MAX_FUNCTION_DEPTH {
+            return self.fail(format!(
+                "{name}: maximum function recursion depth of {MAX_FUNCTION_DEPTH} exceeded"
+            ));
+        }
+
+        // Parameters are scoped to the call. Capture any existing local values
+        // so they can be restored after the function returns.
+        let locals = self.session.local_variables();
+        let mut previous = Vec::with_capacity(function.parameters.len());
+
+        for parameter in &function.parameters {
+            let existing = locals
+                .iter()
+                .find(|(local, _, _)| local == parameter)
+                .map(|(_, value, exported)| (value.clone(), *exported));
+            previous.push((parameter.clone(), existing));
+        }
+
+        for (index, parameter) in function.parameters.iter().enumerate() {
+            let value = arguments.get(index).cloned().unwrap_or_default();
+            self.session.set_variable(parameter, value, false);
+        }
+
+        self.call_depth += 1;
+        self.flow = Flow::Normal;
+        let body_status = self.run_block(&function.body);
+
+        let returned = if self.flow == Flow::Return {
+            let value = self.return_value.take();
+            self.flow = Flow::Normal;
+            value
+        } else {
+            None
+        };
+
+        self.call_depth -= 1;
+
+        for (parameter, existing) in previous {
+            match existing {
+                Some((value, exported)) => self.session.set_variable(&parameter, value, exported),
+                None => {
+                    self.session.remove_local(&parameter);
+                }
+            }
+        }
+
+        if let Some(value) = returned {
+            let status = value.trim().parse::<i32>().unwrap_or(0);
+            self.session.set_last_status(status);
+            return status == 0;
+        }
+
+        body_status
     }
 
     fn run_pipeline(&mut self, pipeline: &Pipeline) -> bool {
@@ -267,7 +549,7 @@ impl Evaluator<'_> {
             self.action = CommandAction::ClearScreen;
         }
 
-        // Update $? from the pipeline outcome
+        // Update $? from the pipeline outcome.
         if let Some(code) = outcome.exit_code {
             self.session.set_last_status(code);
         } else if outcome.success {
@@ -279,6 +561,14 @@ impl Evaluator<'_> {
         self.exit_code = outcome.exit_code;
         self.success = outcome.success;
         outcome.success
+    }
+
+    fn fail(&mut self, message: impl Into<String>) -> bool {
+        self.append(&message.into());
+        self.success = false;
+        self.exit_code = None;
+        self.session.set_last_status(1);
+        false
     }
 
     fn append(&mut self, text: &str) {
@@ -301,5 +591,23 @@ impl Evaluator<'_> {
         };
 
         CommandOutcome::with_status(self.action, output, self.success, self.exit_code)
+    }
+}
+
+/// Parses `start..end` or `start..=end` into its endpoints.
+fn parse_range_endpoints(value: &str) -> Option<(i64, i64)> {
+    let (start, end) = value.split_once("..")?;
+    let start = start.trim().parse::<i64>().ok()?;
+    let end = end.trim().strip_prefix('=').unwrap_or(end.trim());
+    let end = end.parse::<i64>().ok()?;
+    Some((start, end))
+}
+
+/// Expands an inclusive numeric range, descending when `start > end`.
+fn expand_range(start: i64, end: i64) -> Vec<String> {
+    if start <= end {
+        (start..=end).map(|value| value.to_string()).collect()
+    } else {
+        (end..=start).rev().map(|value| value.to_string()).collect()
     }
 }

@@ -7,12 +7,62 @@ use crate::prompt::ShellPrompt;
 use crossterm::cursor::MoveTo;
 use crossterm::execute;
 use crossterm::terminal::{Clear, ClearType};
-use reedline::{Completer, FileBackedHistory, Reedline, Signal, Span, Suggestion};
+use reedline::{
+    Completer, DefaultHinter, EditCommand, Emacs, FileBackedHistory, History, HistoryItem,
+    HistoryItemId, KeyCode, KeyModifiers, Reedline, ReedlineEvent, SearchQuery, Signal, Span,
+    Suggestion, default_emacs_keybindings,
+};
+use shell_runtime::history::is_sensitive_command;
 use std::error::Error;
 use std::fmt;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
+
+/// User-configurable editor behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorSettings {
+    /// Keep credential-looking commands out of persistent and in-memory history.
+    pub history_filter_secrets: bool,
+    /// Show inline history-based suggestions while typing.
+    pub suggestions_enabled: bool,
+    /// Include dotfiles in path completion.
+    pub completion_hidden_files: bool,
+}
+
+impl Default for EditorSettings {
+    fn default() -> Self {
+        Self {
+            history_filter_secrets: true,
+            suggestions_enabled: true,
+            completion_hidden_files: false,
+        }
+    }
+}
+
+/// Clears the visible terminal and its scrollback, then moves the cursor home.
+///
+/// This is the shared terminal-clearing primitive used by the `clear` built-in
+/// through [`LineReader::clear_screen`]. Writing to a non-terminal stream should
+/// be avoided by the caller; [`ShellEditor::clear_screen`] performs that check.
+pub fn clear_terminal<W: Write>(writer: &mut W) -> io::Result<()> {
+    execute!(
+        writer,
+        Clear(ClearType::All),
+        Clear(ClearType::Purge),
+        MoveTo(0, 0)
+    )?;
+    writer.flush()
+}
+
+/// Clears the terminal only when the destination is an actual terminal.
+fn clear_terminal_if<W: Write>(writer: &mut W, is_terminal: bool) -> io::Result<()> {
+    if is_terminal {
+        clear_terminal(writer)
+    } else {
+        Ok(())
+    }
+}
 
 /// A single result from reading interactive input.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,6 +89,7 @@ pub trait LineReader {
 pub struct ShellCompleter {
     builtins: Vec<String>,
     session: Option<Arc<dyn CompletionContext>>,
+    show_hidden_files: bool,
 }
 
 impl ShellCompleter {
@@ -46,11 +97,17 @@ impl ShellCompleter {
         Self {
             builtins,
             session: None,
+            show_hidden_files: false,
         }
     }
 
     pub fn with_session(mut self, session: Arc<dyn CompletionContext>) -> Self {
         self.session = Some(session);
+        self
+    }
+
+    pub fn with_hidden_files(mut self, show: bool) -> Self {
+        self.show_hidden_files = show;
         self
     }
 }
@@ -244,6 +301,11 @@ impl ShellCompleter {
         if let Ok(entries) = std::fs::read_dir(&search_dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
+
+                if !self.show_hidden_files && !file_name.starts_with('.') && name.starts_with('.') {
+                    continue;
+                }
+
                 if name.starts_with(&file_name) {
                     let full_path = if prefix.contains('/') {
                         format!("{}/{}", prefix.trim_end_matches(&file_name), name)
@@ -334,6 +396,67 @@ impl ShellCompleter {
     }
 }
 
+/// History wrapper that refuses to persist or surface credential-looking
+/// commands.
+struct FilteredHistory {
+    inner: FileBackedHistory,
+    filter_secrets: bool,
+}
+
+impl History for FilteredHistory {
+    fn save(&mut self, item: HistoryItem) -> reedline::Result<HistoryItem> {
+        // Only new entries are filtered; updates to existing entries must still
+        // reach the backing history.
+        if self.filter_secrets && item.id.is_none() && is_sensitive_command(&item.command_line) {
+            return Ok(item);
+        }
+
+        self.inner.save(item)
+    }
+
+    fn load(&self, id: HistoryItemId) -> reedline::Result<HistoryItem> {
+        self.inner.load(id)
+    }
+
+    fn count(&self, query: SearchQuery) -> reedline::Result<i64> {
+        self.inner.count(query)
+    }
+
+    fn search(&self, query: SearchQuery) -> reedline::Result<Vec<HistoryItem>> {
+        let mut items = self.inner.search(query)?;
+
+        if self.filter_secrets {
+            items.retain(|item| !is_sensitive_command(&item.command_line));
+        }
+
+        Ok(items)
+    }
+
+    fn update(
+        &mut self,
+        id: HistoryItemId,
+        updater: &dyn Fn(HistoryItem) -> HistoryItem,
+    ) -> reedline::Result<()> {
+        self.inner.update(id, updater)
+    }
+
+    fn clear(&mut self) -> reedline::Result<()> {
+        self.inner.clear()
+    }
+
+    fn delete(&mut self, id: HistoryItemId) -> reedline::Result<()> {
+        self.inner.delete(id)
+    }
+
+    fn sync(&mut self) -> io::Result<()> {
+        self.inner.sync()
+    }
+
+    fn session(&self) -> Option<reedline::HistorySessionId> {
+        self.inner.session()
+    }
+}
+
 impl ShellEditor {
     /// Creates an editor with persistent command history and completion.
     ///
@@ -346,21 +469,14 @@ impl ShellEditor {
         history_file: Option<PathBuf>,
         builtins: Vec<String>,
     ) -> Result<Self, LineEditorError> {
-        let history = if let Some(path) = history_file {
-            FileBackedHistory::with_file(history_size, path).map_err(LineEditorError::History)?
-        } else {
-            FileBackedHistory::new(history_size).map_err(LineEditorError::History)?
-        };
-
-        let completer = ShellCompleter::new(builtins);
-
-        Ok(Self {
-            editor: Reedline::create()
-                .with_history(Box::new(history))
-                .with_ansi_colors(ansi_colors)
-                .with_completer(Box::new(completer)),
-            prompt: ShellPrompt::new(prompt),
-        })
+        Self::build(
+            prompt,
+            history_size,
+            ansi_colors,
+            history_file,
+            ShellCompleter::new(builtins),
+            EditorSettings::default(),
+        )
     }
 
     /// Creates an editor with a session for context-aware completion.
@@ -372,22 +488,119 @@ impl ShellEditor {
         builtins: Vec<String>,
         session: Arc<dyn CompletionContext>,
     ) -> Result<Self, LineEditorError> {
-        let history = if let Some(path) = history_file {
+        Self::with_session_settings(
+            prompt,
+            history_size,
+            ansi_colors,
+            history_file,
+            builtins,
+            session,
+            EditorSettings::default(),
+        )
+    }
+
+    /// Creates an editor with a completion session and explicit user settings.
+    pub fn with_session_settings(
+        prompt: impl Into<String>,
+        history_size: usize,
+        ansi_colors: bool,
+        history_file: Option<PathBuf>,
+        builtins: Vec<String>,
+        session: Arc<dyn CompletionContext>,
+        settings: EditorSettings,
+    ) -> Result<Self, LineEditorError> {
+        let completer = ShellCompleter::new(builtins)
+            .with_session(session)
+            .with_hidden_files(settings.completion_hidden_files);
+
+        Self::build(
+            prompt,
+            history_size,
+            ansi_colors,
+            history_file,
+            completer,
+            settings,
+        )
+    }
+
+    fn build(
+        prompt: impl Into<String>,
+        history_size: usize,
+        ansi_colors: bool,
+        history_file: Option<PathBuf>,
+        completer: ShellCompleter,
+        settings: EditorSettings,
+    ) -> Result<Self, LineEditorError> {
+        let inner = if let Some(path) = history_file {
             FileBackedHistory::with_file(history_size, path).map_err(LineEditorError::History)?
         } else {
             FileBackedHistory::new(history_size).map_err(LineEditorError::History)?
         };
 
-        let completer = ShellCompleter::new(builtins).with_session(session);
+        let history = FilteredHistory {
+            inner,
+            filter_secrets: settings.history_filter_secrets,
+        };
+
+        let mut editor = Reedline::create()
+            .with_history(Box::new(history))
+            .with_ansi_colors(ansi_colors)
+            .with_completer(Box::new(completer))
+            .with_edit_mode(Box::new(Emacs::new(portable_keybindings())));
+
+        if settings.suggestions_enabled {
+            editor = editor.with_hinter(Box::new(DefaultHinter::default()));
+        }
 
         Ok(Self {
-            editor: Reedline::create()
-                .with_history(Box::new(history))
-                .with_ansi_colors(ansi_colors)
-                .with_completer(Box::new(completer)),
+            editor,
             prompt: ShellPrompt::new(prompt),
         })
     }
+
+    /// Applies an ANSI color sequence to the interactive prompt.
+    ///
+    /// Passing `None` leaves the prompt uncolored.
+    #[must_use]
+    pub fn with_prompt_color(mut self, color: Option<String>) -> Self {
+        self.prompt = self.prompt.with_color(color);
+        self
+    }
+}
+
+/// Keybindings that behave the same on Linux, macOS, Windows, and BSDs.
+///
+/// Home/End are already Emacs defaults, but binding them explicitly means a
+/// terminal that reports them distinctly still moves to the line boundaries.
+/// Page Up/Down walk command history, which is what most developers expect from
+/// a shell prompt.
+fn portable_keybindings() -> reedline::Keybindings {
+    let mut keybindings = default_emacs_keybindings();
+
+    let line_start = ReedlineEvent::Edit(vec![EditCommand::MoveToLineStart { select: false }]);
+    let line_end = ReedlineEvent::Edit(vec![EditCommand::MoveToLineEnd { select: false }]);
+
+    for modifier in [KeyModifiers::NONE, KeyModifiers::SHIFT] {
+        keybindings.add_binding(modifier, KeyCode::Home, line_start.clone());
+        keybindings.add_binding(modifier, KeyCode::End, line_end.clone());
+    }
+
+    keybindings.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::PageUp,
+        ReedlineEvent::PreviousHistory,
+    );
+    keybindings.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::PageDown,
+        ReedlineEvent::NextHistory,
+    );
+
+    // Some terminals send Ctrl+Home/Ctrl+End for document-level movement.
+    keybindings.add_binding(KeyModifiers::CONTROL, KeyCode::Home, line_start);
+    keybindings.add_binding(KeyModifiers::CONTROL, KeyCode::End, line_end);
+
+    keybindings
 }
 
 impl LineReader for ShellEditor {
@@ -408,9 +621,10 @@ impl LineReader for ShellEditor {
     fn clear_screen(&mut self) -> Result<(), LineEditorError> {
         let mut stdout = io::stdout();
 
-        execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))
-            .and_then(|()| stdout.flush())
-            .map_err(LineEditorError::Clear)
+        // Redirected or piped output must stay clean: never write escape
+        // sequences into a file or another program's input.
+        let is_terminal = stdout.is_terminal();
+        clear_terminal_if(&mut stdout, is_terminal).map_err(LineEditorError::Clear)
     }
 }
 
@@ -456,5 +670,73 @@ mod tests {
         let editor = ShellEditor::new("test > ", 25, false, None, vec![]);
 
         assert!(editor.is_ok());
+    }
+
+    #[test]
+    fn clear_terminal_writes_screen_and_scrollback_sequences() {
+        let mut buffer = Vec::new();
+
+        clear_terminal(&mut buffer).expect("clearing should write to an in-memory buffer");
+
+        let text = String::from_utf8(buffer).expect("terminal sequences should be valid UTF-8");
+        assert!(
+            text.contains("\x1b[2J"),
+            "missing clear-screen sequence: {text:?}"
+        );
+        assert!(
+            text.contains("\x1b[3J"),
+            "missing scrollback purge: {text:?}"
+        );
+        assert!(
+            text.contains("\x1b[1;1H"),
+            "missing cursor-home sequence: {text:?}"
+        );
+    }
+
+    #[test]
+    fn clearing_is_suppressed_for_non_terminal_output() {
+        let mut buffer = Vec::new();
+
+        clear_terminal_if(&mut buffer, false).expect("non-terminal clearing should be a no-op");
+
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn ctrl_l_is_bound_to_clear_screen_in_the_default_editor() {
+        use reedline::{KeyCode, KeyModifiers, ReedlineEvent, default_emacs_keybindings};
+
+        let keybindings = default_emacs_keybindings();
+
+        assert_eq!(
+            keybindings.find_binding(KeyModifiers::CONTROL, KeyCode::Char('l')),
+            Some(ReedlineEvent::ClearScreen)
+        );
+    }
+
+    #[test]
+    fn portable_keybindings_cover_navigation_keys() {
+        let keybindings = portable_keybindings();
+
+        assert_eq!(
+            keybindings.find_binding(KeyModifiers::NONE, KeyCode::PageUp),
+            Some(ReedlineEvent::PreviousHistory)
+        );
+        assert_eq!(
+            keybindings.find_binding(KeyModifiers::NONE, KeyCode::PageDown),
+            Some(ReedlineEvent::NextHistory)
+        );
+        assert!(matches!(
+            keybindings.find_binding(KeyModifiers::NONE, KeyCode::Home),
+            Some(ReedlineEvent::Edit(_))
+        ));
+        assert!(matches!(
+            keybindings.find_binding(KeyModifiers::NONE, KeyCode::End),
+            Some(ReedlineEvent::Edit(_))
+        ));
+        assert_eq!(
+            keybindings.find_binding(KeyModifiers::CONTROL, KeyCode::Char('l')),
+            Some(ReedlineEvent::ClearScreen)
+        );
     }
 }

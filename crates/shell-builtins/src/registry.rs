@@ -1,5 +1,6 @@
 //! Native command metadata and registration.
 
+use shell_core::PRODUCT_NAME;
 use std::error::Error;
 use std::fmt;
 
@@ -118,7 +119,7 @@ impl BuiltinRegistry {
     /// Builds the help text from the registered command metadata.
     #[must_use]
     pub fn help_text(&self) -> String {
-        let mut output = String::from("Available commands:\n");
+        let mut output = format!("{PRODUCT_NAME} — Available commands:\n");
 
         for command in &self.commands {
             output.push_str(&format!("  {:<8} {}\n", command.name(), command.summary()));
@@ -232,7 +233,7 @@ mod tests {
         let registry = BuiltinRegistry::with_defaults();
         let help = registry.help_text();
 
-        assert!(help.starts_with("Available commands:"));
+        assert!(help.starts_with("KERNEXT — Available commands:"));
         for command in DEFAULT_BUILTINS {
             assert!(help.contains(command.name()));
         }

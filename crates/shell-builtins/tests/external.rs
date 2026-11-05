@@ -60,7 +60,7 @@ impl TempDirectory {
     fn new(label: &str) -> Self {
         let unique = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
         let path = env::temp_dir().join(format!(
-            "custom-shell-external-{label}-{}-{unique}",
+            "kernext-external-{label}-{}-{unique}",
             std::process::id()
         ));
         fs::create_dir_all(&path).expect("temp directory should be created");
@@ -404,6 +404,30 @@ fn dispatcher_reports_unknown_externals_without_stopping() {
     assert!(
         follow_up
             .output()
-            .is_some_and(|output| output.starts_with("Custom Shell v"))
+            .is_some_and(|output| output.starts_with("KERNEXT v"))
     );
+}
+
+#[test]
+fn session_exports_reach_external_children() {
+    let options = ProcessOptions::new()
+        .with_stdio(StdioMode::Capture)
+        .with_env(HELPER_ENV, "echo");
+    let mut dispatcher = Dispatcher::with_options(options);
+    let mut session = session();
+
+    let exported = dispatcher.execute(&mut session, "export CUSTOM_SHELL_TEST_VALUE=from-shell");
+    assert!(exported.success(), "{exported:?}");
+
+    let command = format!(
+        "{} --exact {HELPER_TEST} --nocapture {ARGUMENT_MARKER}",
+        executable_text()
+    );
+    let outcome = dispatcher.execute(&mut session, &command);
+
+    let output = outcome
+        .output()
+        .expect("external command should produce output");
+    assert!(output.contains("env=from-shell"), "{output}");
+    assert!(outcome.success(), "{outcome:?}");
 }

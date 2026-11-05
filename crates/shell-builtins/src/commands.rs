@@ -7,6 +7,7 @@
 use crate::outcome::CommandAction;
 use crate::registry::BuiltinRegistry;
 use chrono::Local;
+use shell_core::PRODUCT_NAME;
 use shell_runtime::Session;
 use std::env;
 use std::fs::{self, OpenOptions};
@@ -132,7 +133,7 @@ pub(crate) fn run(context: &mut CommandContext<'_>, name: &str, args: &[String])
         "history" => history(context.session, context.history, args),
         "whoami" => whoami(),
         "date" => date(),
-        "version" => CommandResult::ok(format!("Custom Shell v{}", context.session.version())),
+        "version" => CommandResult::ok(format!("{PRODUCT_NAME} v{}", context.session.version())),
         "exit" => CommandResult::exit(),
         "export" => export_builtin(context.session, args),
         "unset" => unset_builtin(context.session, args),
@@ -665,7 +666,7 @@ fn parse_plain_operands(name: &str, args: &[String]) -> Result<Vec<String>, Stri
     Ok(operands)
 }
 
-fn history(session: &Session, entries: &[String], args: &[String]) -> CommandResult {
+fn history(session: &mut Session, entries: &[String], args: &[String]) -> CommandResult {
     if args.is_empty() {
         let width = entries.len().to_string().len();
         let output = entries
@@ -725,7 +726,9 @@ fn history(session: &Session, entries: &[String], args: &[String]) -> CommandRes
                 return CommandResult::error("history limit: must be greater than zero");
             }
 
-            // Note: This only affects the current session. To persist, user must update config.
+            // This only affects the current session. To persist, update the
+            // configuration file.
+            session.set_history_limit(limit);
             CommandResult::ok(format!("History limit set to {limit} for this session."))
         }
         _ => CommandResult::error(format!(

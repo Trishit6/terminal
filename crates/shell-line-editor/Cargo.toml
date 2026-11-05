@@ -1,6 +1,6 @@
 [package]
 name = "shell-line-editor"
-description = "Interactive line editing and history primitives for the custom shell"
+description = "Interactive line editing and history primitives for KERNEXT"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,4 +8,5 @@ rust-version.workspace = true
 [dependencies]
 crossterm.workspace = true
 reedline.workspace = true
+shell-runtime.workspace = true
 nu-ansi-term = "0.50"

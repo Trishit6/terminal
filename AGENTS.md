@@ -2,19 +2,37 @@
 
 ## Project
 
-Custom Rust CLI shell. Phase 1–11 are implemented. Do not start Phase 12 unless
-explicitly asked.
+KERNEXT is a custom Rust CLI shell. The CLI phase is implemented, including
+branding, startup presentation, genuine `clear`/Ctrl+L, and config loading.
+Do not start KERNEXT Web or Desktop work unless explicitly asked.
+
+Official identity:
+
+- Product: **KERNEXT**
+- Tagline: **The Next Core of Computing.**
+- Values: **OPEN • POWERFUL • INDEPENDENT**
+- Support phrase: **Build. Execute. Innovate.**
+- Prompt: `kernext ~ $ `
+- Executable: `kernext`
+
+Internal crate and package names stay `shell-*`. Do not rename crates,
+directories, or Rust identifiers just to match the brand. User-facing output,
+the executable name, configuration paths, installers, and documentation use
+KERNEXT.
+
 Pipelines and redirections are implemented natively; keep them that way.
 
 Workspace members:
 
-- `apps/shell-cli` — binary package `shell-cli`; executable name is `custom-shell`
-- `crates/shell-core` — lexer, parser, AST, spans, shared errors
+- `apps/shell-cli` — binary package `shell-cli`; executable name is `kernext`
+- `crates/shell-core` — branding constants, lexer, parser, AST, spans, shared errors
 - `crates/shell-builtins` — native command registry, AST evaluator, built-ins,
-  pipeline engine, external process executor, variable expansion
-- `crates/shell-runtime` — `Session` (cwd, config, lifecycle, platform, variables)
-- `crates/shell-line-editor` — Reedline integration behind `LineReader`
+  pipeline engine, external process executor, variable expansion, background syntax
+- `crates/shell-runtime` — `Session` (cwd, config, lifecycle, platform, variables, functions)
+- `crates/shell-line-editor` — Reedline integration behind `LineReader`, clear helpers
 - `crates/shell-config` — TOML configuration model
+- `installers/` — Linux, macOS, Windows installation scripts
+- `docs/` — branding and architecture documentation
 
 Execution flow is:
 
@@ -27,6 +45,61 @@ input -> shell-core lexer -> parser -> AST -> shell-builtins evaluator
 
 Do not bypass this by splitting input with `split_whitespace`. `Dispatcher`
 must keep using `lex_spanned` + `parse`.
+
+## Branding
+
+- Constants live in `crates/shell-core/src/lib.rs`: `SHELL_NAME`, `PRODUCT_NAME`,
+  `TAGLINE`, `VALUES`, `MOTTO`, `VERSION`.
+- `SHELL_NAME = "kernext"` drives config paths, Clap help/version, and the binary.
+- Do not hardcode versions. Use `VERSION` / `Session::version()`.
+- The CLI is text-only. Do not add a graphical splash or mountain wallpaper to
+  it; those belong to future Web/Desktop surfaces.
+- Keep branding consistent across README, installers, release workflow, help,
+  `version`, and startup.
+- See `docs/BRANDING.md` for logo, palette, and voice rules.
+
+## Startup experience
+
+- Renderer: `apps/shell-cli/src/startup.rs`. It is presentation-only; it must
+  never parse, evaluate, or launch commands.
+- `cli::run` emits each checklist item only after the corresponding subsystem
+  actually finishes initializing. Never fake progress.
+- Modes: `Animated`, `Plain`, `Quiet`. Resolve them with `resolve_mode`.
+- Animated only on an interactive terminal with animation enabled.
+- Piped/redirected output is plain. `NO_COLOR` and `TERM=dumb` disable ANSI.
+- Narrow terminal fallback: full 6-row logo at 80+, compact 3-row at 24–79,
+  plain `KERNEXT` below 24.
+- `--quiet` and `--no-animation` are CLI flags.
+- `startup_animation` and `quiet_startup` are config fields.
+- The animated wordmark is drawn in place for a bounded number of frames while
+  a 24-bit gradient derived from `Theme::gradient_rgb` and elapsed time sweeps
+  across every character. Keep it continuous and palette-driven.
+- `Startup` implements `Drop` to restore the cursor and reset colors on errors.
+- Never add artificial boot delays. The animation step is a short presentation
+  pause, not a progress simulation.
+- `Repl::with_dispatcher` exists so the command engine stage is reported only
+  after `Dispatcher::new()` succeeds.
+- `terminal_font` / `apply_terminal_font` are opt-in OSC 50 hints. Many
+  terminals ignore them; never require the font to be present.
+- Keybindings are explicit: Home/End, Ctrl+Home/Ctrl+End, Page Up (previous
+  history), Page Down (next history). Keep them portable and test the bindings.
+- The installers animate a color-cycling banner and use real command spinners
+  (or an equivalent progress display on Windows). Disable animation for
+  non-terminals, `NO_COLOR`, and `TERM=dumb`.
+
+## Screen clearing
+
+- `clear` returns `CommandAction::ClearScreen` only from a single command, never
+  from a pipeline stage.
+- Shared helpers: `clear_terminal` and `clear_terminal_if` in
+  `crates/shell-line-editor/src/editor.rs`.
+- Clearing writes `CSI 2 J`, `CSI 3 J`, and `CSI 1;1 H` via `crossterm`; do not
+  shell out to `clear`/`cls` and do not print blank lines as a substitute.
+- Suppress clearing when stdout is not a terminal.
+- Ctrl+L is bound by Reedline's default Emacs keybindings to
+  `ReedlineEvent::ClearScreen`; verify it with a test rather than rebinding.
+- Keep tests for repeated clear, clear after output, non-interactive clearing,
+  and clear inside a pipeline.
 
 ## External execution (Phase 6)
 
@@ -106,13 +179,15 @@ Default `cargo check/build/test/run` from `terminal` therefore fails while
 compiling build scripts/proc macros. Do not misinterpret this as a code bug.
 Do not change mount options without explicit permission.
 
-**Permanent fix:** `.cargo/config.toml` sets `build.target-dir = "/home/trishit/.cache/terminal-target"`.
+**Permanent fix:** `.cargo/config.toml` sets
+`build.target-dir = "/home/trishit/.cache/terminal-target"`.
 All Cargo commands automatically use the ext4 target directory.
 No `export CARGO_TARGET_DIR` is required.
 
 Sources stay only in `terminal`; all build artifacts land on ext4. Do not
 hardcode a target directory in `Cargo.toml` or add OS-specific linker settings.
-Do not change mount options without explicit permission.
+Do not create a repo-local `target/` directory. Do not change mount options
+without explicit permission.
 
 A source tree on vfat can still be inspected, edited, diffed, formatted, and
 used by `cargo metadata --no-deps`.
@@ -147,36 +222,47 @@ helper; they do not require `python`, `git`, `sort`, `grep`, or any other
 particular program.
 
 The interactive shell requires a real TTY. Piping input directly into
-`cargo run` fails Reedline with a cursor-position error. Use a terminal, or
+`cargo run` is rejected because KERNEXT is interactive. Use a terminal, or
 `screen`/`tmux`, for manual verification.
 
-## Background Execution (Phase 11)
+## Background execution (synchronous)
 
-- Lexer: `Token::Background` for `&` operator.
-- Parser: `Separator::Background` for `&` separator in command lists.
-- AST: `Expression::Background` with boxed inner expression.
-- Parser: `parse_list` recognizes `&` as a separator.
-- Evaluator: `run_background` executes expression but returns immediately.
-- `run_list` handles `Separator::Background` by returning early without waiting.
-- Token `&` is recognized in lexer (no longer rejected as `UnexpectedCharacter`).
+- Lexer: `Token::Background` for `&`.
+- Parser: `Separator::Background` for `&` in command lists.
+- AST: `Expression::Background` with a boxed inner expression.
+- `parse_list` recognizes `&` as a separator.
+- `run_background` and the `Separator::Background` branch in `run_list`
+  evaluate the expression synchronously and return success. They do not detach,
+  track a PID, reap, or notify.
+- Background evaluation is isolated: `exit`, `clear`, `break`, and `continue`
+  inside the expression cannot control the foreground shell or enclosing loop.
+- Quoted `&` stays literal.
+- **Do not claim background execution works as real job control.** It is syntax
+  that parses and evaluates, not an asynchronous job system.
 
-### Background syntax
-
-- `command &` runs command in background.
-- Multiple background commands can be chained: `cmd1 & cmd2 &`.
-- Background separator has same precedence as `;` and newline.
-- `echo "hello & world"` does NOT become background (quoted `&` is literal).
-
-## Scripting Language (Phase 10)
+## Scripting runtime
 
 - Variable store: `crates/shell-runtime/src/variables.rs` (`VariableStore`).
 - Session integration: `crates/shell-runtime/src/lib.rs` (methods on `Session`).
 - Expansion: `crates/shell-builtins/src/expand.rs` (`expand_word`, etc.).
 - Assignment evaluation: `crates/shell-builtins/src/eval.rs` (`run_assignment`).
-- Built-ins: `crates/shell-builtins/src/commands.rs` (`export_builtin`, `unset_builtin`, `env_builtin`, `set_builtin`).
-- Registry: `crates/shell-builtins/src/registry.rs` (4 new commands, total 21).
-- Lexer tokens: `Token::Equals`, `Token::SpecialVariable`, `SpecialVariable::{LastStatus, ProcessId}`.
-- AST: `Expression::Assignment`, `WordPart::Special`, variable-name helpers in `shell-core`.
+- Built-ins: `crates/shell-builtins/src/commands.rs` (`export_builtin`,
+  `unset_builtin`, `env_builtin`, `set_builtin`).
+- Registry: `crates/shell-builtins/src/registry.rs` (21 commands).
+- Lexer tokens: `Token::Equals`, `Token::SpecialVariable`,
+  `SpecialVariable::{LastStatus, ProcessId}`.
+- AST: `Expression::Assignment`, `WordPart::Special`, variable-name helpers in
+  `shell-core`.
+- `if`/`else`, `while`, `for`, functions, `return`, `break`, and `continue`
+  are evaluated natively in `eval.rs`.
+- `for` accepts word lists, variables containing whitespace-separated words, and
+  ascending/descending numeric ranges (`1..5`, `5..1`).
+- Function parameters are scoped to each call and restored afterwards.
+  `MAX_FUNCTION_DEPTH = 128` and `MAX_LOOP_ITERATIONS = 1_000_000` bound
+  runaway recursion and loops.
+- Built-ins win over functions, and functions win over external programs.
+- Known gaps: no `source`/`.` script loading, no redirections on function calls,
+  and no closures or arrays. Do not describe those as implemented.
 
 ### Assignment syntax
 
@@ -223,6 +309,30 @@ The interactive shell requires a real TTY. Piping input directly into
 - Single command still mutates real session.
 - `$?` updated from final stage outcome.
 
+## Configuration
+
+- Model: `crates/shell-config/src/lib.rs`.
+- CLI loads `Config::default_path()` with `load_or_default` at startup.
+- Missing file → defaults. Invalid file → warning plus defaults.
+- Fields: `prompt`, `history_size`, `color`, `history_enabled`, `history_file`,
+  `history_filter_secrets`, `suggestions_enabled`, `completion_hidden_files`,
+  `startup_animation`, `quiet_startup`, `accent_color`, `secondary_color`,
+  `highlight_color`, `success_color`, `error_color`, `prompt_color`,
+  `terminal_font`, `apply_terminal_font`.
+- Defaults: prompt `kernext ~ $ `, `color = true`, `startup_animation = true`,
+  `quiet_startup = false`, `accent_color = "bright-cyan"`,
+  `secondary_color = "bright-blue"`, `highlight_color = "bright-magenta"`,
+  `success_color = "bright-green"`, `error_color = "bright-red"`,
+  `prompt_color = "bright-cyan"`, `terminal_font = ""`,
+  `apply_terminal_font = false`.
+- Colors accept ANSI names (`cyan`, `bright-cyan`), `colorN`/bare `0`–`255`,
+  and `#RGB`/`#RRGGBB`. Validate every color with `parse_color`.
+- `terminal_font` must be control-character-free; `apply_terminal_font = true`
+  requires a non-empty font. OSC 50 is a hint, not a guarantee.
+- `SHELL_NAME` determines config directory names (`kernext`).
+- `history_file` resolves relative to the config directory unless absolute.
+- Keep unknown fields rejected (`deny_unknown_fields`) and `history_size > 0`.
+
 ## Built-in behavior
 
 - Registry and command metadata: `crates/shell-builtins/src/registry.rs`.
@@ -230,6 +340,8 @@ The interactive shell requires a real TTY. Piping input directly into
 - AST evaluator: `crates/shell-builtins/src/eval.rs`.
 - 21 commands: help, pwd, cd, ls, mkdir, touch, cat, echo, cp, mv, rm, clear,
   history, whoami, date, version, exit, export, unset, env, set.
+- `version` prints `KERNEXT v<version>`. `help` starts with
+  `KERNEXT — Available commands:`.
 - `Session::working_directory` is the single source of truth for relative
   paths. `cd` validates/canonicalizes and updates the session; it deliberately
   does not call process-wide `env::set_current_dir`, preserving test isolation.
@@ -261,23 +373,25 @@ The interactive shell requires a real TTY. Piping input directly into
   lines (`PIPELINE:`) separate helper output from libtest harness output.
 - Variable tests: `crates/shell-runtime/src/variables.rs` (unit tests),
   `crates/shell-builtins/src/expand.rs` (expansion unit tests).
-- The full suite currently has 306 tests; do not weaken or delete tests to make
+- Startup tests live in `apps/shell-cli/src/startup.rs`; clear/Ctrl+L tests live
+  in `apps/shell-cli/tests/repl.rs` and
+  `crates/shell-line-editor/src/editor.rs`.
+- The full suite currently has 356 tests; do not weaken or delete tests to make
   a build pass.
 
 ## Git and uncommitted work
 
-The repository has one commit (`first commit`). All Phase 3.1–7 work is
-uncommitted, and several Phase 5/6/7 files are untracked. **Never** run
-`git reset --hard`, `git checkout -- .`, `git clean`, or any command that
-discards working-tree changes without explicit permission. Do not commit,
-amend, rebase, or push unless asked.
+The repository has one commit (`first commit`). All later work is uncommitted,
+and several files are untracked. **Never** run `git reset --hard`,
+`git checkout -- .`, `git clean`, or any command that discards working-tree
+changes without explicit permission. Do not commit, amend, rebase, or push
+unless asked.
 
 Before risky migration or cleanup, snapshot tracked/untracked work outside the
 repo.
 
 ## Documentation
 
-`README.md` describes the implemented Phase 1–7 state, including external
-execution, pipelines, redirections, and the mounted-drive `CARGO_TARGET_DIR`
-requirement. Keep it in sync when behavior changes; trust the source and tests
-if they ever disagree.
+Keep `README.md`, `AGENTS.md`, `RELEASE_NOTES.md`, `docs/BRANDING.md`, and
+`docs/ARCHITECTURE.md` in sync with behavior. Trust the source and tests if docs
+disagree. Clearly label Web and Desktop as future plans, never as implemented.

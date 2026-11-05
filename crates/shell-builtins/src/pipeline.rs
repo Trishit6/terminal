@@ -260,6 +260,10 @@ pub(crate) fn execute(
             None => match previous.take() {
                 Previous::Pipe(pipe) => (Stdio::from(pipe), None),
                 Previous::Buffer(buffer) => (Stdio::piped(), Some(buffer)),
+                // Only the first stage may inherit the terminal. A later stage
+                // whose producer redirected its output away must receive an
+                // empty stream rather than silently reading the user's input.
+                Previous::None if index > 0 => (Stdio::null(), None),
                 Previous::None => {
                     if options.stdio() == StdioMode::Capture {
                         (Stdio::null(), None)
@@ -303,10 +307,15 @@ pub(crate) fn execute(
             None => (Stdio::inherit(), false),
         };
 
+        // Children see the session's exported variables, including variables
+        // that were unset locally, rather than inheriting the shell's entire
+        // host environment directly.
+        let child_environment = session.child_environment(options.environment());
         let external = ExternalCommand::new(&spec.name)
             .args(spec.arguments.iter().cloned())
             .current_dir(session.working_directory().to_path_buf())
-            .envs(options.environment().iter().cloned());
+            .clear_env()
+            .envs(child_environment);
 
         let mut child = match external.spawn_with(stdin_stdio, stdout_stdio, stderr_stdio) {
             Ok(child) => child,

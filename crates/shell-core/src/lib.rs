@@ -21,8 +21,20 @@ use std::error::Error;
 use std::fmt;
 use std::io;
 
-/// Canonical application name used in user-facing output and configuration.
-pub const SHELL_NAME: &str = "custom-shell";
+/// Canonical application name used in configuration paths and executable names.
+pub const SHELL_NAME: &str = "kernext";
+
+/// Official product wordmark used in user-facing output.
+pub const PRODUCT_NAME: &str = "KERNEXT";
+
+/// Official product tagline.
+pub const TAGLINE: &str = "The Next Core of Computing.";
+
+/// Short statement of the product values.
+pub const VALUES: &str = "OPEN • POWERFUL • INDEPENDENT";
+
+/// Supporting brand phrase used in the welcome message.
+pub const MOTTO: &str = "Build. Execute. Innovate.";
 
 /// Workspace version, inherited from the package that compiled this crate.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

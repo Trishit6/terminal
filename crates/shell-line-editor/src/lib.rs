@@ -8,7 +8,8 @@ mod editor;
 mod prompt;
 
 pub use editor::{
-    CompletionContext, LineEditorError, LineEvent, LineReader, ShellCompleter, ShellEditor,
+    CompletionContext, EditorSettings, LineEditorError, LineEvent, LineReader, ShellCompleter,
+    ShellEditor, clear_terminal,
 };
 
 use std::collections::VecDeque;

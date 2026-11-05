@@ -271,6 +271,7 @@ pub struct ExternalCommand {
     arguments: Vec<String>,
     working_directory: Option<PathBuf>,
     environment: Vec<(OsString, OsString)>,
+    clear_environment: bool,
     stdio: StdioMode,
 }
 
@@ -283,6 +284,7 @@ impl ExternalCommand {
             arguments: Vec::new(),
             working_directory: None,
             environment: Vec::new(),
+            clear_environment: false,
             stdio: StdioMode::Inherit,
         }
     }
@@ -335,6 +337,17 @@ impl ExternalCommand {
         self
     }
 
+    /// Replaces the inherited environment with exactly the supplied variables.
+    ///
+    /// The shell uses this so child processes see the session's exported
+    /// variables (including `unset` hiding) rather than the host environment
+    /// that happened to be present when the shell started.
+    #[must_use]
+    pub const fn clear_env(mut self) -> Self {
+        self.clear_environment = true;
+        self
+    }
+
     /// Selects the standard-stream strategy.
     #[must_use]
     pub const fn stdio(mut self, stdio: StdioMode) -> Self {
@@ -368,7 +381,13 @@ impl ExternalCommand {
                 source,
             })?,
         };
-        let path = environment_value(&self.environment, "PATH").or_else(|| env::var_os("PATH"));
+        let path = environment_value(&self.environment, "PATH").or_else(|| {
+            if self.clear_environment {
+                None
+            } else {
+                env::var_os("PATH")
+            }
+        });
 
         resolve_with_path(&self.program, &working_directory, path.as_deref())
     }
@@ -453,6 +472,10 @@ impl ExternalCommand {
 
         if let Some(directory) = &self.working_directory {
             command.current_dir(directory);
+        }
+
+        if self.clear_environment {
+            command.env_clear();
         }
 
         if !self.environment.is_empty() {
@@ -670,7 +693,7 @@ mod tests {
         fn new(label: &str) -> Self {
             let unique = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
             let path = env::temp_dir().join(format!(
-                "custom-shell-process-{label}-{}-{unique}",
+                "kernext-process-{label}-{}-{unique}",
                 std::process::id()
             ));
             fs::create_dir_all(&path).expect("temp directory should be created");

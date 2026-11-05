@@ -25,11 +25,19 @@ where
 {
     /// Creates a REPL around an initialized session and line reader.
     pub fn new(session: Session, reader: R, output: W) -> Self {
+        Self::with_dispatcher(session, reader, output, Dispatcher::new())
+    }
+
+    /// Creates a REPL around an already-initialized dispatcher.
+    ///
+    /// The CLI uses this so the startup checklist can report the command engine
+    /// only after it has actually been constructed.
+    pub fn with_dispatcher(session: Session, reader: R, output: W, dispatcher: Dispatcher) -> Self {
         Self {
             session,
             reader,
             output,
-            dispatcher: Dispatcher::new(),
+            dispatcher,
         }
     }
 

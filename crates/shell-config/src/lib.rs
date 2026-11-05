@@ -14,7 +14,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 /// Default prompt shown before an interactive command.
-pub const DEFAULT_PROMPT: &str = "custom-shell > ";
+pub const DEFAULT_PROMPT: &str = "kernext ~ $ ";
 
 /// Default number of entries retained in command history.
 pub const DEFAULT_HISTORY_SIZE: usize = 1_000;
@@ -39,6 +39,26 @@ pub struct Config {
     pub suggestions_enabled: bool,
     /// Whether to show hidden files in completion.
     pub completion_hidden_files: bool,
+    /// Whether the interactive startup sequence may animate.
+    pub startup_animation: bool,
+    /// Whether to suppress the startup banner and checklist entirely.
+    pub quiet_startup: bool,
+    /// Primary brand color (logo, prompt accent). Named ANSI, `colorN`, or hex.
+    pub accent_color: String,
+    /// Secondary gradient color used by the animated wordmark.
+    pub secondary_color: String,
+    /// Highlight gradient color used by the animated wordmark.
+    pub highlight_color: String,
+    /// Color used for successful checklist items and status text.
+    pub success_color: String,
+    /// Color used for failures and error messages.
+    pub error_color: String,
+    /// Color applied to the interactive prompt.
+    pub prompt_color: String,
+    /// Terminal font family. Only used when `apply_terminal_font` is enabled.
+    pub terminal_font: String,
+    /// Opt in to emitting OSC 50 font changes. Ignored by many terminals.
+    pub apply_terminal_font: bool,
 }
 
 /// Default history file name.
@@ -49,12 +69,22 @@ impl Default for Config {
         Self {
             prompt: DEFAULT_PROMPT.to_owned(),
             history_size: DEFAULT_HISTORY_SIZE,
-            color: false,
+            color: true,
             history_enabled: true,
             history_file: DEFAULT_HISTORY_FILE.to_owned(),
             history_filter_secrets: true,
             suggestions_enabled: true,
             completion_hidden_files: false,
+            startup_animation: true,
+            quiet_startup: false,
+            accent_color: "bright-cyan".to_owned(),
+            secondary_color: "bright-blue".to_owned(),
+            highlight_color: "bright-magenta".to_owned(),
+            success_color: "bright-green".to_owned(),
+            error_color: "bright-red".to_owned(),
+            prompt_color: "bright-cyan".to_owned(),
+            terminal_font: String::new(),
+            apply_terminal_font: false,
         }
     }
 }
@@ -192,8 +222,306 @@ impl Config {
             });
         }
 
+        for (name, value) in [
+            ("accent_color", &self.accent_color),
+            ("secondary_color", &self.secondary_color),
+            ("highlight_color", &self.highlight_color),
+            ("success_color", &self.success_color),
+            ("error_color", &self.error_color),
+            ("prompt_color", &self.prompt_color),
+        ] {
+            parse_color(value).map_err(|reason| ConfigError::Invalid {
+                message: format!("{name}: {reason}"),
+            })?;
+        }
+
+        if self
+            .terminal_font
+            .chars()
+            .any(|character| character.is_control())
+        {
+            return Err(ConfigError::Invalid {
+                message: "terminal_font must not contain control characters".to_owned(),
+            });
+        }
+
+        if self.apply_terminal_font && self.terminal_font.trim().is_empty() {
+            return Err(ConfigError::Invalid {
+                message: "terminal_font must be set when apply_terminal_font is true".to_owned(),
+            });
+        }
+
         Ok(())
     }
+
+    /// Returns the parsed theme, falling back to the defaults for any value
+    /// that was changed after validation.
+    #[must_use]
+    pub fn theme(&self) -> Theme {
+        Theme::from_config(self)
+    }
+}
+
+/// A terminal color parsed from configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnsiColor {
+    /// The terminal's default foreground color.
+    Default,
+    /// One of the eight standard ANSI colors.
+    Basic(u8),
+    /// One of the eight bright ANSI colors.
+    Bright(u8),
+    /// An xterm 256-color palette entry.
+    Fixed(u8),
+    /// A 24-bit color.
+    Rgb(u8, u8, u8),
+}
+
+impl AnsiColor {
+    /// ANSI foreground sequence for this color.
+    #[must_use]
+    pub fn foreground(self) -> String {
+        match self {
+            Self::Default => "\x1b[39m".to_owned(),
+            Self::Basic(index) => format!("\x1b[{}m", 30 + index),
+            Self::Bright(index) => format!("\x1b[{}m", 90 + index),
+            Self::Fixed(index) => format!("\x1b[38;5;{index}m"),
+            Self::Rgb(red, green, blue) => format!("\x1b[38;2;{red};{green};{blue}m"),
+        }
+    }
+
+    /// Approximate RGB representation used for smooth gradients.
+    #[must_use]
+    pub fn to_rgb(self) -> (u8, u8, u8) {
+        match self {
+            Self::Default => (204, 204, 204),
+            Self::Basic(index) => basic_rgb(index, false),
+            Self::Bright(index) => basic_rgb(index, true),
+            Self::Fixed(index) => fixed_rgb(index),
+            Self::Rgb(red, green, blue) => (red, green, blue),
+        }
+    }
+}
+
+fn basic_rgb(index: u8, bright: bool) -> (u8, u8, u8) {
+    const NORMAL: [(u8, u8, u8); 8] = [
+        (0, 0, 0),
+        (205, 49, 49),
+        (13, 188, 121),
+        (229, 229, 16),
+        (36, 114, 200),
+        (188, 63, 188),
+        (17, 168, 205),
+        (229, 229, 229),
+    ];
+    const BRIGHT: [(u8, u8, u8); 8] = [
+        (102, 102, 102),
+        (241, 76, 76),
+        (35, 209, 139),
+        (245, 245, 67),
+        (59, 142, 234),
+        (214, 112, 214),
+        (41, 184, 219),
+        (255, 255, 255),
+    ];
+
+    let table = if bright { &BRIGHT } else { &NORMAL };
+    table[usize::from(index.min(7))]
+}
+
+fn fixed_rgb(index: u8) -> (u8, u8, u8) {
+    match index {
+        0..=15 => basic_rgb(index % 8, index >= 8),
+        16..=231 => {
+            let value = index - 16;
+            let red = value / 36;
+            let green = (value % 36) / 6;
+            let blue = value % 6;
+            let component = |level: u8| if level == 0 { 0 } else { 55 + level * 40 };
+            (component(red), component(green), component(blue))
+        }
+        _ => {
+            let level = 8 + (index - 232) * 10;
+            (level, level, level)
+        }
+    }
+}
+
+/// Parsed visual theme used by startup and prompt rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Theme {
+    /// Primary brand color.
+    pub accent: AnsiColor,
+    /// Secondary gradient color.
+    pub secondary: AnsiColor,
+    /// Highlight gradient color.
+    pub highlight: AnsiColor,
+    /// Success indicator color.
+    pub success: AnsiColor,
+    /// Failure indicator color.
+    pub error: AnsiColor,
+    /// Interactive prompt color.
+    pub prompt: AnsiColor,
+}
+
+impl Default for Theme {
+    fn default() -> Self {
+        Self {
+            accent: AnsiColor::Bright(6),
+            secondary: AnsiColor::Bright(4),
+            highlight: AnsiColor::Bright(5),
+            success: AnsiColor::Bright(2),
+            error: AnsiColor::Bright(1),
+            prompt: AnsiColor::Bright(6),
+        }
+    }
+}
+
+impl Theme {
+    /// Builds a theme from configuration, using defaults for invalid values.
+    #[must_use]
+    pub fn from_config(config: &Config) -> Self {
+        let defaults = Self::default();
+
+        Self {
+            accent: parse_color(&config.accent_color).unwrap_or(defaults.accent),
+            secondary: parse_color(&config.secondary_color).unwrap_or(defaults.secondary),
+            highlight: parse_color(&config.highlight_color).unwrap_or(defaults.highlight),
+            success: parse_color(&config.success_color).unwrap_or(defaults.success),
+            error: parse_color(&config.error_color).unwrap_or(defaults.error),
+            prompt: parse_color(&config.prompt_color).unwrap_or(defaults.prompt),
+        }
+    }
+
+    /// Smoothly interpolates around the accent → secondary → highlight loop.
+    ///
+    /// `position` is measured in gradient segments; callers usually pass a
+    /// time-derived value plus a row offset.
+    #[must_use]
+    pub fn gradient_rgb(self, position: f64) -> (u8, u8, u8) {
+        let colors = [
+            self.accent.to_rgb(),
+            self.secondary.to_rgb(),
+            self.highlight.to_rgb(),
+        ];
+        let scaled = position.rem_euclid(3.0);
+        let index = scaled.floor() as usize;
+        let fraction = scaled.fract();
+        let start = colors[index % 3];
+        let end = colors[(index + 1) % 3];
+
+        (
+            lerp(start.0, end.0, fraction),
+            lerp(start.1, end.1, fraction),
+            lerp(start.2, end.2, fraction),
+        )
+    }
+}
+
+fn lerp(start: u8, end: u8, fraction: f64) -> u8 {
+    let value = f64::from(start) + (f64::from(end) - f64::from(start)) * fraction;
+    value.round().clamp(0.0, 255.0) as u8
+}
+
+/// Parses a color from configuration.
+///
+/// Accepted forms are ANSI names (`cyan`, `bright-cyan`), `colorN` or a bare
+/// `0`–`255` palette index, and `#RGB`/`#RRGGBB` hex values. `default` and an
+/// empty string mean the terminal's default foreground.
+pub fn parse_color(value: &str) -> Result<AnsiColor, String> {
+    let value = value.trim();
+
+    if value.is_empty()
+        || value.eq_ignore_ascii_case("default")
+        || value.eq_ignore_ascii_case("auto")
+    {
+        return Ok(AnsiColor::Default);
+    }
+
+    let lower = value.to_ascii_lowercase();
+
+    if let Some(hex) = lower.strip_prefix('#') {
+        return parse_hex(hex);
+    }
+
+    if let Some(index) = lower.strip_prefix("color") {
+        return parse_index(index);
+    }
+
+    if lower.chars().all(|character| character.is_ascii_digit()) {
+        return parse_index(&lower);
+    }
+
+    let (bright, name) = match lower
+        .strip_prefix("bright-")
+        .or_else(|| lower.strip_prefix("light-"))
+    {
+        Some(name) => (true, name),
+        None => (false, lower.as_str()),
+    };
+
+    let index = match name {
+        "black" => 0,
+        "red" => 1,
+        "green" => 2,
+        "yellow" => 3,
+        "blue" => 4,
+        "magenta" | "violet" | "purple" => 5,
+        "cyan" | "teal" => 6,
+        "white" => 7,
+        "gray" | "grey" => {
+            return Ok(AnsiColor::Bright(0));
+        }
+        _ => {
+            return Err(format!(
+                "unknown color '{value}' (use an ANSI name, colorN, or #RRGGBB)"
+            ));
+        }
+    };
+
+    Ok(if bright {
+        AnsiColor::Bright(index)
+    } else {
+        AnsiColor::Basic(index)
+    })
+}
+
+fn parse_index(value: &str) -> Result<AnsiColor, String> {
+    let index = value
+        .parse::<u8>()
+        .map_err(|_| format!("invalid palette index '{value}'"))?;
+    Ok(AnsiColor::Fixed(index))
+}
+
+fn parse_hex(value: &str) -> Result<AnsiColor, String> {
+    let expanded = match value.len() {
+        3 => value
+            .chars()
+            .flat_map(|character| [character, character])
+            .collect::<String>(),
+        6 => value.to_owned(),
+        _ => {
+            return Err(format!(
+                "invalid hex color '#{value}' (expected #RGB or #RRGGBB)"
+            ));
+        }
+    };
+
+    if !expanded
+        .chars()
+        .all(|character| character.is_ascii_hexdigit())
+    {
+        return Err(format!("invalid hex color '#{value}'"));
+    }
+
+    let red =
+        u8::from_str_radix(&expanded[0..2], 16).map_err(|_| "invalid hex color".to_owned())?;
+    let green =
+        u8::from_str_radix(&expanded[2..4], 16).map_err(|_| "invalid hex color".to_owned())?;
+    let blue =
+        u8::from_str_radix(&expanded[4..6], 16).map_err(|_| "invalid hex color".to_owned())?;
+
+    Ok(AnsiColor::Rgb(red, green, blue))
 }
 
 /// Errors produced while loading, validating, or saving configuration.
@@ -307,12 +635,14 @@ mod tests {
 
         assert_eq!(config.prompt, DEFAULT_PROMPT);
         assert_eq!(config.history_size, DEFAULT_HISTORY_SIZE);
-        assert!(!config.color);
+        assert!(config.color);
         assert!(config.history_enabled);
         assert_eq!(config.history_file, DEFAULT_HISTORY_FILE);
         assert!(config.history_filter_secrets);
         assert!(config.suggestions_enabled);
         assert!(!config.completion_hidden_files);
+        assert!(config.startup_animation);
+        assert!(!config.quiet_startup);
     }
 
     #[test]
@@ -327,6 +657,8 @@ mod tests {
         assert!(config.history_filter_secrets);
         assert!(config.suggestions_enabled);
         assert!(!config.completion_hidden_files);
+        assert!(config.startup_animation);
+        assert!(!config.quiet_startup);
     }
 
     #[test]
@@ -340,6 +672,9 @@ mod tests {
             history_filter_secrets: false,
             suggestions_enabled: false,
             completion_hidden_files: true,
+            startup_animation: false,
+            quiet_startup: true,
+            ..Config::default()
         };
 
         let encoded = original.to_toml().expect("config should serialize");
@@ -377,7 +712,7 @@ mod tests {
         let path = config.history_path();
         assert!(path.is_some());
         let path = path.unwrap();
-        assert!(path.ends_with("custom-shell/history.txt"));
+        assert!(path.ends_with("kernext/history.txt"));
     }
 
     #[test]
@@ -393,6 +728,9 @@ mod tests {
             history_filter_secrets: false,
             suggestions_enabled: false,
             completion_hidden_files: true,
+            startup_animation: false,
+            quiet_startup: true,
+            ..Config::default()
         };
 
         original.save(&path).expect("config should save");
@@ -409,5 +747,48 @@ mod tests {
         let config = Config::load_or_default(&path).expect("missing config should use defaults");
 
         assert_eq!(config, Config::default());
+    }
+
+    #[test]
+    fn named_hex_and_palette_colors_parse() {
+        assert_eq!(parse_color("cyan"), Ok(AnsiColor::Basic(6)));
+        assert_eq!(parse_color("bright-magenta"), Ok(AnsiColor::Bright(5)));
+        assert_eq!(parse_color("color75"), Ok(AnsiColor::Fixed(75)));
+        assert_eq!(parse_color("#0af"), Ok(AnsiColor::Rgb(0, 170, 255)));
+        assert_eq!(parse_color("#00aaff"), Ok(AnsiColor::Rgb(0, 170, 255)));
+        assert_eq!(parse_color(""), Ok(AnsiColor::Default));
+    }
+
+    #[test]
+    fn invalid_colors_are_rejected() {
+        assert!(Config::from_toml("accent_color = \"not-a-color\"\n").is_err());
+        assert!(Config::from_toml("accent_color = \"#12\"\n").is_err());
+    }
+
+    #[test]
+    fn applying_a_terminal_font_requires_a_font() {
+        assert!(Config::from_toml("apply_terminal_font = true\n").is_err());
+        assert!(
+            Config::from_toml("apply_terminal_font = true\nterminal_font = \"JetBrains Mono\"\n")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn theme_uses_the_configured_palette() {
+        let config = Config::from_toml(
+            "accent_color = \"#00aaff\"\n\
+             secondary_color = \"magenta\"\n\
+             highlight_color = \"bright-green\"\n\
+             prompt_color = \"color45\"\n",
+        )
+        .expect("theme config should parse");
+
+        let theme = config.theme();
+
+        assert_eq!(theme.accent, AnsiColor::Rgb(0, 170, 255));
+        assert_eq!(theme.secondary, AnsiColor::Basic(5));
+        assert_eq!(theme.highlight, AnsiColor::Bright(2));
+        assert_eq!(theme.prompt, AnsiColor::Fixed(45));
     }
 }

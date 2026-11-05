@@ -65,7 +65,7 @@ fn repl_handles_help_version_unknown_and_exit() {
 
     assert!(output.contains("Available commands:"));
     assert!(output.contains("help"));
-    assert!(output.contains(&format!("Custom Shell v{VERSION}")));
+    assert!(output.contains(&format!("KERNEXT v{VERSION}")));
     assert!(output.contains("Command not found: unknowncommand"));
     assert!(output.contains("Goodbye."));
 }
@@ -120,7 +120,7 @@ fn ctrl_c_cancels_the_current_line_and_continues() {
     let output = String::from_utf8(output).expect("output should be UTF-8");
 
     assert!(output.starts_with('\n'));
-    assert!(output.contains(&format!("Custom Shell v{VERSION}")));
+    assert!(output.contains(&format!("KERNEXT v{VERSION}")));
     assert!(output.contains("Goodbye."));
 }
 
@@ -157,7 +157,7 @@ fn repl_continues_after_a_failed_external_command() {
     let output = String::from_utf8(output).expect("output should be UTF-8");
 
     assert!(output.contains("Command not found: definitely-not-a-real-command-xyz"));
-    assert!(output.contains(&format!("Custom Shell v{VERSION}")));
+    assert!(output.contains(&format!("KERNEXT v{VERSION}")));
     assert!(output.contains("Goodbye."));
 }
 
@@ -180,7 +180,7 @@ fn repl_continues_after_a_failed_pipeline() {
     let output = String::from_utf8(output).expect("output should be UTF-8");
 
     assert!(output.contains("Command not found: definitely-not-a-real-command-xyz"));
-    assert!(output.contains(&format!("Custom Shell v{VERSION}")));
+    assert!(output.contains(&format!("KERNEXT v{VERSION}")));
     assert!(output.contains("Goodbye."));
 }
 
@@ -193,5 +193,45 @@ fn clear_requests_a_terminal_clear_and_continues() {
     repl.run().expect("REPL should shut down cleanly");
 
     assert_eq!(repl.reader().clears, 1);
+    assert!(repl.session().is_stopped());
+}
+
+#[test]
+fn clear_can_run_repeatedly() {
+    let reader = ScriptedReader::new([line("clear"), line("clear"), line("clear"), line("exit")]);
+    let mut output = Vec::new();
+    let mut repl = Repl::new(session(), reader, &mut output);
+
+    repl.run().expect("REPL should shut down cleanly");
+
+    assert_eq!(repl.reader().clears, 3);
+    assert!(repl.session().is_stopped());
+}
+
+#[test]
+fn clear_after_command_output_still_requests_a_clear() {
+    let reader = ScriptedReader::new([line("version"), line("clear"), line("exit")]);
+    let mut output = Vec::new();
+    let mut repl = Repl::new(session(), reader, &mut output);
+
+    repl.run().expect("REPL should shut down cleanly");
+
+    assert_eq!(repl.reader().clears, 1);
+    assert!(repl.session().is_stopped());
+
+    drop(repl);
+    let output = String::from_utf8(output).expect("output should be UTF-8");
+    assert!(output.contains(&format!("KERNEXT v{VERSION}")));
+}
+
+#[test]
+fn clear_in_a_pipeline_does_not_clear_the_parent_terminal() {
+    let reader = ScriptedReader::new([line("clear | cat"), line("exit")]);
+    let mut output = Vec::new();
+    let mut repl = Repl::new(session(), reader, &mut output);
+
+    repl.run().expect("REPL should shut down cleanly");
+
+    assert_eq!(repl.reader().clears, 0);
     assert!(repl.session().is_stopped());
 }

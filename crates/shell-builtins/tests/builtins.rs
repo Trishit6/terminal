@@ -26,7 +26,7 @@ impl TempDir {
             .as_nanos();
         let sequence = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
         let path = env::temp_dir().join(format!(
-            "custom-shell-builtins-{}-{unique}-{sequence}",
+            "kernext-builtins-{}-{unique}-{sequence}",
             std::process::id()
         ));
 
@@ -328,7 +328,7 @@ fn whoami_date_and_version_produce_output() {
 
     assert!(!harness.output("whoami").trim().is_empty());
     assert!(!harness.output("date").trim().is_empty());
-    assert!(harness.output("version").starts_with("Custom Shell v"));
+    assert!(harness.output("version").starts_with("KERNEXT v"));
 }
 
 #[test]

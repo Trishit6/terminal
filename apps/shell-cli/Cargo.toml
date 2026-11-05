@@ -1,16 +1,17 @@
 [package]
 name = "shell-cli"
-description = "Command-line entry point for the custom shell"
+description = "KERNEXT command-line entry point"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 
 [[bin]]
-name = "custom-shell"
+name = "kernext"
 path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+crossterm.workspace = true
 shell-builtins.workspace = true
 shell-config.workspace = true
 shell-core.workspace = true

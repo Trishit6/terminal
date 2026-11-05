@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v0.2.0)'
+        required: true
+        type: string
+      tag:
+        description: 'Git tag (defaults to version)'
+        required: false
+        type: string
+
+env:
+  CARGO_TARGET_DIR: /home/runner/.cache/terminal-target
+
+jobs:
+  check:
+    name: Check formatting, clippy, tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/terminal-target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+      - name: Format check
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Tests
+        run: cargo test --workspace
+
+  build-linux-musl:
+    name: Build Linux musl (x86_64)
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/terminal-target
+          key: ${{ runner.os }}-cargo-musl-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-musl-
+      - name: Build musl
+        run: cargo build --workspace --release --target x86_64-unknown-linux-musl
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernext-x86_64-unknown-linux-musl
+          path: /home/runner/.cache/terminal-target/x86_64-unknown-linux-musl/release/kernext
+          retention-days: 30
+
+  build-linux-gnu:
+    name: Build Linux GNU (x86_64)
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo target
+        uses: actions/cache@v4
+        with:
+          path: /home/runner/.cache/terminal-target
+          key: ${{ runner.os }}-cargo-gnu-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-gnu-
+      - name: Build GNU
+        run: cargo build --workspace --release
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernext-x86_64-unknown-linux-gnu
+          path: /home/runner/.cache/terminal-target/release/kernext
+          retention-days: 30
+
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [build-linux-musl, build-linux-gnu]
+    if: github.event.inputs.version != ''
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download Linux GNU artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: kernext-x86_64-unknown-linux-gnu
+          path: artifacts/linux-gnu
+      - name: Download Linux musl artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: kernext-x86_64-unknown-linux-musl
+          path: artifacts/linux-musl
+      - name: Create release archives
+        run: |
+          mkdir -p release
+          cd artifacts/linux-gnu
+          tar -czf ../../release/kernext-x86_64-unknown-linux-gnu.tar.gz kernext
+          cd ../../release
+          sha256sum kernext-x86_64-unknown-linux-gnu.tar.gz > kernext-x86_64-unknown-linux-gnu.tar.gz.sha256
+          cd ../artifacts/linux-musl
+          tar -czf ../../release/kernext-x86_64-unknown-linux-musl.tar.gz kernext
+          cd ../../release
+          sha256sum kernext-x86_64-unknown-linux-musl.tar.gz > kernext-x86_64-unknown-linux-musl.tar.gz.sha256
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: github.event.inputs.version != ''
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.event.inputs.version }}
+          name: KERNEXT ${{ github.event.inputs.version }}
+          files: |
+            release/kernext-x86_64-unknown-linux-gnu.tar.gz
+            release/kernext-x86_64-unknown-linux-gnu.tar.gz.sha256
+            release/kernext-x86_64-unknown-linux-musl.tar.gz
+            release/kernext-x86_64-unknown-linux-musl.tar.gz.sha256
+          draft: true
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

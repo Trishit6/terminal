@@ -1,6 +1,6 @@
 [package]
 name = "shell-runtime"
-description = "Shell session and execution lifecycle for the custom shell"
+description = "Shell session and execution lifecycle for KERNEXT"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

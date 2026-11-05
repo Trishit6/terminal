@@ -123,7 +123,16 @@ impl Dispatcher {
     }
 
     fn record_history(&mut self, session: &Session, input: &str) {
-        let limit = session.config().history_size.max(1);
+        if session.config().history_filter_secrets
+            && shell_runtime::history::is_sensitive_command(input)
+        {
+            return;
+        }
+
+        let limit = session
+            .history_limit()
+            .unwrap_or(session.config().history_size)
+            .max(1);
         self.history.push(input.to_owned());
 
         if self.history.len() > limit {
@@ -181,7 +190,7 @@ mod tests {
         for command in DEFAULT_BUILTINS {
             assert!(output.contains(command.name()));
         }
-        assert!(output.starts_with("Available commands:"));
+        assert!(output.starts_with("KERNEXT — Available commands:"));
     }
 
     #[test]
@@ -194,7 +203,7 @@ mod tests {
         assert_eq!(outcome.action(), CommandAction::Continue);
         assert_eq!(
             outcome.output(),
-            Some(format!("Custom Shell v{}", session.version()).as_str())
+            Some(format!("KERNEXT v{}", session.version()).as_str())
         );
     }
 
@@ -220,7 +229,7 @@ mod tests {
         assert!(
             outcome
                 .output()
-                .is_some_and(|text| text.starts_with("Custom Shell v"))
+                .is_some_and(|text| text.starts_with("KERNEXT v"))
         );
     }
 
