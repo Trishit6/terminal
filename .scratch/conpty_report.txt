@@ -1,0 +1,10 @@
+CreatePseudoConsole hr=0x00000000
+attribute=0x20016 value-mode=d
+sizeof(STARTUPINFOEXW)=112 init=1 update=1
+CreateProcess ok=1 err=0
+wait=0 exit=0
+captured-before-close=87
+--- pty output ---
+[?9001h[?1004h[?25l[2J[m[HCONPTY-C-MARKER
+]0;C:\WINDOWS\SYSTEM32\cmd.exe[?25h[?9001l[?1004l
+--- end (103 bytes) ---

@@ -1,0 +1,12 @@
+fn quote_argument(argument: &str) -> String {
+    let needs_quotes = argument.is_empty()
+        || argument.chars().any(|c| matches!(c,   | ' as char | ' as char | ' as char | ' as char | "));
+    if !needs_quotes {
+        return argument.to_owned();
+    }
+    let mut quoted = String::with_capacity(argument.len() + 2);
+    quoted.push(");
+    let mut backslashes = 0usize;
+    for c in argument.chars() {
+        match c {
+            ' = += 1,

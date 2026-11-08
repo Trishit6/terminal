@@ -15,6 +15,7 @@ mod expand;
 mod outcome;
 mod pipeline;
 mod process;
+mod pty;
 mod registry;
 
 pub use outcome::{CommandAction, CommandOutcome};
@@ -22,6 +23,7 @@ pub use process::{
     ExternalCommand, ProcessError, ProcessOptions, ProcessReport, ProcessStatus, StdioMode,
     resolve_executable,
 };
+pub use pty::{PtyProcess, PtySize, terminal_size};
 pub use registry::{BuiltinCommand, BuiltinRegistry, DEFAULT_BUILTINS, RegistryError};
 
 use shell_core::{lex_spanned, parse};

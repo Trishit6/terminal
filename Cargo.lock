@@ -598,12 +598,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "shell-api"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "shell-builtins"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "libc",
  "shell-core",
  "shell-runtime",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

@@ -27,6 +27,13 @@
 //! `os error 193` ("not a valid Win32 application"). The `.cmd` shim is the
 //! correct Windows entry point and is now what resolution selects.
 //!
+//! # Interrupts
+//!
+//! While a foreground child owns the terminal, [`InterruptGuard`] suppresses the
+//! shell's own Ctrl+C handling so the signal reaches the child instead of
+//! terminating KERNEXT. Children are spawned with the default Ctrl+C disposition
+//! restored, even when the guard is active.
+//!
 
 use std::env;
 use std::error::Error;
@@ -50,6 +57,14 @@ pub enum StdioMode {
     /// child's standard input is closed so a captured command cannot block
     /// waiting for terminal input.
     Capture,
+    /// Run the child on a pseudoterminal (ConPTY on Windows, `openpty` on
+    /// Unix) and relay it to the shell's own streams.
+    ///
+    /// This is a genuine interactive terminal: the child sees a TTY, receives
+    /// keystrokes as they are typed, and is told the terminal size. It is used
+    /// only for a single external command with no pipes or redirections;
+    /// pipeline stages always inherit or pipe their streams.
+    Pty,
 }
 
 /// Options applied to every external command dispatched by the shell.
@@ -115,6 +130,17 @@ struct ResolvedProgram {
     kind: ExecutableKind,
 }
 
+/// How the operating system must be asked to start a resolved program.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct LaunchSpec {
+    /// Executable image the operating system starts.
+    pub executable: PathBuf,
+    /// Arguments passed before the raw argument text, if any.
+    pub arguments: Vec<String>,
+    /// Pre-escaped command line appended verbatim (Windows script launches).
+    pub raw_arguments: Option<String>,
+}
+
 /// Why a program is not executable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExecutableState {
@@ -157,6 +183,19 @@ impl ProcessStatus {
         self.signal
     }
 
+    /// Creates a status from a raw platform exit code.
+    ///
+    /// Used by the pseudoterminal engine, which receives a `DWORD` from
+    /// `GetExitCodeProcess` rather than an [`ExitStatus`].
+    #[cfg(windows)]
+    pub(crate) fn from_code(code: i32) -> Self {
+        Self {
+            success: code == 0,
+            code: normalize_exit_code(Some(code)),
+            signal: None,
+        }
+    }
+
     pub(crate) fn from_exit_status(status: ExitStatus) -> Self {
         #[cfg(unix)]
         let signal = {
@@ -169,8 +208,92 @@ impl ProcessStatus {
 
         Self {
             success: status.success(),
-            code: status.code(),
+            code: normalize_exit_code(status.code()),
             signal,
+        }
+    }
+}
+
+/// Maps platform-specific termination codes onto shell exit codes.
+///
+/// Windows reports a Ctrl+C termination as the NTSTATUS `0xC000013A` (which
+/// [`ExitStatus::code`] surfaces as a negative `i32`). Shells use `130` for an
+/// interrupted foreground command, so KERNEXT reports that instead.
+fn normalize_exit_code(code: Option<i32>) -> Option<i32> {
+    #[cfg(windows)]
+    const STATUS_CONTROL_C_EXIT: u32 = 0xC000_013A;
+
+    #[cfg(windows)]
+    if code.is_some_and(|code| code as u32 == STATUS_CONTROL_C_EXIT) {
+        return Some(130);
+    }
+
+    code
+}
+
+/// Suppresses the shell's own interrupt handling while a foreground child runs.
+///
+/// Without this, Ctrl+C terminates the shell as well as the child, because both
+/// are attached to the same terminal. The guard only affects the shell process:
+/// the child keeps its own handler (Unix children get `SIGINT` reset to the
+/// default disposition at spawn time).
+///
+/// Dropping the guard restores the previous behaviour. Creating two guards at
+/// once is not supported, which matches the call sites: exactly one foreground
+/// command (or pipeline) is waited for at a time.
+pub(crate) struct InterruptGuard {
+    #[cfg(windows)]
+    installed: bool,
+    #[cfg(unix)]
+    previous: Option<libc::sighandler_t>,
+}
+
+impl InterruptGuard {
+    /// Stops Ctrl+C from terminating the shell.
+    #[must_use]
+    pub(crate) fn acquire() -> Self {
+        #[cfg(windows)]
+        {
+            // A null handler with `add = TRUE` makes this process ignore
+            // Ctrl+C. It does not affect other console processes.
+            let installed =
+                unsafe { windows_sys::Win32::System::Console::SetConsoleCtrlHandler(None, 1) != 0 };
+
+            Self { installed }
+        }
+
+        #[cfg(unix)]
+        {
+            // `signal` is portable across the Unix targets KERNEXT supports and
+            // keeps the guard free of platform-specific `sigaction` layouts.
+            // SAFETY: `SIG_IGN` is a valid disposition for `SIGINT`.
+            let previous = unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN) };
+
+            // Failure only means the shell keeps its previous disposition,
+            // which is a degraded but safe outcome.
+            Self {
+                previous: (previous != libc::SIG_ERR).then_some(previous),
+            }
+        }
+    }
+}
+
+impl Drop for InterruptGuard {
+    fn drop(&mut self) {
+        #[cfg(windows)]
+        if self.installed {
+            unsafe {
+                windows_sys::Win32::System::Console::SetConsoleCtrlHandler(None, 0);
+            }
+        }
+
+        #[cfg(unix)]
+        if let Some(previous) = self.previous {
+            // SAFETY: `previous` came from a successful `signal` call, so it is
+            // a valid disposition to restore.
+            unsafe {
+                libc::signal(libc::SIGINT, previous);
+            }
         }
     }
 }
@@ -184,6 +307,15 @@ pub struct ProcessReport {
 }
 
 impl ProcessReport {
+    /// Builds a report for output that was streamed instead of captured.
+    pub(crate) fn from_status(status: ProcessStatus) -> Self {
+        Self {
+            status,
+            stdout: String::new(),
+            stderr: String::new(),
+        }
+    }
+
     /// Termination status of the child.
     #[must_use]
     pub const fn status(&self) -> ProcessStatus {
@@ -227,6 +359,30 @@ pub enum ProcessError {
     PermissionDenied {
         /// Program name as typed by the user.
         program: String,
+        /// Operating-system detail, when one is available.
+        detail: Option<String>,
+    },
+    /// The file exists and is executable in principle, but this platform cannot
+    /// load it (for example a Mach-O binary on Windows, or a text file with a
+    /// missing shebang).
+    InvalidFormat {
+        /// Program name as typed by the user.
+        program: String,
+        /// File that could not be executed.
+        path: PathBuf,
+        /// Operating-system detail.
+        detail: String,
+    },
+    /// The executable exists but the interpreter or library it needs does not.
+    ///
+    /// A script whose shebang points at a missing interpreter, or a Windows
+    /// image whose dependent DLL is absent, resolves successfully and then
+    /// fails at load time.
+    MissingInterpreter {
+        /// Program name as typed by the user.
+        program: String,
+        /// What is missing, in plain language.
+        detail: String,
     },
     /// The program name cannot be turned into a valid operating-system path.
     InvalidPath {
@@ -268,7 +424,9 @@ impl ProcessError {
     pub fn program(&self) -> &str {
         match self {
             Self::NotFound { program }
-            | Self::PermissionDenied { program }
+            | Self::PermissionDenied { program, .. }
+            | Self::InvalidFormat { program, .. }
+            | Self::MissingInterpreter { program, .. }
             | Self::InvalidPath { program, .. }
             | Self::Argument { program, .. }
             | Self::Spawn { program, .. }
@@ -281,8 +439,25 @@ impl fmt::Display for ProcessError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::NotFound { program } => write!(formatter, "command not found: {program}"),
-            Self::PermissionDenied { program } => {
-                write!(formatter, "permission denied: {program}")
+            Self::PermissionDenied { program, detail } => {
+                write!(formatter, "permission denied: {program}")?;
+
+                match detail {
+                    Some(detail) => write!(formatter, ": {detail}"),
+                    None => Ok(()),
+                }
+            }
+            Self::InvalidFormat {
+                program,
+                path,
+                detail,
+            } => write!(
+                formatter,
+                "cannot execute '{program}': {} is not a valid executable for this platform ({detail})",
+                path.display()
+            ),
+            Self::MissingInterpreter { program, detail } => {
+                write!(formatter, "cannot run '{program}': {detail}")
             }
             Self::InvalidPath { program, reason } => {
                 write!(formatter, "invalid executable path '{program}': {reason}")
@@ -306,6 +481,8 @@ impl Error for ProcessError {
             Self::Spawn { source, .. } | Self::Wait { source, .. } => Some(source),
             Self::NotFound { .. }
             | Self::PermissionDenied { .. }
+            | Self::InvalidFormat { .. }
+            | Self::MissingInterpreter { .. }
             | Self::InvalidPath { .. }
             | Self::Argument { .. } => None,
         }
@@ -473,12 +650,15 @@ impl ExternalCommand {
     pub fn run(self) -> Result<ProcessReport, ProcessError> {
         match self.stdio {
             StdioMode::Inherit => {
+                // Ctrl+C must stop the child, not the shell.
+                let guard = InterruptGuard::acquire();
                 let mut child =
                     self.spawn_with(Stdio::inherit(), Stdio::inherit(), Stdio::inherit())?;
                 let status = child.wait().map_err(|source| ProcessError::Wait {
                     program: self.program.clone(),
                     source,
                 })?;
+                drop(guard);
 
                 Ok(ProcessReport {
                     status: ProcessStatus::from_exit_status(status),
@@ -486,6 +666,7 @@ impl ExternalCommand {
                     stderr: String::new(),
                 })
             }
+            StdioMode::Pty => crate::pty::run_interactive(&self),
             StdioMode::Capture => {
                 let child = self.spawn_with(Stdio::null(), Stdio::piped(), Stdio::piped())?;
                 let output = child
@@ -524,13 +705,48 @@ impl ExternalCommand {
 
         command.stdin(stdin).stdout(stdout).stderr(stderr);
 
-        command.spawn().map_err(|source| match source.kind() {
-            io::ErrorKind::PermissionDenied => ProcessError::PermissionDenied {
-                program: self.program.clone(),
+        command
+            .spawn()
+            .map_err(|source| map_spawn_error(&self.program, &resolved.path, source))
+    }
+
+    /// Working directory the child will run in, if one was set explicitly.
+    pub(crate) fn working_directory(&self) -> Option<&Path> {
+        self.working_directory.as_deref()
+    }
+
+    /// Environment overrides applied to the child, in insertion order.
+    pub(crate) fn environment_entries(&self) -> &[(OsString, OsString)] {
+        &self.environment
+    }
+
+    /// Whether the child receives only the configured overrides.
+    pub(crate) const fn clears_environment(&self) -> bool {
+        self.clear_environment
+    }
+
+    /// Resolves how the operating system must start this program.
+    ///
+    /// The console engine and the pseudoterminal engine share this so a
+    /// Windows command script is launched identically in both.
+    pub(crate) fn launch_spec(&self) -> Result<LaunchSpec, ProcessError> {
+        let resolved = self.resolved_program()?;
+
+        Ok(match resolved.kind {
+            ExecutableKind::Native => LaunchSpec {
+                executable: resolved.path,
+                arguments: self.arguments.clone(),
+                raw_arguments: None,
             },
-            _ => ProcessError::Spawn {
-                program: self.program.clone(),
-                source,
+            #[cfg(windows)]
+            ExecutableKind::BatchScript => LaunchSpec {
+                executable: self.command_interpreter(),
+                arguments: ["/d", "/v:off", "/s", "/c"].map(str::to_owned).to_vec(),
+                raw_arguments: Some(batch_command_line(
+                    &resolved.path,
+                    &self.arguments,
+                    &self.program,
+                )?),
             },
         })
     }
@@ -540,33 +756,23 @@ impl ExternalCommand {
     /// Native images run directly. Windows command scripts run through the
     /// system interpreter, which receives one pre-escaped command line.
     fn build_command(&self, resolved: &ResolvedProgram) -> Result<Command, ProcessError> {
-        let mut command = match resolved.kind {
-            ExecutableKind::Native => {
-                let mut command = Command::new(&resolved.path);
-                command.args(&self.arguments);
-                command
-            }
+        let spec = self.launch_spec_for(resolved)?;
+        let mut command = Command::new(&spec.executable);
+
+        command.args(&spec.arguments);
+
+        if let Some(raw) = &spec.raw_arguments {
             #[cfg(windows)]
-            ExecutableKind::BatchScript => {
-                let command_line =
-                    batch_command_line(&resolved.path, &self.arguments, &self.program)?;
-                let interpreter = self.command_interpreter();
+            {
+                use std::os::windows::process::CommandExt;
 
-                let mut command = Command::new(&interpreter);
-                // `/d` skips AutoRun registry commands, `/v:off` disables
-                // delayed expansion (so `!` stays literal), and `/s` gives the
-                // outer quoting below a predictable, documented meaning.
-                command.args(["/d", "/v:off", "/s", "/c"]);
-
-                {
-                    use std::os::windows::process::CommandExt;
-
-                    command.raw_arg(command_line);
-                }
-
-                command
+                // Only Windows command scripts use a pre-escaped command line.
+                command.raw_arg(raw);
             }
-        };
+
+            #[cfg(not(windows))]
+            let _ = raw;
+        }
 
         if let Some(directory) = &self.working_directory {
             command.current_dir(directory);
@@ -584,7 +790,33 @@ impl ExternalCommand {
             );
         }
 
+        reset_child_interrupt_disposition(&mut command);
+
         Ok(command)
+    }
+
+    /// Builds launch information for an already-resolved program.
+    fn launch_spec_for(&self, resolved: &ResolvedProgram) -> Result<LaunchSpec, ProcessError> {
+        Ok(match resolved.kind {
+            ExecutableKind::Native => LaunchSpec {
+                executable: resolved.path.clone(),
+                arguments: self.arguments.clone(),
+                raw_arguments: None,
+            },
+            #[cfg(windows)]
+            ExecutableKind::BatchScript => LaunchSpec {
+                executable: self.command_interpreter(),
+                // `/d` skips AutoRun registry commands, `/v:off` disables
+                // delayed expansion (so `!` stays literal), and `/s` gives the
+                // outer quoting below a predictable, documented meaning.
+                arguments: ["/d", "/v:off", "/s", "/c"].map(str::to_owned).to_vec(),
+                raw_arguments: Some(batch_command_line(
+                    &resolved.path,
+                    &self.arguments,
+                    &self.program,
+                )?),
+            },
+        })
     }
 
     /// Interpreter used to run `.cmd` and `.bat` programs.
@@ -614,6 +846,95 @@ impl ExternalCommand {
 
         // Last resort: let process creation search the system directories.
         PathBuf::from("cmd.exe")
+    }
+}
+
+/// Turns an operating-system spawn failure into an actionable shell error.
+///
+/// Resolution has already found the file, so a `NotFound` from the loader means
+/// something the program depends on is missing (a script interpreter, or a DLL
+/// on Windows), not that the command itself is unknown.
+pub(crate) fn map_spawn_error(program: &str, path: &Path, source: io::Error) -> ProcessError {
+    if source.kind() == io::ErrorKind::PermissionDenied {
+        return ProcessError::PermissionDenied {
+            program: program.to_owned(),
+            detail: Some(source.to_string()),
+        };
+    }
+
+    // `execve` reports a badly formed image as `ENOEXEC`; `CreateProcess` uses
+    // `ERROR_BAD_EXE_FORMAT` (193). Rust maps both to `Uncategorized`, so the
+    // raw code is the only reliable signal.
+    #[cfg(unix)]
+    const BAD_FORMAT: i32 = libc::ENOEXEC;
+    #[cfg(windows)]
+    const BAD_FORMAT: i32 = 193;
+
+    if source.raw_os_error() == Some(BAD_FORMAT) {
+        return ProcessError::InvalidFormat {
+            program: program.to_owned(),
+            path: path.to_path_buf(),
+            detail: source.to_string(),
+        };
+    }
+
+    if source.kind() == io::ErrorKind::NotFound {
+        return ProcessError::MissingInterpreter {
+            program: program.to_owned(),
+            detail: format!(
+                "'{}' exists but its interpreter or a required library was not found ({source})",
+                path.display()
+            ),
+        };
+    }
+
+    // `CreateProcess` reports a missing dependent DLL as an NTSTATUS rather
+    // than an `io::ErrorKind`.
+    #[cfg(windows)]
+    if source.raw_os_error().is_some_and(|code| {
+        code as u32 == 0xC000_0135 // STATUS_DLL_NOT_FOUND
+            || code as u32 == 0xC000_0139 // STATUS_ENTRYPOINT_NOT_FOUND
+    }) {
+        return ProcessError::MissingInterpreter {
+            program: program.to_owned(),
+            detail: format!(
+                "a library required by '{}' could not be loaded ({source})",
+                path.display()
+            ),
+        };
+    }
+
+    ProcessError::Spawn {
+        program: program.to_owned(),
+        source,
+    }
+}
+
+/// Restores the default Ctrl+C disposition for a child on Unix.
+///
+/// [`InterruptGuard`] ignores `SIGINT` in the shell while a foreground child
+/// runs, and signal dispositions are inherited across `exec`. Resetting it in
+/// the child would otherwise make Ctrl+C do nothing. `signal` is
+/// async-signal-safe, which is what `pre_exec` requires; the same is implicit on
+/// Windows, where the handler is per process.
+fn reset_child_interrupt_disposition(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        // SAFETY: the closure only calls an async-signal-safe function and does
+        // not allocate.
+        unsafe {
+            command.pre_exec(|| {
+                libc::signal(libc::SIGINT, libc::SIG_DFL);
+                Ok(())
+            });
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = command;
     }
 }
 
@@ -710,6 +1031,7 @@ fn resolve_program_with_path(
     if found_but_not_executable {
         Err(ProcessError::PermissionDenied {
             program: program.to_owned(),
+            detail: Some("the match is not an executable file".to_owned()),
         })
     } else {
         Err(ProcessError::NotFound {
@@ -770,6 +1092,7 @@ fn resolve_candidates(
     if found_but_not_executable {
         Err(ProcessError::PermissionDenied {
             program: program.to_owned(),
+            detail: Some("the file exists but is not executable".to_owned()),
         })
     } else {
         Err(ProcessError::NotFound {
@@ -821,20 +1144,30 @@ fn environment_key_matches(key: &OsStr, name: &str) -> bool {
 
 #[cfg(windows)]
 fn append_platform_extensions(base: &Path, pathext: Option<&OsStr>) -> Vec<PathBuf> {
-    // A name that already carries an extension is used verbatim; the operating
-    // system, not the shell, decides whether that extension is runnable.
+    let mut candidates = Vec::new();
+
+    // A name that already carries an extension is tried exactly as written and
+    // then with each executable extension appended, the way `cmd.exe` searches.
+    // This is what lets `python3.12` find `python3.12.exe` instead of failing
+    // because the name "already has an extension".
+    //
+    // A name with no extension never gets an extensionless candidate: Windows
+    // cannot start those, and npm/pnpm install one next to every `.cmd` shim.
     if base.extension().is_some() {
-        return vec![base.to_path_buf()];
+        candidates.push(base.to_path_buf());
     }
 
-    windows_executable_extensions(pathext)
-        .into_iter()
-        .map(|extension| {
-            let mut candidate = base.as_os_str().to_os_string();
-            candidate.push(&extension);
-            PathBuf::from(candidate)
-        })
-        .collect()
+    for extension in windows_executable_extensions(pathext) {
+        let mut candidate = base.as_os_str().to_os_string();
+        candidate.push(&extension);
+        let candidate = PathBuf::from(candidate);
+
+        if !candidates.contains(&candidate) {
+            candidates.push(candidate);
+        }
+    }
+
+    candidates
 }
 
 #[cfg(not(windows))]

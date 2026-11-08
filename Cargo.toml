@@ -7,6 +7,7 @@ members = [
     "crates/shell-core",
     "crates/shell-line-editor",
     "crates/shell-runtime",
+    "crates/shell-api",
 ]
 
 [workspace.package]
@@ -27,3 +28,4 @@ shell-config = { path = "crates/shell-config", version = "0.1.0" }
 shell-core = { path = "crates/shell-core", version = "0.1.0" }
 shell-line-editor = { path = "crates/shell-line-editor", version = "0.1.0" }
 shell-runtime = { path = "crates/shell-runtime", version = "0.1.0" }
+shell-api = { path = "crates/shell-api", version = "0.1.0" }
