@@ -110,6 +110,31 @@ fn cd_changes_directory_and_relative_parent_navigation_works() {
 }
 
 #[test]
+fn cd_uses_the_session_home_variable() {
+    let mut harness = Harness::new();
+    let home = harness.path().join("session-home");
+    let nested = home.join("nested");
+    fs::create_dir_all(&nested).expect("session home should be created");
+    harness
+        .session
+        .set_variable("HOME", home.display().to_string(), true);
+
+    let outcome = harness.run("cd");
+    assert!(outcome.success());
+    assert_eq!(
+        harness.session.working_directory().file_name(),
+        Some(std::ffi::OsStr::new("session-home"))
+    );
+
+    let outcome = harness.run("cd ~/nested");
+    assert!(outcome.success());
+    assert_eq!(
+        harness.session.working_directory().file_name(),
+        Some(std::ffi::OsStr::new("nested"))
+    );
+}
+
+#[test]
 fn cd_accepts_an_absolute_path() {
     let mut harness = Harness::new();
     let target = harness.path().join("absolute-target");

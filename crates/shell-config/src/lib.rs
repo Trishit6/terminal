@@ -1,8 +1,8 @@
 //! Configuration model and persistence for the custom shell.
 //!
-//! The CLI does not load a configuration file during Phase 1. The persistence
-//! API is complete and tested so later phases can opt into it without changing
-//! the configuration format.
+//! The CLI loads the user configuration from [`Config::default_path`] during
+//! startup and falls back to built-in defaults when the file is missing or
+//! invalid.
 
 use serde::{Deserialize, Serialize};
 use shell_core::SHELL_NAME;

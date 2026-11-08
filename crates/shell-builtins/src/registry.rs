@@ -71,7 +71,7 @@ pub const DEFAULT_BUILTINS: [BuiltinCommand; 53] = [
     BuiltinCommand::new("wait", "Wait for background jobs"),
     BuiltinCommand::new("kill", "Terminate a background job"),
     BuiltinCommand::new("fg", "Wait for a background job"),
-    BuiltinCommand::new("bg", "Resume a background job"),
+    BuiltinCommand::new("bg", "Report a background job's state"),
     BuiltinCommand::new("run", "Run a KERNEXT script file"),
     BuiltinCommand::new("test", "Evaluate a conditional expression"),
     BuiltinCommand::new("expr", "Evaluate an arithmetic expression"),

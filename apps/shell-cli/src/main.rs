@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     match cli::run() {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(status) => ExitCode::from(status.rem_euclid(256) as u8),
         Err(error) => {
             eprintln!("error: {error}");
             ExitCode::FAILURE

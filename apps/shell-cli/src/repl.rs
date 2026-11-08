@@ -16,6 +16,7 @@ pub struct Repl<R, W> {
     reader: R,
     output: W,
     dispatcher: Dispatcher,
+    exit_status: Option<i32>,
 }
 
 impl<R, W> Repl<R, W>
@@ -38,12 +39,14 @@ where
             reader,
             output,
             dispatcher,
+            exit_status: None,
         }
     }
 
     /// Runs until `exit`, Ctrl+D/EOF, or an unrecoverable terminal error.
     pub fn run(&mut self) -> Result<(), ShellError> {
         while self.session.is_running() {
+            self.reader.refresh_completion(&self.session);
             match self.reader.read_line() {
                 Ok(LineEvent::Line(input)) => self.handle_command(&input)?,
                 Ok(LineEvent::Interrupted) => self.write_line("")?,
@@ -75,6 +78,12 @@ where
         &self.reader
     }
 
+    /// Status requested by `exit`, if the session ended through that command.
+    #[must_use]
+    pub const fn exit_status(&self) -> Option<i32> {
+        self.exit_status
+    }
+
     fn handle_command(&mut self, input: &str) -> Result<(), ShellError> {
         let outcome = self.dispatcher.execute(&mut self.session, input);
 
@@ -95,6 +104,9 @@ where
             }
             CommandAction::ClearHistory => {
                 self.dispatcher.clear_history();
+                self.reader.clear_history().map_err(|error| {
+                    ShellError::message("clear command history", error.to_string())
+                })?;
                 if let Some(output) = outcome.output() {
                     self.write_output(output)?;
                 }
@@ -103,6 +115,7 @@ where
                 if let Some(output) = outcome.output() {
                     self.write_output(output)?;
                 }
+                self.exit_status = Some(outcome.exit_code().unwrap_or(0));
                 self.session.stop();
             }
         }

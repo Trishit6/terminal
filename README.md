@@ -59,7 +59,7 @@ The shell provides:
 - inherited terminal I/O for interactive child programs,
 - clear errors for missing programs, permission failures, and spawn failures,
 - command lists (`;`), groups, and `&&`/`||` evaluation,
-- graceful Ctrl+C cancellation and Ctrl+D/EOF shutdown,
+- Ctrl+C line cancellation at the prompt and Ctrl+D/EOF shutdown,
 - native variable assignment (`name = value`),
 - variable expansion (`$name`, `${name}`, `$?`, `$$`),
 - environment management (`export`, `unset`, `env`, `set`),
@@ -75,7 +75,8 @@ platform-specific code isolated:
 
 - Executable lookup uses `PATH` on every platform.
 - Windows executable resolution reads `PATHEXT` dynamically instead of
-  hardcoding extensions.
+  hardcoding extensions, and supports native `.exe`/`.com` images plus
+  `.cmd`/`.bat` command scripts.
 - Unix executability is checked through the file mode's execute bits.
 - Home-directory resolution uses `HOME` or `USERPROFILE`/`HOMEDRIVE`.
 - No Unix-only APIs are used outside `#[cfg(unix)]` blocks.
@@ -223,8 +224,9 @@ Key navigation is explicit and portable:
 | End / Ctrl+End | Move to the end of the line |
 | Page Up | Previous history entry |
 | Page Down | Next history entry |
+| Tab | Open completion for the current built-in, path, or variable |
 | Ctrl+L | Clear screen and scrollback |
-| Ctrl+C | Cancel the current line or command |
+| Ctrl+C | Cancel the current input line |
 
 The shell does not assume a graphical font exists. Set `terminal_font` and
 `apply_terminal_font = true` to emit an OSC 50 hint; terminals that do not
@@ -415,9 +417,25 @@ Executable resolution:
 - Names containing a path separator are resolved against the session working
   directory (for example `./script` or `subdir/program`).
 - Bare names are searched in `PATH`.
-- On Windows, `PATHEXT` is read dynamically. `.bat` and `.cmd` files are
-  deliberately skipped so no other shell is involved.
+- On Windows, `PATHEXT` is read dynamically and only `.com`, `.exe`, `.bat`,
+  and `.cmd` are launched, in `PATHEXT` order. A name that already has an
+  extension is not extended again. Extensionless files are never treated as
+  executables, because Windows cannot start them.
 - On Unix, a candidate must be a regular file with at least one execute bit.
+
+Windows launchers:
+
+- `.exe` and `.com` are native images and start directly.
+- `.cmd` and `.bat` are command scripts and start through the system command
+  interpreter (`%COMSPEC%`, else `%SystemRoot%\System32\cmd.exe`) using
+  `/d /v:off /s /c`. `/d` ignores AutoRun commands, `/v:off` disables delayed
+  expansion, and `/s` makes the surrounding quotes behave predictably.
+- Every script argument is quoted, so `&`, `|`, `<`, `>`, `(`, `)`, `^`, and
+  `!` arrive as literal text and cannot become extra commands.
+- An argument containing `"`, `%`, CR, LF, or NUL is refused with a clear error
+  rather than silently rewritten; `cmd.exe` has no escaping for those.
+- This is why npm and pnpm tools work: they install an extensionless POSIX `sh`
+  shim plus a `.cmd` shim, and KERNEXT selects the `.cmd`.
 
 Argument handling:
 
@@ -503,10 +521,15 @@ failed to start 'program': <operating-system error>
 invalid executable path 'bad': it contains a NUL byte
 ```
 
-`CommandOutcome` exposes `success()` and `exit_code()`. The exit code is
-`None` for built-ins and for processes terminated by a signal; `success()` is
-the value `&&`, `||`, and `;` use and the value the shell exposes as `$?`. For a
-pipeline, the final stage's status is authoritative.
+`CommandOutcome` exposes `success()` and `exit_code()`. Its `output()` is the
+combined display text (the internal command result keeps stdout and stderr
+separate so redirections can target them individually). The exit code is `Some`
+for an external process that exits normally and for a single `exit` command; it
+is `None` for other built-ins and for processes terminated by a signal.
+`success()` is the value `&&`, `||`, and `;` use and the value the shell exposes
+as `$?`. A signal-terminated child sets `$?` to `128 + signal`. For a pipeline,
+the final stage's status is authoritative. `exit [status]` also becomes the
+shell process exit status.
 
 ## Shell language
 
@@ -678,8 +701,10 @@ Special variables:
 - Full job control. `jobs`, `wait`, `kill`, `fg`, and `bg` exist and operate on
   job numbers, but there is no process-group hand-off: `fg` waits for a job
   instead of giving it the terminal, and `bg` only reports state.
-- Signal handling (SIGINT, SIGTERM, SIGHUP, SIGSTOP, SIGCONT).
-- Process group/terminal ownership management.
+- Shell-wide signal handling (SIGINT, SIGTERM, SIGHUP, SIGSTOP, SIGCONT) and
+  process-group/terminal ownership management. Ctrl+C at the prompt cancels the
+  current Reedline line; a child terminated by a signal sets `$?` to
+  `128 + signal`, but the shell does not install its own signal handlers.
 - Globbing and pattern matching.
 - Comments in scripts (`# comment`).
 - Grouped expressions as pipeline stages (`(a; b) | c`). Groups still run

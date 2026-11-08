@@ -12,6 +12,7 @@ struct ScriptedReader {
     events: VecDeque<LineEvent>,
     reads: usize,
     clears: usize,
+    history_clears: usize,
 }
 
 impl ScriptedReader {
@@ -20,6 +21,7 @@ impl ScriptedReader {
             events: events.into_iter().collect(),
             reads: 0,
             clears: 0,
+            history_clears: 0,
         }
     }
 }
@@ -32,6 +34,11 @@ impl LineReader for ScriptedReader {
 
     fn clear_screen(&mut self) -> Result<(), LineEditorError> {
         self.clears += 1;
+        Ok(())
+    }
+
+    fn clear_history(&mut self) -> Result<(), LineEditorError> {
+        self.history_clears += 1;
         Ok(())
     }
 }
@@ -80,12 +87,26 @@ fn exit_stops_the_repl_without_reading_another_line() {
 
     assert!(repl.session().is_stopped());
     assert_eq!(repl.reader().reads, 1);
+    assert_eq!(repl.exit_status(), Some(0));
 
     drop(repl);
     let output = String::from_utf8(output).expect("output should be UTF-8");
 
     assert!(output.contains("Goodbye."));
     assert!(!output.contains("Available commands:"));
+}
+
+#[test]
+fn exit_preserves_the_requested_process_status() {
+    let reader = ScriptedReader::new([line("exit 7")]);
+    let mut output = Vec::new();
+    let mut repl = Repl::new(session(), reader, &mut output);
+
+    repl.run().expect("REPL should shut down cleanly");
+
+    assert_eq!(repl.exit_status(), Some(7));
+    assert_eq!(repl.session().last_status(), 7);
+    assert!(repl.session().is_stopped());
 }
 
 #[test]
@@ -222,6 +243,22 @@ fn clear_after_command_output_still_requests_a_clear() {
     drop(repl);
     let output = String::from_utf8(output).expect("output should be UTF-8");
     assert!(output.contains(&format!("KERNEXT v{VERSION}")));
+}
+
+#[test]
+fn history_clear_clears_the_dispatcher_and_line_editor_history() {
+    let reader = ScriptedReader::new([line("history clear"), line("exit")]);
+    let mut output = Vec::new();
+    let mut repl = Repl::new(session(), reader, &mut output);
+
+    repl.run().expect("REPL should shut down cleanly");
+
+    assert_eq!(repl.reader().history_clears, 1);
+    assert!(repl.session().is_stopped());
+
+    drop(repl);
+    let output = String::from_utf8(output).expect("output should be UTF-8");
+    assert!(output.contains("History cleared."));
 }
 
 #[test]

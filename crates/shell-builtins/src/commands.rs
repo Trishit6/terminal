@@ -16,6 +16,7 @@ pub(crate) struct CommandResult {
     stderr: String,
     success: bool,
     action: CommandAction,
+    exit_code: Option<i32>,
 }
 
 impl CommandResult {
@@ -25,6 +26,7 @@ impl CommandResult {
             stderr: String::new(),
             success: true,
             action: CommandAction::Continue,
+            exit_code: None,
         }
     }
 
@@ -38,6 +40,7 @@ impl CommandResult {
             stderr: message.into(),
             success: false,
             action: CommandAction::Continue,
+            exit_code: None,
         }
     }
 
@@ -51,6 +54,7 @@ impl CommandResult {
             stderr: errors.join("\n"),
             success: success && errors.is_empty(),
             action: CommandAction::Continue,
+            exit_code: None,
         }
     }
 
@@ -60,6 +64,7 @@ impl CommandResult {
             stderr: String::new(),
             success,
             action: CommandAction::Continue,
+            exit_code: None,
         }
     }
 
@@ -69,6 +74,7 @@ impl CommandResult {
             stderr: String::new(),
             success: outcome.success(),
             action: outcome.action(),
+            exit_code: outcome.exit_code(),
         }
     }
 
@@ -78,15 +84,17 @@ impl CommandResult {
             stderr: String::new(),
             success: true,
             action: CommandAction::ClearHistory,
+            exit_code: None,
         }
     }
 
-    fn exit() -> Self {
+    fn exit(exit_code: Option<i32>) -> Self {
         Self {
             stdout: "Goodbye.".to_owned(),
             stderr: String::new(),
             success: true,
             action: CommandAction::Exit,
+            exit_code,
         }
     }
 
@@ -96,6 +104,7 @@ impl CommandResult {
             stderr: String::new(),
             success: true,
             action: CommandAction::ClearScreen,
+            exit_code: None,
         }
     }
 
@@ -113,6 +122,10 @@ impl CommandResult {
 
     pub(crate) const fn action(&self) -> CommandAction {
         self.action
+    }
+
+    pub(crate) const fn exit_code(&self) -> Option<i32> {
+        self.exit_code
     }
 }
 
@@ -189,7 +202,7 @@ pub(crate) fn run(context: &mut CommandContext<'_>, name: &str, args: &[String])
         "whoami" => whoami(),
         "date" => date(),
         "version" => CommandResult::ok(format!("{PRODUCT_NAME} v{}", context.session.version())),
-        "exit" => CommandResult::exit(),
+        "exit" => exit_builtin(context.session, args),
         "export" => export_builtin(context.session, args),
         "unset" => unset_builtin(context.session, args),
         "env" => env_builtin(context.session, args),
@@ -209,7 +222,7 @@ fn cd(session: &mut Session, args: &[String]) -> CommandResult {
 
     let target = match args.first() {
         Some(argument) => resolve_path(session, argument),
-        None => match home_directory() {
+        None => match session_home(session) {
             Some(home) => home,
             None => return CommandResult::error("cd: cannot determine the home directory"),
         },
@@ -232,6 +245,27 @@ fn cd(session: &mut Session, args: &[String]) -> CommandResult {
 
     session.set_working_directory(canonical);
     CommandResult::silent()
+}
+
+fn exit_builtin(session: &mut Session, args: &[String]) -> CommandResult {
+    if args.len() > 1 {
+        return CommandResult::error("exit: too many arguments");
+    }
+
+    let status = match args.first() {
+        None => 0,
+        Some(argument) => match argument.trim().parse::<i32>() {
+            Ok(status) => status,
+            Err(_) => {
+                return CommandResult::error(format!(
+                    "exit: {argument}: numeric argument required"
+                ));
+            }
+        },
+    };
+
+    session.set_last_status(status);
+    CommandResult::exit(Some(status))
 }
 
 fn validate_directory(path: &Path, display: &str) -> Result<(), String> {
@@ -2110,6 +2144,7 @@ fn fg(session: &Session, args: &[String]) -> CommandResult {
             stderr: String::new(),
             success: result.success,
             action: CommandAction::Continue,
+            exit_code: None,
         }
     }
 }
@@ -2652,7 +2687,7 @@ fn date() -> CommandResult {
 }
 
 pub(crate) fn resolve_path(session: &Session, input: &str) -> PathBuf {
-    let path = expand_tilde(input);
+    let path = expand_tilde(session, input);
 
     if path.is_absolute() {
         path
@@ -2661,9 +2696,9 @@ pub(crate) fn resolve_path(session: &Session, input: &str) -> PathBuf {
     }
 }
 
-fn expand_tilde(input: &str) -> PathBuf {
+fn expand_tilde(session: &Session, input: &str) -> PathBuf {
     if input == "~" {
-        if let Some(home) = home_directory() {
+        if let Some(home) = session_home(session) {
             return home;
         }
     }
@@ -2672,12 +2707,24 @@ fn expand_tilde(input: &str) -> PathBuf {
         .strip_prefix("~/")
         .or_else(|| input.strip_prefix("~\\"))
     {
-        if let Some(home) = home_directory() {
+        if let Some(home) = session_home(session) {
             return home.join(rest);
         }
     }
 
     PathBuf::from(input)
+}
+
+/// The shell's current `HOME` value, falling back to the process environment.
+///
+/// Using the session value means `HOME=/somewhere; cd` and `cd ~` follow the
+/// variable the user can actually inspect and change.
+fn session_home(session: &Session) -> Option<PathBuf> {
+    session
+        .get_variable("HOME")
+        .filter(|home| !home.is_empty())
+        .map(PathBuf::from)
+        .or_else(home_directory)
 }
 
 fn home_directory() -> Option<PathBuf> {

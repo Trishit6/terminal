@@ -53,6 +53,8 @@ fn pipeline_helper() {
             let _ = writeln!(std::io::stderr(), "PIPELINE:failure");
             std::process::exit(9);
         }
+        #[cfg(unix)]
+        "abort" => std::process::abort(),
         _ => {}
     }
 }
@@ -704,6 +706,28 @@ fn external_after_a_redirected_producer_receives_empty_input() {
         "later stage must not read the terminal: {output}"
     );
     assert!(read(&directory, "out.txt").contains("PIPELINE:alpha"));
+}
+
+#[cfg(unix)]
+#[test]
+fn signal_termination_uses_128_plus_signal_for_status() {
+    let directory = TempDirectory::new("signal-status");
+    let abort = install_helper(&directory, "abort-helper");
+    let mut dispatcher = dispatcher(&directory);
+    let mut session = session(&directory);
+
+    let outcome = dispatcher.execute(&mut session, &helper_invocation(&abort, "abort"));
+
+    assert!(!outcome.success(), "{outcome:?}");
+    assert_eq!(outcome.exit_code(), None);
+    assert_eq!(session.last_status(), 128 + 6);
+    assert!(
+        outcome
+            .output()
+            .unwrap_or("")
+            .contains("terminated by signal 6"),
+        "{outcome:?}"
+    );
 }
 
 #[test]

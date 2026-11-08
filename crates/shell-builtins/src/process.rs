@@ -1,14 +1,32 @@
 //! External command resolution and execution.
 //!
-//! Phase 6 launches programs directly with [`std::process::Command`]. The shell
-//! never hands a command line to `sh -c`, `cmd /C`, or any other shell: the
-//! lexer and parser decide where each argument starts and ends, and this module
-//! passes those arguments to the operating system as separate values.
+//! Programs are launched directly with [`std::process::Command`]. The shell never
+//! hands a command line to `sh -c` or another shell for parsing: the lexer and
+//! parser decide where each argument starts and ends, and this module passes
+//! those arguments to the operating system as separate values.
 //!
 //! Command names containing a path separator (or an absolute path) are treated
 //! as paths and resolved against the session working directory. Bare names are
 //! looked up in the `PATH` supplied by the process options, falling back to the
 //! shell's own environment.
+//!
+//! # Windows launchers
+//!
+//! Windows can only start native images directly, so resolution honours
+//! `PATHEXT` and classifies the result:
+//!
+//! - `.exe` and `.com` files are native images and launch directly.
+//! - `.cmd` and `.bat` files are command scripts. They are run through the
+//!   system command interpreter (`%COMSPEC%`, then `%SystemRoot%\System32\cmd.exe`)
+//!   with `/d /v:off /s /c`, and every argument is escaped before it is placed
+//!   on the interpreter's command line.
+//!
+//! Extensionless files are never treated as executables on Windows. npm and pnpm
+//! install a POSIX `sh` shim (no extension) next to a `.cmd` shim; handing the
+//! extensionless shim to `CreateProcess` is exactly what produced
+//! `os error 193` ("not a valid Win32 application"). The `.cmd` shim is the
+//! correct Windows entry point and is now what resolution selects.
+//!
 
 use std::env;
 use std::error::Error;
@@ -78,6 +96,23 @@ impl ProcessOptions {
     pub fn environment(&self) -> &[(OsString, OsString)] {
         &self.environment
     }
+}
+
+/// How a resolved program must be started.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExecutableKind {
+    /// A native executable image launched directly.
+    Native,
+    /// A Windows command script run through the system command interpreter.
+    #[cfg(windows)]
+    BatchScript,
+}
+
+/// A resolved program: the file to start and how to start it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResolvedProgram {
+    path: PathBuf,
+    kind: ExecutableKind,
 }
 
 /// Why a program is not executable.
@@ -200,6 +235,17 @@ pub enum ProcessError {
         /// Why the name is invalid.
         reason: String,
     },
+    /// The arguments cannot be passed to this program without altering them.
+    ///
+    /// Windows command scripts are interpreted by `cmd.exe`, which has no
+    /// escaping for some characters. Rather than silently changing an argument
+    /// (or letting it become an extra command), launching fails with this error.
+    Argument {
+        /// Program name as typed by the user.
+        program: String,
+        /// Why the arguments cannot be forwarded safely.
+        reason: String,
+    },
     /// The operating system refused to start the process.
     Spawn {
         /// Program name as typed by the user.
@@ -224,6 +270,7 @@ impl ProcessError {
             Self::NotFound { program }
             | Self::PermissionDenied { program }
             | Self::InvalidPath { program, .. }
+            | Self::Argument { program, .. }
             | Self::Spawn { program, .. }
             | Self::Wait { program, .. } => program,
         }
@@ -240,6 +287,9 @@ impl fmt::Display for ProcessError {
             Self::InvalidPath { program, reason } => {
                 write!(formatter, "invalid executable path '{program}': {reason}")
             }
+            Self::Argument { program, reason } => {
+                write!(formatter, "cannot pass arguments to '{program}': {reason}")
+            }
             Self::Spawn { program, source } => {
                 write!(formatter, "failed to start '{program}': {source}")
             }
@@ -254,9 +304,10 @@ impl Error for ProcessError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Spawn { source, .. } | Self::Wait { source, .. } => Some(source),
-            Self::NotFound { .. } | Self::PermissionDenied { .. } | Self::InvalidPath { .. } => {
-                None
-            }
+            Self::NotFound { .. }
+            | Self::PermissionDenied { .. }
+            | Self::InvalidPath { .. }
+            | Self::Argument { .. } => None,
         }
     }
 }
@@ -374,6 +425,11 @@ impl ExternalCommand {
     /// Returns [`ProcessError`] when the program cannot be found, is not
     /// executable, or cannot be turned into a path.
     pub fn resolve(&self) -> Result<PathBuf, ProcessError> {
+        Ok(self.resolved_program()?.path)
+    }
+
+    /// Resolves the program and records how it must be launched.
+    fn resolved_program(&self) -> Result<ResolvedProgram, ProcessError> {
         let working_directory = match &self.working_directory {
             Some(directory) => directory.clone(),
             None => env::current_dir().map_err(|source| ProcessError::Spawn {
@@ -381,15 +437,28 @@ impl ExternalCommand {
                 source,
             })?,
         };
-        let path = environment_value(&self.environment, "PATH").or_else(|| {
+
+        let path = self.environment_lookup("PATH");
+        let pathext = self.environment_lookup("PATHEXT");
+
+        resolve_program_with_path(
+            &self.program,
+            &working_directory,
+            path.as_deref(),
+            pathext.as_deref(),
+        )
+    }
+
+    /// Looks a variable up in the command's overrides, then the process
+    /// environment unless the environment was cleared for the child.
+    fn environment_lookup(&self, name: &str) -> Option<OsString> {
+        environment_value(&self.environment, name).or_else(|| {
             if self.clear_environment {
                 None
             } else {
-                env::var_os("PATH")
+                env::var_os(name)
             }
-        });
-
-        resolve_with_path(&self.program, &working_directory, path.as_deref())
+        })
     }
 
     /// Resolves and runs the program to completion.
@@ -450,8 +519,8 @@ impl ExternalCommand {
         stdout: Stdio,
         stderr: Stdio,
     ) -> Result<Child, ProcessError> {
-        let executable = self.resolve()?;
-        let mut command = self.build_command(&executable);
+        let resolved = self.resolved_program()?;
+        let mut command = self.build_command(&resolved)?;
 
         command.stdin(stdin).stdout(stdout).stderr(stderr);
 
@@ -466,9 +535,38 @@ impl ExternalCommand {
         })
     }
 
-    fn build_command(&self, executable: &Path) -> Command {
-        let mut command = Command::new(executable);
-        command.args(&self.arguments);
+    /// Builds the process command for a resolved program.
+    ///
+    /// Native images run directly. Windows command scripts run through the
+    /// system interpreter, which receives one pre-escaped command line.
+    fn build_command(&self, resolved: &ResolvedProgram) -> Result<Command, ProcessError> {
+        let mut command = match resolved.kind {
+            ExecutableKind::Native => {
+                let mut command = Command::new(&resolved.path);
+                command.args(&self.arguments);
+                command
+            }
+            #[cfg(windows)]
+            ExecutableKind::BatchScript => {
+                let command_line =
+                    batch_command_line(&resolved.path, &self.arguments, &self.program)?;
+                let interpreter = self.command_interpreter();
+
+                let mut command = Command::new(&interpreter);
+                // `/d` skips AutoRun registry commands, `/v:off` disables
+                // delayed expansion (so `!` stays literal), and `/s` gives the
+                // outer quoting below a predictable, documented meaning.
+                command.args(["/d", "/v:off", "/s", "/c"]);
+
+                {
+                    use std::os::windows::process::CommandExt;
+
+                    command.raw_arg(command_line);
+                }
+
+                command
+            }
+        };
 
         if let Some(directory) = &self.working_directory {
             command.current_dir(directory);
@@ -486,7 +584,36 @@ impl ExternalCommand {
             );
         }
 
-        command
+        Ok(command)
+    }
+
+    /// Interpreter used to run `.cmd` and `.bat` programs.
+    ///
+    /// `%COMSPEC%` is trusted only when it is an absolute path to an existing
+    /// file, so a relative or stale value cannot redirect script execution to an
+    /// unrelated binary. Otherwise the system directory is used.
+    #[cfg(windows)]
+    fn command_interpreter(&self) -> PathBuf {
+        if let Some(comspec) = self.environment_lookup("COMSPEC") {
+            let candidate = PathBuf::from(comspec);
+
+            if candidate.is_absolute() && candidate.is_file() {
+                return candidate;
+            }
+        }
+
+        for root in ["SystemRoot", "windir"] {
+            if let Some(root) = self.environment_lookup(root) {
+                let candidate = Path::new(&root).join("System32").join("cmd.exe");
+
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+        }
+
+        // Last resort: let process creation search the system directories.
+        PathBuf::from("cmd.exe")
     }
 }
 
@@ -504,11 +631,27 @@ pub fn resolve_executable(
     resolve_with_path(program, working_directory, path.as_deref())
 }
 
+/// Resolves `program` to an executable path, ignoring how it must be launched.
 fn resolve_with_path(
     program: &str,
     working_directory: &Path,
     path: Option<&OsStr>,
 ) -> Result<PathBuf, ProcessError> {
+    #[cfg(windows)]
+    let pathext = env::var_os("PATHEXT");
+    #[cfg(not(windows))]
+    let pathext: Option<OsString> = None;
+
+    resolve_program_with_path(program, working_directory, path, pathext.as_deref())
+        .map(|resolved| resolved.path)
+}
+
+fn resolve_program_with_path(
+    program: &str,
+    working_directory: &Path,
+    path: Option<&OsStr>,
+    pathext: Option<&OsStr>,
+) -> Result<ResolvedProgram, ProcessError> {
     if program.is_empty() {
         return Err(ProcessError::NotFound {
             program: program.to_owned(),
@@ -535,7 +678,7 @@ fn resolve_with_path(
             working_directory.join(program_path)
         };
 
-        return resolve_candidates(append_platform_extensions(&candidate), program);
+        return resolve_candidates(append_platform_extensions(&candidate, pathext), program);
     }
 
     let Some(path) = path else {
@@ -555,7 +698,7 @@ fn resolve_with_path(
             working_directory.join(directory)
         };
 
-        let candidates = append_platform_extensions(&directory.join(program));
+        let candidates = append_platform_extensions(&directory.join(program), pathext);
 
         match resolve_candidates(candidates, program) {
             Ok(resolved) => return Ok(resolved),
@@ -575,15 +718,53 @@ fn resolve_with_path(
     }
 }
 
-fn resolve_candidates(candidates: Vec<PathBuf>, program: &str) -> Result<PathBuf, ProcessError> {
+fn resolve_candidates(
+    candidates: Vec<PathBuf>,
+    program: &str,
+) -> Result<ResolvedProgram, ProcessError> {
     let mut found_but_not_executable = false;
+    #[cfg(windows)]
+    let mut unsupported_extension = None;
 
     for candidate in candidates {
         match executable_state(&candidate) {
-            ExecutableState::Executable => return Ok(candidate),
+            ExecutableState::Executable => {
+                #[cfg(windows)]
+                {
+                    if let Some(kind) = windows_program_kind(&candidate) {
+                        return Ok(ResolvedProgram {
+                            path: candidate,
+                            kind,
+                        });
+                    }
+
+                    if unsupported_extension.is_none() {
+                        unsupported_extension = Some(candidate);
+                    }
+                }
+
+                #[cfg(not(windows))]
+                {
+                    return Ok(ResolvedProgram {
+                        path: candidate,
+                        kind: ExecutableKind::Native,
+                    });
+                }
+            }
             ExecutableState::NotExecutable => found_but_not_executable = true,
             ExecutableState::Missing => {}
         }
+    }
+
+    #[cfg(windows)]
+    if let Some(candidate) = unsupported_extension {
+        return Err(ProcessError::InvalidPath {
+            program: program.to_owned(),
+            reason: format!(
+                "Windows cannot start '{}' directly; only .exe, .com, .cmd and .bat files are executable",
+                candidate.display()
+            ),
+        });
     }
 
     if found_but_not_executable {
@@ -639,43 +820,153 @@ fn environment_key_matches(key: &OsStr, name: &str) -> bool {
 }
 
 #[cfg(windows)]
-fn append_platform_extensions(base: &Path) -> Vec<PathBuf> {
-    let mut candidates = vec![base.to_path_buf()];
-
-    if base.extension().is_none() {
-        for extension in windows_executable_extensions() {
-            let mut candidate = base.as_os_str().to_os_string();
-            candidate.push(&extension);
-            candidates.push(PathBuf::from(candidate));
-        }
+fn append_platform_extensions(base: &Path, pathext: Option<&OsStr>) -> Vec<PathBuf> {
+    // A name that already carries an extension is used verbatim; the operating
+    // system, not the shell, decides whether that extension is runnable.
+    if base.extension().is_some() {
+        return vec![base.to_path_buf()];
     }
 
-    candidates
+    windows_executable_extensions(pathext)
+        .into_iter()
+        .map(|extension| {
+            let mut candidate = base.as_os_str().to_os_string();
+            candidate.push(&extension);
+            PathBuf::from(candidate)
+        })
+        .collect()
 }
 
 #[cfg(not(windows))]
-fn append_platform_extensions(base: &Path) -> Vec<PathBuf> {
+fn append_platform_extensions(base: &Path, _pathext: Option<&OsStr>) -> Vec<PathBuf> {
     vec![base.to_path_buf()]
 }
 
+/// Extensions KERNEXT will launch, in the order `PATHEXT` declares.
+///
+/// Only native images (`.exe`, `.com`) and command scripts (`.cmd`, `.bat`) are
+/// supported. Other `PATHEXT` entries (`.vbs`, `.js`, `.ps1`, `.msc`, ...) need
+/// a different host program and are deliberately not launched directly.
 #[cfg(windows)]
-fn windows_executable_extensions() -> Vec<String> {
-    let raw = env::var_os("PATHEXT").unwrap_or_else(|| OsString::from(".COM;.EXE"));
+fn windows_executable_extensions(pathext: Option<&OsStr>) -> Vec<String> {
+    const SUPPORTED: [&str; 4] = [".com", ".exe", ".bat", ".cmd"];
+    const DEFAULT: &str = ".COM;.EXE;.BAT;.CMD";
 
-    raw.to_string_lossy()
-        .split(';')
-        .filter(|extension| !extension.is_empty())
-        .map(|extension| {
-            if extension.starts_with('.') {
-                extension.to_ascii_lowercase()
-            } else {
-                format!(".{}", extension.to_ascii_lowercase())
+    let raw = pathext.map_or_else(|| OsString::from(DEFAULT), OsString::from);
+    let mut extensions: Vec<String> = Vec::new();
+
+    for extension in raw.to_string_lossy().split(';') {
+        let extension = extension.trim();
+
+        if extension.is_empty() {
+            continue;
+        }
+
+        let extension = if extension.starts_with('.') {
+            extension.to_ascii_lowercase()
+        } else {
+            format!(".{}", extension.to_ascii_lowercase())
+        };
+
+        if SUPPORTED.contains(&extension.as_str()) && !extensions.contains(&extension) {
+            extensions.push(extension);
+        }
+    }
+
+    if extensions.is_empty() {
+        return SUPPORTED.iter().map(ToString::to_string).collect();
+    }
+
+    extensions
+}
+
+/// Classifies a Windows file by the launcher it requires.
+#[cfg(windows)]
+fn windows_program_kind(path: &Path) -> Option<ExecutableKind> {
+    let extension = path.extension()?.to_string_lossy().to_ascii_lowercase();
+
+    match extension.as_str() {
+        "exe" | "com" => Some(ExecutableKind::Native),
+        "bat" | "cmd" => Some(ExecutableKind::BatchScript),
+        _ => None,
+    }
+}
+
+/// Builds the complete command line handed to `cmd.exe` for a command script.
+///
+/// The shape is `""<script>" "<arg>"..."`: `/s` strips exactly the outer pair
+/// of quotes, leaving the quoted script and arguments for normal `cmd.exe`
+/// parsing. Every argument is quoted, so `&`, `|`, `<`, `>`, `(`, `)`, `^` and
+/// `!` stay literal instead of becoming operators.
+#[cfg(windows)]
+fn batch_command_line(
+    script: &Path,
+    arguments: &[String],
+    program: &str,
+) -> Result<String, ProcessError> {
+    let script = script.to_str().ok_or_else(|| ProcessError::InvalidPath {
+        program: program.to_owned(),
+        reason: "the script path is not valid Unicode".to_owned(),
+    })?;
+
+    if script.contains('%') {
+        return Err(ProcessError::Argument {
+            program: program.to_owned(),
+            reason: "the script path contains '%', which cmd.exe would expand".to_owned(),
+        });
+    }
+
+    let mut line = String::with_capacity(script.len() + 2);
+    line.push('"');
+    line.push_str(script);
+    line.push('"');
+
+    for argument in arguments {
+        line.push(' ');
+        push_batch_argument(argument, program, &mut line)?;
+    }
+
+    Ok(format!("\"{line}\""))
+}
+
+/// Appends one quoted argument to a `cmd.exe` command line.
+///
+/// `cmd.exe` has no escaping for `%` (expanded before any other parsing), and a
+/// literal `"` would terminate the quoted region and let the rest of the
+/// argument become commands. Both, plus line breaks and NUL bytes, are refused
+/// rather than silently rewritten.
+#[cfg(windows)]
+fn push_batch_argument(
+    argument: &str,
+    program: &str,
+    line: &mut String,
+) -> Result<(), ProcessError> {
+    if let Some(character) = argument
+        .chars()
+        .find(|character| matches!(character, '\0' | '\n' | '\r' | '"' | '%'))
+    {
+        let reason = match character {
+            '\0' => "arguments containing NUL bytes cannot be passed to a command script",
+            '\n' | '\r' => "arguments containing line breaks cannot be passed to a command script",
+            '"' => {
+                "arguments containing double quotes cannot be passed to a command script without changing their meaning"
             }
-        })
-        // Batch and command scripts are interpreted by another shell. Phase 6
-        // launches native executables only, so they are deliberately skipped.
-        .filter(|extension| extension != ".bat" && extension != ".cmd")
-        .collect()
+            _ => {
+                "arguments containing '%' would be expanded by cmd.exe, so KERNEXT refuses to alter them"
+            }
+        };
+
+        return Err(ProcessError::Argument {
+            program: program.to_owned(),
+            reason: reason.to_owned(),
+        });
+    }
+
+    line.push('"');
+    line.push_str(argument);
+    line.push('"');
+
+    Ok(())
 }
 
 #[cfg(test)]

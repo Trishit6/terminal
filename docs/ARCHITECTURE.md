@@ -48,8 +48,9 @@ The engine is designed so a non-terminal front end can reuse it:
 - `shell-core` performs no I/O and owns parsing.
 - `shell-builtins::Dispatcher` accepts a command line or AST and returns a
   `CommandOutcome`.
-- `CommandOutcome` keeps stdout and stderr separate, plus `success`, `exit_code`,
-  and a `CommandAction`.
+- `CommandOutcome` exposes combined display output plus `success`, `exit_code`,
+  and a `CommandAction`. Internal command results keep stdout and stderr
+  separate so redirections can target them individually.
 - `shell-runtime::Session` is cloneable, which lets pipeline stages run against
   an isolated copy while filesystem side effects persist.
 
@@ -104,7 +105,19 @@ its own stage.
 ### Actions
 
 `CommandAction::{Continue, ClearScreen, ClearHistory, Exit}` propagates from a
-single command. `Exit` and `ClearScreen` never propagate from a pipeline stage.
+single command. No action propagates from a pipeline stage, and background
+evaluation cannot stop or clear the foreground shell.
+
+### Status and exit codes
+
+- `$?` is updated after every command, pipeline, and assignment: `0` on success,
+  the child's code for a normal external exit, `1` for a built-in failure, `2`
+  for lexer/parser errors, and `128 + signal` for a signal-terminated child.
+- `exit [status]` sets both `$?` and the shell process exit status.
+- The final pipeline stage determines pipeline success and exit status.
+- Control-flow no-ops (a false `if` without `else`, an empty loop, a function
+  definition, or `break`/`continue`/`return`) reset a stale failure status to
+  success rather than leaking the previous command's result.
 
 ## Startup architecture
 
@@ -146,10 +159,17 @@ History is stored beside the config file unless `history_file` is absolute.
 
 ## Security properties
 
-- No other shell is invoked: no `sh -c`, `bash -c`, or `cmd /C`.
-- Arguments are passed as separate `Command::arg` values.
-- `.bat` and `.cmd` are skipped during Windows resolution so no implicit shell
-  runs.
+- No other shell parses KERNEXT input: no `sh -c`, `bash -c`, or `cmd /C` for
+  command syntax. The lexer and parser always own tokenisation and pipelines.
+- Arguments are passed as separate `Command::arg` values to native programs.
+- Windows `.cmd`/`.bat` files cannot be started natively, so they are launched
+  through the system command interpreter with `/d /v:off /s /c` and one
+  pre-escaped command line. Arguments containing `"`, `%`, CR, LF, or NUL are
+  rejected rather than altered, because `cmd.exe` has no escaping for them.
+- Windows resolution honours `PATHEXT` order but only for `.com`, `.exe`,
+  `.bat`, and `.cmd`; extensionless files are never treated as executables.
+  This prevents launching npm/pnpm POSIX `sh` shims (the cause of Windows
+  `os error 193`).
 - The parent process environment is never mutated.
 - Child processes receive inherited variables plus exported locals, minus
   hidden names.

@@ -169,6 +169,61 @@ fn exit_inside_a_background_expression_does_not_stop_the_shell() {
 }
 
 #[test]
+fn control_flow_no_ops_reset_a_stale_failure_status() {
+    let mut dispatcher = Dispatcher::new();
+    let mut session = session();
+
+    dispatcher.execute(&mut session, "false");
+    let outcome = dispatcher.execute(&mut session, "if false { echo never }");
+    assert!(outcome.success());
+    assert_eq!(outcome.exit_code(), None);
+    assert_eq!(session.last_status(), 0);
+
+    dispatcher.execute(&mut session, "false");
+    let outcome = dispatcher.execute(&mut session, "while false { echo never }");
+    assert!(outcome.success());
+    assert_eq!(session.last_status(), 0);
+
+    dispatcher.execute(&mut session, "false");
+    let outcome = dispatcher.execute(&mut session, "value = assigned");
+    assert!(outcome.success());
+    assert_eq!(session.last_status(), 0);
+
+    dispatcher.execute(&mut session, "false");
+    let outcome = dispatcher.execute(&mut session, "function noop() { true }");
+    assert!(outcome.success());
+    assert_eq!(session.last_status(), 0);
+}
+
+#[test]
+fn exit_accepts_a_numeric_status_argument() {
+    let mut dispatcher = Dispatcher::new();
+    let mut session = session();
+
+    let outcome = dispatcher.execute(&mut session, "exit 7");
+
+    assert_eq!(outcome.action(), shell_builtins::CommandAction::Exit);
+    assert_eq!(outcome.exit_code(), Some(7));
+    assert_eq!(session.last_status(), 7);
+    assert_eq!(outcome.output(), Some("Goodbye."));
+}
+
+#[test]
+fn a_background_spawn_failure_reports_status_one() {
+    let mut dispatcher =
+        Dispatcher::with_options(ProcessOptions::new().with_stdio(StdioMode::Capture));
+    let mut session = session();
+
+    let outcome = dispatcher.execute(
+        &mut session,
+        "kernext-command-that-does-not-exist-anywhere &",
+    );
+
+    assert!(!outcome.success());
+    assert_eq!(session.last_status(), 1);
+}
+
+#[test]
 fn history_limit_changes_the_session_retention() {
     let mut dispatcher = Dispatcher::new();
     let mut session = session();

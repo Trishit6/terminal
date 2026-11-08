@@ -48,16 +48,37 @@ pub fn is_sensitive_command(command: &str) -> bool {
         return true;
     }
 
-    command.split_whitespace().any(is_sensitive_word)
+    let words: Vec<&str> = command.split_whitespace().map(trim_token).collect();
+    if words.iter().copied().any(is_sensitive_word) {
+        return true;
+    }
+
+    // Spaced assignments such as `PASSWORD = value` are common in scripting
+    // shells and must be filtered just like `PASSWORD=value`.
+    words.windows(2).any(|pair| {
+        is_sensitive_name(pair[0]) && (pair[1].starts_with('=') || pair[1].starts_with(':'))
+    })
 }
 
-fn is_sensitive_word(word: &str) -> bool {
-    let trimmed = word.trim_matches(|character: char| {
+fn trim_token(word: &str) -> &str {
+    word.trim_matches(|character: char| {
         matches!(
             character,
             '"' | '\'' | '(' | ')' | ';' | '|' | '&' | ',' | '{' | '}'
         )
-    });
+    })
+}
+
+fn is_sensitive_name(word: &str) -> bool {
+    let normalized = word
+        .trim_start_matches('-')
+        .to_ascii_lowercase()
+        .replace('-', "_");
+    SENSITIVE_NAMES.contains(&normalized.as_str())
+}
+
+fn is_sensitive_word(word: &str) -> bool {
+    let trimmed = trim_token(word);
 
     if trimmed.is_empty() {
         return false;
@@ -125,6 +146,9 @@ mod tests {
             "DATABASE_URL=postgres://user:pass@host/db",
             "AWS_SECRET_ACCESS_KEY=abc",
             "client-secret: value",
+            "export PASSWORD = hunter2",
+            "export API_KEY : abc123",
+            "tool --password = hunter2",
         ] {
             assert!(is_sensitive_command(command), "{command}");
         }

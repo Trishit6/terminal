@@ -25,7 +25,7 @@ use shell_runtime::Session;
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
-use std::process::{Child, ChildStdout, ExitStatus, Stdio};
+use std::process::{Child, ChildStdout, Stdio};
 use std::thread::{self, JoinHandle};
 
 /// A pipeline stage borrowed from the AST.
@@ -56,8 +56,10 @@ pub(crate) struct PipelineOutcome {
     pub stderr: String,
     /// Status of the final stage.
     pub success: bool,
-    /// Exit code of the final external stage, if it exited normally.
+    /// Exit code of the final stage, if it exited normally.
     pub exit_code: Option<i32>,
+    /// Signal number that terminated the final stage, if any.
+    pub signal_status: Option<i32>,
     /// Action requested by a single built-in command.
     pub action: CommandAction,
     /// Whether a single built-in requested shell shutdown.
@@ -71,6 +73,7 @@ impl PipelineOutcome {
             stderr: message.into(),
             success: false,
             exit_code: None,
+            signal_status: None,
             action: CommandAction::Continue,
             stopped: false,
         }
@@ -102,6 +105,7 @@ pub(crate) fn execute(
     let mut stderr = String::new();
     let mut success = true;
     let mut exit_code = None;
+    let mut signal_status = None;
     let mut action = CommandAction::Continue;
     let mut stopped = false;
     let mut final_child_index = None;
@@ -231,7 +235,8 @@ pub(crate) fn execute(
 
             if is_last {
                 success = result.success();
-                exit_code = None;
+                exit_code = result.exit_code();
+                signal_status = None;
 
                 if propagate_actions {
                     action = result.action();
@@ -373,9 +378,11 @@ pub(crate) fn execute(
                         append_stream(&mut stderr, &String::from_utf8_lossy(&output.stderr));
                     }
 
-                    success = output.status.success();
-                    exit_code = output.status.code();
-                    append_signal(&mut stderr, &entry.name, output.status);
+                    let status = ProcessStatus::from_exit_status(output.status);
+                    success = status.success();
+                    exit_code = status.code();
+                    signal_status = status.signal();
+                    append_signal(&mut stderr, &entry.name, signal_status);
                 }
                 Err(error) => {
                     cleanup(&mut children);
@@ -388,9 +395,11 @@ pub(crate) fn execute(
         } else {
             match entry.child.wait() {
                 Ok(status) => {
+                    let status = ProcessStatus::from_exit_status(status);
                     success = status.success();
                     exit_code = status.code();
-                    append_signal(&mut stderr, &entry.name, status);
+                    signal_status = status.signal();
+                    append_signal(&mut stderr, &entry.name, signal_status);
                 }
                 Err(error) => {
                     cleanup(&mut children);
@@ -424,6 +433,7 @@ pub(crate) fn execute(
         stderr,
         success,
         exit_code,
+        signal_status,
         action,
         stopped,
     }
@@ -558,8 +568,8 @@ fn external_error_message(name: &str, error: ProcessError) -> String {
     }
 }
 
-fn append_signal(stderr: &mut String, name: &str, status: ExitStatus) {
-    if let Some(signal) = ProcessStatus::from_exit_status(status).signal() {
+fn append_signal(stderr: &mut String, name: &str, signal: Option<i32>) {
+    if let Some(signal) = signal {
         append_stream(stderr, &format!("{name}: terminated by signal {signal}"));
     }
 }

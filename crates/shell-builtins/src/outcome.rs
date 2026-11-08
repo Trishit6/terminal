@@ -51,7 +51,11 @@ impl CommandOutcome {
         self.action
     }
 
-    /// Text to display, when the command produces output.
+    /// Combined display text, when the command produces output.
+    ///
+    /// Internal command results keep stdout and stderr separate so
+    /// redirections can target them individually; this accessor returns the
+    /// text the REPL should display after redirections are applied.
     #[must_use]
     pub fn output(&self) -> Option<&str> {
         self.output.as_deref()
@@ -59,16 +63,18 @@ impl CommandOutcome {
 
     /// Returns `true` when the final command evaluated successfully.
     ///
-    /// This is the value `&&` and `||` use today and the value a future
-    /// scripting engine can expose through `$?`.
+    /// This is the value `&&` and `||` use and the success component of the
+    /// last status exposed through `$?`.
     #[must_use]
     pub const fn success(&self) -> bool {
         self.success
     }
 
-    /// Exit code of the final external command, when it exited normally.
+    /// Exit code of the final stage, when it has one.
     ///
-    /// Built-ins and signaled processes have no exit code.
+    /// Normally exited external processes and `exit <status>` provide a code.
+    /// Other built-ins and signal-terminated processes use `None`; the
+    /// evaluator maps signal termination to `128 + signal` for `$?`.
     #[must_use]
     pub const fn exit_code(&self) -> Option<i32> {
         self.exit_code

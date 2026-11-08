@@ -113,11 +113,10 @@ impl Evaluator<'_> {
                 self.action = action;
                 self.flow = flow;
 
-                if !stopped {
-                    self.session.set_last_status(0);
-                }
-
+                // `spawn_background` records 0 on success and 1 on a spawn
+                // failure. Never overwrite that with a blanket success status.
                 self.success = status;
+                self.exit_code = None;
                 continue;
             }
 
@@ -182,6 +181,8 @@ impl Evaluator<'_> {
     fn run_assignment(&mut self, assignment: &Assignment) -> bool {
         let value = expand_assignment_value(assignment, self.session);
         self.session.set_variable(&assignment.name, value, false);
+        self.success = true;
+        self.exit_code = None;
         self.session.set_last_status(0);
         true
     }
@@ -203,10 +204,8 @@ impl Evaluator<'_> {
         self.action = action;
         self.flow = flow;
 
-        if !stopped {
-            self.session.set_last_status(0);
-        }
-
+        self.success = status;
+        self.exit_code = None;
         status
     }
 
@@ -323,12 +322,17 @@ impl Evaluator<'_> {
         } else if let Some(else_branch) = &if_else.else_branch {
             self.run_block(else_branch)
         } else {
+            // A false condition with no `else` is a successful no-op.
+            self.success = true;
+            self.exit_code = None;
+            self.session.set_last_status(0);
             true
         }
     }
 
     fn run_while_loop(&mut self, while_loop: &WhileLoop) -> bool {
         let mut last_status = true;
+        let mut last_exit_code = None;
         let mut iterations = 0usize;
 
         loop {
@@ -343,6 +347,19 @@ impl Evaluator<'_> {
             }
 
             if !condition_result {
+                // Evaluating the final, false condition changed `$?`. Restore
+                // the last body status (or use success for a zero-iteration
+                // loop), matching shell control-flow semantics.
+                if iterations == 0 {
+                    self.success = true;
+                    self.exit_code = None;
+                    self.session.set_last_status(0);
+                } else {
+                    self.success = last_status;
+                    self.exit_code = last_exit_code;
+                    self.session
+                        .set_last_status(last_exit_code.unwrap_or(if last_status { 0 } else { 1 }));
+                }
                 return last_status;
             }
 
@@ -355,6 +372,7 @@ impl Evaluator<'_> {
 
             self.loop_depth += 1;
             last_status = self.run_block(&while_loop.body);
+            last_exit_code = self.exit_code;
             self.loop_depth -= 1;
 
             match self.flow {
@@ -385,6 +403,14 @@ impl Evaluator<'_> {
             return self.fail(format!(
                 "for: iteration limit of {MAX_LOOP_ITERATIONS} exceeded"
             ));
+        }
+
+        if values.is_empty() {
+            // A loop with nothing to iterate is a successful no-op.
+            self.success = true;
+            self.exit_code = None;
+            self.session.set_last_status(0);
+            return true;
         }
 
         let mut last_status = true;
@@ -465,6 +491,8 @@ impl Evaluator<'_> {
         // Store the function definition in the session for later calls.
         self.session
             .set_function(func_def.name.clone(), func_def.clone());
+        self.success = true;
+        self.exit_code = None;
         self.session.set_last_status(0);
         true
     }
@@ -476,6 +504,11 @@ impl Evaluator<'_> {
 
         self.return_value = ret.value.as_ref().map(|value| self.eval_value(value));
         self.flow = Flow::Return;
+        if self.return_value.is_none() {
+            self.success = true;
+            self.exit_code = None;
+            self.session.set_last_status(0);
+        }
         true
     }
 
@@ -485,6 +518,9 @@ impl Evaluator<'_> {
         }
 
         self.flow = Flow::Break;
+        self.success = true;
+        self.exit_code = None;
+        self.session.set_last_status(0);
         true
     }
 
@@ -494,6 +530,9 @@ impl Evaluator<'_> {
         }
 
         self.flow = Flow::Continue;
+        self.success = true;
+        self.exit_code = None;
+        self.session.set_last_status(0);
         true
     }
 
@@ -616,6 +655,8 @@ impl Evaluator<'_> {
         if let Some(value) = returned {
             let status = value.trim().parse::<i32>().unwrap_or(0);
             self.session.set_last_status(status);
+            self.success = status == 0;
+            self.exit_code = None;
             return status == 0;
         }
 
@@ -646,14 +687,20 @@ impl Evaluator<'_> {
         if outcome.stopped {
             self.action = CommandAction::Exit;
             self.stopped = true;
-        } else if outcome.action == CommandAction::ClearScreen && self.action != CommandAction::Exit
+        } else if matches!(
+            outcome.action,
+            CommandAction::ClearScreen | CommandAction::ClearHistory
+        ) && self.action != CommandAction::Exit
         {
-            self.action = CommandAction::ClearScreen;
+            self.action = outcome.action;
         }
 
-        // Update $? from the pipeline outcome.
+        // Update $? from the pipeline outcome. Signal termination follows the
+        // usual 128 + signal convention.
         if let Some(code) = outcome.exit_code {
             self.session.set_last_status(code);
+        } else if let Some(signal) = outcome.signal_status {
+            self.session.set_last_status(128 + signal);
         } else if outcome.success {
             self.session.set_last_status(0);
         } else {

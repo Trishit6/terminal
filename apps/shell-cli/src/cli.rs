@@ -6,8 +6,10 @@ use shell_config::Config;
 use shell_core::{PRODUCT_NAME, SHELL_NAME, ShellError, VERSION};
 use shell_line_editor::{CompletionContext, EditorSettings, ShellEditor};
 use shell_runtime::Session;
+use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::io::{self, IsTerminal};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -32,7 +34,7 @@ pub struct Cli {
 
 /// Wrapper to provide completion context from Session.
 struct SessionCompletionContext {
-    session: Session,
+    session: RwLock<Session>,
     builtins: Vec<String>,
 }
 
@@ -42,25 +44,35 @@ impl CompletionContext for SessionCompletionContext {
     }
 
     fn executables(&self) -> Vec<String> {
-        // Use the same PATH resolution as the shell
-        let path_dirs = std::env::var_os("PATH")
-            .map_or_else(Vec::new, |path| std::env::split_paths(&path).collect());
+        // Use the shell's current PATH, not the process PATH captured at
+        // startup, so `PATH=...` is reflected immediately.
+        let session = self.session.read().ok();
+        let path = session
+            .as_ref()
+            .and_then(|session| session.get_variable("PATH"));
+        let path_dirs = path.as_deref().map_or_else(Vec::new, |path| {
+            std::env::split_paths(OsStr::new(path)).collect()
+        });
 
         let mut executables = Vec::new();
         // `PATHEXT` is semicolon-separated; `split_paths` would use the
         // platform path separator and split it incorrectly. `.bat` and `.cmd`
         // are excluded because KERNEXT never delegates to another shell.
         #[cfg(windows)]
-        let pathext: Vec<String> = std::env::var("PATHEXT").map_or_else(
-            |_| vec![".exe".to_string(), ".com".to_string()],
-            |ext| {
-                ext.split(';')
-                    .map(str::trim)
-                    .filter(|extension| !extension.is_empty())
-                    .map(str::to_ascii_lowercase)
-                    .collect()
-            },
-        );
+        let pathext: Vec<String> = session
+            .as_ref()
+            .and_then(|session| session.get_variable("PATHEXT"))
+            .or_else(|| std::env::var("PATHEXT").ok())
+            .map_or_else(
+                || vec![".exe".to_string(), ".com".to_string()],
+                |ext| {
+                    ext.split(';')
+                        .map(str::trim)
+                        .filter(|extension| !extension.is_empty())
+                        .map(str::to_ascii_lowercase)
+                        .collect()
+                },
+            );
 
         for dir in path_dirs {
             if let Ok(entries) = std::fs::read_dir(&dir) {
@@ -95,28 +107,65 @@ impl CompletionContext for SessionCompletionContext {
     }
 
     fn variables(&self) -> Vec<String> {
-        self.session
+        let Ok(session) = self.session.read() else {
+            return Vec::new();
+        };
+
+        let mut variables: Vec<String> = session
             .local_variables()
             .into_iter()
-            .map(|(k, _, _)| k)
-            .collect()
+            .map(|(name, _, _)| name)
+            .collect();
+        variables.extend(
+            session
+                .inherited_variables()
+                .into_iter()
+                .map(|(name, _)| name),
+        );
+        variables.sort();
+        variables.dedup();
+        variables
     }
 
     fn exported_variables(&self) -> Vec<String> {
-        self.session
-            .local_variables()
+        let Ok(session) = self.session.read() else {
+            return Vec::new();
+        };
+
+        let locals = session.local_variables();
+        let shadowed: HashSet<String> = locals.iter().map(|(name, _, _)| name.clone()).collect();
+        let mut exported: Vec<String> = locals
             .into_iter()
             .filter(|(_, _, exported)| *exported)
-            .map(|(k, _, _)| k)
-            .collect()
+            .map(|(name, _, _)| name)
+            .collect();
+        exported.extend(
+            session
+                .inherited_variables()
+                .into_iter()
+                .filter(|(name, _)| !shadowed.contains(name))
+                .map(|(name, _)| name),
+        );
+        exported.sort();
+        exported.dedup();
+        exported
     }
 
     fn working_directory(&self) -> std::path::PathBuf {
-        self.session.working_directory().to_path_buf()
+        self.session.read().map_or_else(
+            |_| std::path::PathBuf::from("."),
+            |session| session.working_directory().to_path_buf(),
+        )
+    }
+
+    fn refresh(&self, session: &Session) {
+        if let Ok(mut snapshot) = self.session.write() {
+            *snapshot = session.clone();
+        }
     }
 }
 
-pub fn run() -> Result<(), ShellError> {
+pub fn run() -> Result<i32, ShellError> {
     let arguments = Cli::parse();
 
     if !io::stdin().is_terminal() {
@@ -181,7 +230,7 @@ pub fn run() -> Result<(), ShellError> {
         .collect();
 
     let completion_context = Arc::new(SessionCompletionContext {
-        session: session.clone(),
+        session: RwLock::new(session.clone()),
         builtins: builtins.clone(),
     });
 
@@ -220,11 +269,13 @@ pub fn run() -> Result<(), ShellError> {
     startup.stage_ok(stage).map_err(startup_error)?;
     startup.welcome().map_err(startup_error)?;
 
-    let result = repl.run();
-    if result.is_err() {
-        let _ = startup.abort();
+    match repl.run() {
+        Ok(()) => Ok(repl.exit_status().unwrap_or(0)),
+        Err(error) => {
+            let _ = startup.abort();
+            Err(error)
+        }
     }
-    result
 }
 
 /// Loads the user configuration, falling back to defaults on a read or parse

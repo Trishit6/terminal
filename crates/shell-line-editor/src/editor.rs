@@ -8,11 +8,12 @@ use crossterm::cursor::MoveTo;
 use crossterm::execute;
 use crossterm::terminal::{Clear, ClearType};
 use reedline::{
-    Completer, DefaultHinter, EditCommand, Emacs, FileBackedHistory, History, HistoryItem,
-    HistoryItemId, KeyCode, KeyModifiers, Reedline, ReedlineEvent, SearchQuery, Signal, Span,
-    Suggestion, default_emacs_keybindings,
+    ColumnarMenu, Completer, DefaultHinter, EditCommand, Emacs, FileBackedHistory, History,
+    HistoryItem, HistoryItemId, KeyCode, KeyModifiers, MenuBuilder, Reedline, ReedlineError,
+    ReedlineErrorVariants, ReedlineEvent, ReedlineMenu, SearchQuery, Signal, Span, Suggestion,
+    default_emacs_keybindings,
 };
-use shell_runtime::history::is_sensitive_command;
+use shell_runtime::{Session, history::is_sensitive_command};
 use std::error::Error;
 use std::fmt;
 use std::io::{self, IsTerminal, Write};
@@ -82,6 +83,16 @@ pub trait LineReader {
 
     /// Clears the visible terminal and moves the cursor to the origin.
     fn clear_screen(&mut self) -> Result<(), LineEditorError>;
+
+    /// Clears in-memory and persistent command history.
+    fn clear_history(&mut self) -> Result<(), LineEditorError> {
+        Ok(())
+    }
+
+    /// Refreshes completion data from the current session.
+    fn refresh_completion(&mut self, session: &Session) {
+        let _ = session;
+    }
 }
 
 /// A completer that provides context-aware tab completion for the shell.
@@ -128,18 +139,20 @@ pub trait CompletionContext: Send + Sync {
 
     /// Get current working directory
     fn working_directory(&self) -> PathBuf;
+
+    /// Refresh the snapshot from the live shell session.
+    fn refresh(&self, _session: &Session) {}
 }
 
 impl Completer for ShellCompleter {
     fn complete(&mut self, line: &str, pos: usize) -> Vec<Suggestion> {
-        // Determine what we're completing based on the cursor position
-        let (completion_type, prefix) = self.analyze_input(line, pos);
+        let request = self.analyze_input(line, pos);
 
-        match completion_type {
-            CompletionType::Command => self.complete_command(&prefix),
-            CompletionType::Path => self.complete_path(&prefix),
-            CompletionType::Variable => self.complete_variable(&prefix),
-            CompletionType::ExportUnset => self.complete_export_unset(&prefix),
+        match request.kind {
+            CompletionType::Command => self.complete_command(&request),
+            CompletionType::Path => self.complete_path(&request),
+            CompletionType::Variable => self.complete_variable(&request),
+            CompletionType::ExportUnset => self.complete_export_unset(&request),
         }
     }
 }
@@ -152,91 +165,102 @@ enum CompletionType {
     ExportUnset,
 }
 
+struct CompletionRequest {
+    kind: CompletionType,
+    prefix: String,
+    span_start: usize,
+    span_end: usize,
+    braced_variable: bool,
+}
+
 /// Reedline-backed implementation of [`LineReader`].
 pub struct ShellEditor {
     editor: Reedline,
     prompt: ShellPrompt,
+    completion_context: Option<Arc<dyn CompletionContext>>,
 }
 
 impl ShellCompleter {
-    fn analyze_input(&self, line: &str, pos: usize) -> (CompletionType, String) {
-        // Find the word containing the cursor
-        let before_cursor = &line[..pos.min(line.len())];
+    fn analyze_input(&self, line: &str, pos: usize) -> CompletionRequest {
+        let pos = pos.min(line.len());
+        let before_cursor = &line[..pos];
 
-        // Check if we're completing a variable (starts with $)
+        // Variable completion uses the `$` that starts the current word, so the
+        // replacement never discards text before the cursor.
         if let Some(dollar_pos) = before_cursor.rfind('$') {
             let after_dollar = &before_cursor[dollar_pos + 1..];
-            if after_dollar
-                .chars()
-                .all(|c| c.is_alphanumeric() || c == '_' || c == '{' || c == '}')
-            {
-                return (CompletionType::Variable, after_dollar.to_string());
-            }
-        }
-
-        // Split into words to determine position
-        let words: Vec<&str> = before_cursor.split_whitespace().collect();
-
-        // Check if we're in export/unset command
-        if let Some(first) = words.first() {
-            if (*first == "export" || *first == "unset") && words.len() >= 2 {
-                let last_word = words.last().unwrap();
-                if let Some(stripped) = last_word.strip_prefix('$') {
-                    return (CompletionType::Variable, stripped.to_string());
+            let (prefix, braced) = match after_dollar.strip_prefix('{') {
+                Some(rest) => (rest.trim_end_matches('}'), true),
+                None => (after_dollar, false),
+            };
+            let valid_prefix = prefix.chars().all(|c| c.is_alphanumeric() || c == '_');
+            if valid_prefix {
+                let mut span_end = pos;
+                if braced && line[span_end..].starts_with('}') {
+                    span_end += 1;
                 }
-                return (CompletionType::ExportUnset, last_word.to_string());
+                return CompletionRequest {
+                    kind: CompletionType::Variable,
+                    prefix: prefix.to_owned(),
+                    span_start: dollar_pos,
+                    span_end,
+                    braced_variable: braced,
+                };
             }
         }
 
-        // If we're at the start of the line or after a pipe/semicolon/&&/||, we're completing a command
-        let trimmed = before_cursor.trim_end();
-        if trimmed.is_empty()
-            || trimmed.ends_with('|')
-            || trimmed.ends_with(';')
-            || trimmed.ends_with("&&")
-            || trimmed.ends_with("||")
-        {
-            return (
-                CompletionType::Command,
-                words.last().unwrap_or(&"").to_string(),
-            );
-        }
+        let word_start = before_cursor
+            .char_indices()
+            .rev()
+            .find(|(_, character)| {
+                character.is_whitespace()
+                    || matches!(character, '|' | ';' | '&' | '(' | ')' | '<' | '>')
+            })
+            .map_or(0, |(index, character)| index + character.len_utf8());
+        let word = &before_cursor[word_start..];
+        let before_word = before_cursor[..word_start].trim_end();
+        let at_command_position = before_word.is_empty()
+            || before_word.ends_with('|')
+            || before_word.ends_with(';')
+            || before_word.ends_with('&')
+            || before_word.ends_with('(');
+        let first_word = before_cursor.split_whitespace().next().unwrap_or_default();
 
-        // If the first word is a command, check if we're completing a path
-        if let Some(first) = words.first() {
-            let _is_builtin = self.builtins.contains(&first.to_string());
-            let _is_export_unset = *first == "export" || *first == "unset";
-            let is_cd = *first == "cd";
-
-            // For cd, always complete paths
-            if is_cd {
-                return (
-                    CompletionType::Path,
-                    words.last().unwrap_or(&"").to_string(),
-                );
+        let kind = if at_command_position {
+            CompletionType::Command
+        } else if word.is_empty() {
+            if matches!(first_word, "export" | "unset") {
+                CompletionType::ExportUnset
+            } else if matches!(first_word, "if" | "while") {
+                CompletionType::Command
+            } else {
+                CompletionType::Path
             }
+        } else if matches!(first_word, "export" | "unset") {
+            CompletionType::ExportUnset
+        } else if first_word == "cd" || looks_like_path(word) || word_start > first_word.len() {
+            CompletionType::Path
+        } else {
+            CompletionType::Command
+        };
 
-            // For other commands, if the last word looks like a path, complete it
-            if let Some(last) = words.last() {
-                if last.contains('/')
-                    || last.starts_with('.')
-                    || last.starts_with('~')
-                    || last.starts_with('\\')
-                {
-                    return (CompletionType::Path, last.to_string());
-                }
-            }
+        CompletionRequest {
+            kind,
+            prefix: word.to_owned(),
+            span_start: word_start,
+            span_end: pos,
+            braced_variable: false,
         }
-
-        // Default to command completion
-        (
-            CompletionType::Command,
-            words.last().unwrap_or(&"").to_string(),
-        )
     }
 
-    fn complete_command(&self, prefix: &str) -> Vec<Suggestion> {
+    /// Smallest span that covers the word being completed.
+    fn replacement_span(request: &CompletionRequest) -> Span {
+        Span::new(request.span_start, request.span_end)
+    }
+
+    fn complete_command(&self, request: &CompletionRequest) -> Vec<Suggestion> {
         let mut suggestions = Vec::new();
+        let prefix = request.prefix.as_str();
 
         // Add built-ins
         for builtin in &self.builtins {
@@ -247,7 +271,7 @@ impl ShellCompleter {
                     description: Some("builtin".to_string()),
                     style: None,
                     extra: None,
-                    span: Span::new(0, prefix.len()),
+                    span: Self::replacement_span(request),
                     append_whitespace: true,
                     match_indices: None,
                 });
@@ -264,7 +288,7 @@ impl ShellCompleter {
                         description: Some("external".to_string()),
                         style: None,
                         extra: None,
-                        span: Span::new(0, prefix.len()),
+                        span: Self::replacement_span(request),
                         append_whitespace: true,
                         match_indices: None,
                     });
@@ -275,54 +299,62 @@ impl ShellCompleter {
         suggestions
     }
 
-    fn complete_path(&self, prefix: &str) -> Vec<Suggestion> {
+    fn complete_path(&self, request: &CompletionRequest) -> Vec<Suggestion> {
         let mut suggestions = Vec::new();
-        let path = PathBuf::from(prefix);
+        let prefix = request.prefix.as_str();
 
-        let parent = path
-            .parent()
-            .map(|p| p.to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."));
-        let file_name = path
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_default();
+        // Preserve the directory portion exactly as the user typed it. This is
+        // what makes `src/` and `C:\Users\` completion work on all platforms.
+        let split = prefix
+            .char_indices()
+            .rev()
+            .find(|(_, character)| matches!(character, '/' | '\\'));
+        let (directory_prefix, file_prefix) = match split {
+            Some((index, character)) => prefix.split_at(index + character.len_utf8()),
+            None => ("", prefix),
+        };
 
-        let search_dir = if parent.as_os_str().is_empty() {
-            PathBuf::from(".")
-        } else if parent.is_absolute() {
-            parent.clone()
+        let path = PathBuf::from(directory_prefix);
+        let search_dir = if path.as_os_str().is_empty() {
+            self.session
+                .as_ref()
+                .map_or_else(|| PathBuf::from("."), |session| session.working_directory())
+        } else if path.is_absolute() {
+            path
         } else if let Some(session) = &self.session {
-            session.working_directory().join(&parent)
+            session.working_directory().join(path)
         } else {
-            parent.clone()
+            path
         };
 
         if let Ok(entries) = std::fs::read_dir(&search_dir) {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
 
-                if !self.show_hidden_files && !file_name.starts_with('.') && name.starts_with('.') {
+                if !self.show_hidden_files && !file_prefix.starts_with('.') && name.starts_with('.')
+                {
                     continue;
                 }
 
-                if name.starts_with(&file_name) {
-                    let full_path = if prefix.contains('/') {
-                        format!("{}/{}", prefix.trim_end_matches(&file_name), name)
-                    } else {
-                        name.clone()
-                    };
-
+                if name.starts_with(file_prefix) {
                     let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
                     let description = if is_dir { "directory" } else { "file" };
+                    let mut value = String::with_capacity(
+                        directory_prefix.len() + name.len() + usize::from(is_dir),
+                    );
+                    value.push_str(directory_prefix);
+                    value.push_str(&name);
+                    if is_dir {
+                        value.push(completion_separator(directory_prefix));
+                    }
 
                     suggestions.push(Suggestion {
-                        value: full_path,
+                        value,
                         display_override: None,
                         description: Some(description.to_string()),
                         style: None,
                         extra: None,
-                        span: Span::new(0, prefix.len()),
+                        span: Self::replacement_span(request),
                         append_whitespace: !is_dir,
                         match_indices: None,
                     });
@@ -333,19 +365,25 @@ impl ShellCompleter {
         suggestions
     }
 
-    fn complete_variable(&self, prefix: &str) -> Vec<Suggestion> {
+    fn complete_variable(&self, request: &CompletionRequest) -> Vec<Suggestion> {
         let mut suggestions = Vec::new();
+        let prefix = request.prefix.as_str();
 
         if let Some(session) = &self.session {
             for var in session.variables() {
                 if var.starts_with(prefix) {
+                    let value = if request.braced_variable {
+                        format!("${{{var}}}")
+                    } else {
+                        format!("${var}")
+                    };
                     suggestions.push(Suggestion {
-                        value: format!("${var}"),
+                        value,
                         display_override: None,
                         description: Some("variable".to_string()),
                         style: None,
                         extra: None,
-                        span: Span::new(0, prefix.len()),
+                        span: Self::replacement_span(request),
                         append_whitespace: true,
                         match_indices: None,
                     });
@@ -356,35 +394,38 @@ impl ShellCompleter {
         suggestions
     }
 
-    fn complete_export_unset(&self, prefix: &str) -> Vec<Suggestion> {
+    fn complete_export_unset(&self, request: &CompletionRequest) -> Vec<Suggestion> {
         let mut suggestions = Vec::new();
+        let prefix = request.prefix.as_str();
 
         if let Some(session) = &self.session {
-            for var in session.exported_variables() {
+            let exported = session.exported_variables();
+
+            for var in &exported {
                 if var.starts_with(prefix) {
                     suggestions.push(Suggestion {
-                        value: var,
+                        value: var.clone(),
                         display_override: None,
                         description: Some("exported".to_string()),
                         style: None,
                         extra: None,
-                        span: Span::new(0, prefix.len()),
+                        span: Self::replacement_span(request),
                         append_whitespace: true,
                         match_indices: None,
                     });
                 }
             }
 
-            // Also include non-exported variables for export command
+            // Also include non-exported variables for export command.
             for var in session.variables() {
-                if var.starts_with(prefix) && !session.exported_variables().contains(&var) {
+                if var.starts_with(prefix) && !exported.contains(&var) {
                     suggestions.push(Suggestion {
                         value: var,
                         display_override: None,
                         description: Some("local".to_string()),
                         style: None,
                         extra: None,
-                        span: Span::new(0, prefix.len()),
+                        span: Self::replacement_span(request),
                         append_whitespace: true,
                         match_indices: None,
                     });
@@ -393,6 +434,25 @@ impl ShellCompleter {
         }
 
         suggestions
+    }
+}
+
+fn looks_like_path(word: &str) -> bool {
+    let bytes = word.as_bytes();
+    word.contains('/')
+        || word.contains('\\')
+        || word.starts_with('.')
+        || word.starts_with('~')
+        || (cfg!(windows) && bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':')
+}
+
+fn completion_separator(directory_prefix: &str) -> char {
+    if directory_prefix.contains('\\') && !directory_prefix.contains('/') {
+        '\\'
+    } else if directory_prefix.is_empty() {
+        std::path::MAIN_SEPARATOR
+    } else {
+        '/'
     }
 }
 
@@ -441,7 +501,16 @@ impl History for FilteredHistory {
     }
 
     fn clear(&mut self) -> reedline::Result<()> {
-        self.inner.clear()
+        match self.inner.clear() {
+            // `history clear` may already have removed the file. That is the
+            // desired end state, so treat it as success.
+            Err(ReedlineError(ReedlineErrorVariants::IOError(error)))
+                if error.kind() == io::ErrorKind::NotFound =>
+            {
+                Ok(())
+            }
+            result => result,
+        }
     }
 
     fn delete(&mut self, id: HistoryItemId) -> reedline::Result<()> {
@@ -476,6 +545,7 @@ impl ShellEditor {
             history_file,
             ShellCompleter::new(builtins),
             EditorSettings::default(),
+            None,
         )
     }
 
@@ -510,7 +580,7 @@ impl ShellEditor {
         settings: EditorSettings,
     ) -> Result<Self, LineEditorError> {
         let completer = ShellCompleter::new(builtins)
-            .with_session(session)
+            .with_session(Arc::clone(&session))
             .with_hidden_files(settings.completion_hidden_files);
 
         Self::build(
@@ -520,6 +590,7 @@ impl ShellEditor {
             history_file,
             completer,
             settings,
+            Some(session),
         )
     }
 
@@ -530,6 +601,7 @@ impl ShellEditor {
         history_file: Option<PathBuf>,
         completer: ShellCompleter,
         settings: EditorSettings,
+        completion_context: Option<Arc<dyn CompletionContext>>,
     ) -> Result<Self, LineEditorError> {
         let inner = if let Some(path) = history_file {
             FileBackedHistory::with_file(history_size, path).map_err(LineEditorError::History)?
@@ -542,10 +614,12 @@ impl ShellEditor {
             filter_secrets: settings.history_filter_secrets,
         };
 
+        let completion_menu = Box::new(ColumnarMenu::default().with_name("completion_menu"));
         let mut editor = Reedline::create()
             .with_history(Box::new(history))
             .with_ansi_colors(ansi_colors)
             .with_completer(Box::new(completer))
+            .with_menu(ReedlineMenu::EngineCompleter(completion_menu))
             .with_edit_mode(Box::new(Emacs::new(portable_keybindings())));
 
         if settings.suggestions_enabled {
@@ -555,6 +629,7 @@ impl ShellEditor {
         Ok(Self {
             editor,
             prompt: ShellPrompt::new(prompt),
+            completion_context,
         })
     }
 
@@ -600,6 +675,17 @@ fn portable_keybindings() -> reedline::Keybindings {
     keybindings.add_binding(KeyModifiers::CONTROL, KeyCode::Home, line_start);
     keybindings.add_binding(KeyModifiers::CONTROL, KeyCode::End, line_end);
 
+    // Reedline's Emacs defaults do not bind Tab; bind it to the completion menu
+    // so the configured ShellCompleter is reachable from the real prompt.
+    keybindings.add_binding(
+        KeyModifiers::NONE,
+        KeyCode::Tab,
+        ReedlineEvent::UntilFound(vec![
+            ReedlineEvent::Menu("completion_menu".to_string()),
+            ReedlineEvent::MenuNext,
+        ]),
+    );
+
     keybindings
 }
 
@@ -625,6 +711,19 @@ impl LineReader for ShellEditor {
         // sequences into a file or another program's input.
         let is_terminal = stdout.is_terminal();
         clear_terminal_if(&mut stdout, is_terminal).map_err(LineEditorError::Clear)
+    }
+
+    fn clear_history(&mut self) -> Result<(), LineEditorError> {
+        self.editor
+            .history_mut()
+            .clear()
+            .map_err(LineEditorError::History)
+    }
+
+    fn refresh_completion(&mut self, session: &Session) {
+        if let Some(context) = &self.completion_context {
+            context.refresh(session);
+        }
     }
 }
 
@@ -738,5 +837,10 @@ mod tests {
             keybindings.find_binding(KeyModifiers::CONTROL, KeyCode::Char('l')),
             Some(ReedlineEvent::ClearScreen)
         );
+        assert!(matches!(
+            keybindings.find_binding(KeyModifiers::NONE, KeyCode::Tab),
+            Some(ReedlineEvent::UntilFound(events))
+                if events.contains(&ReedlineEvent::Menu("completion_menu".to_string()))
+        ));
     }
 }

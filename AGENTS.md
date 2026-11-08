@@ -95,7 +95,8 @@ must keep using `lex_spanned` + `parse`.
 - `terminal_font` / `apply_terminal_font` are opt-in OSC 50 hints. Many
   terminals ignore them; never require the font to be present.
 - Keybindings are explicit: Home/End, Ctrl+Home/Ctrl+End, Page Up (previous
-  history), Page Down (next history). Keep them portable and test the bindings.
+  history), Page Down (next history), and Tab (completion menu). Keep them
+  portable and test the bindings.
 - The installers animate a color-cycling banner and use real command spinners
   (or an equivalent progress display on Windows). Disable animation for
   non-terminals, `NO_COLOR`, and `TERM=dumb`.
@@ -117,14 +118,30 @@ must keep using `lex_spanned` + `parse`.
 ## External execution (Phase 6)
 
 - Executor: `crates/shell-builtins/src/process.rs`.
-- Never use `sh -c`, `bash -c`, `cmd /C`, or another shell. Launch the resolved
-  executable with `std::process::Command` and pass each argument separately.
+- Never use `sh -c`, `bash -c`, `cmd /C`, `powershell -Command`, or another
+  shell to parse KERNEXT syntax. Launch the resolved executable with
+  `std::process::Command` and pass each argument separately.
+- The one exception is running a Windows **command script** (`.cmd`/`.bat`),
+  which Windows cannot start natively. Those go through the system command
+  interpreter (`%COMSPEC%`, else `%SystemRoot%\System32\cmd.exe`) with
+  `/d /v:off /s /c` and a single pre-escaped command line. This is a launcher,
+  not a parser: KERNEXT still owns lexing, pipelines, and built-ins.
 - Built-ins always win. `eval.rs` checks the registry before external
   resolution; do not let a `PATH` program override a native command.
 - Bare names resolve through `PATH`; names with separators resolve against the
   session working directory; absolute paths run directly.
-- Windows resolution uses `PATHEXT` but skips `.bat`/`.cmd` so no other shell is
-  involved. Unix checks execute bits.
+- Windows resolution honours `PATHEXT` but only for `.com`, `.exe`, `.bat` and
+  `.cmd`, in `PATHEXT` order. `.exe`/`.com` launch natively; `.cmd`/`.bat` use
+  the script launcher. Other `PATHEXT` entries (`.vbs`, `.js`, `.ps1`) are not
+  launched. Unix checks execute bits.
+- **Extensionless files are never executables on Windows.** npm/pnpm install a
+  POSIX `sh` shim with no extension beside the `.cmd` shim; selecting the
+  extensionless one is what produced `os error 193`. Resolution must pick the
+  `.cmd`.
+- Windows script arguments are quoted, and an argument containing `"`, `%`,
+  CR, LF, or NUL is refused with a clear error instead of being rewritten.
+  `cmd.exe` has no escaping for those characters. Keep
+  `tests/windows_scripts.rs` covering this.
 - Default `StdioMode::Inherit` streams directly to the terminal. Use
   `StdioMode::Capture` for tests and non-interactive callers; it closes stdin.
 - `ProcessOptions` carries stdio mode and environment overrides. It does not
@@ -405,7 +422,10 @@ The interactive shell requires a real TTY. Piping input directly into
 - Startup tests live in `apps/shell-cli/src/startup.rs`; clear/Ctrl+L tests live
   in `apps/shell-cli/tests/repl.rs` and
   `crates/shell-line-editor/src/editor.rs`.
-- The full suite currently has 379 tests; do not weaken or delete tests to make
+- The full suite currently has 414 tests on Windows, including 20 in
+  `crates/shell-builtins/tests/windows_scripts.rs`. The Unix baseline was 399
+  before those Windows-only tests were added (Unix runs signal/abort tests
+  instead of the Windows launcher tests); do not weaken or delete tests to make
   a build pass.
 
 ## Git and uncommitted work

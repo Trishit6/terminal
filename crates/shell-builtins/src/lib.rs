@@ -98,6 +98,7 @@ impl Dispatcher {
         let tokens = match lex_spanned(trimmed) {
             Ok(tokens) => tokens,
             Err(error) => {
+                session.set_last_status(2);
                 return CommandOutcome::continue_with(format!("Syntax error: {error}"));
             }
         };
@@ -105,6 +106,7 @@ impl Dispatcher {
         let ast = match parse(&tokens) {
             Ok(ast) => ast,
             Err(error) => {
+                session.set_last_status(2);
                 return CommandOutcome::continue_with(format!("Syntax error: {error}"));
             }
         };
@@ -326,5 +328,22 @@ mod tests {
                 .output()
                 .is_some_and(|text| text.starts_with("Syntax error:"))
         );
+        assert_eq!(session.last_status(), 2);
+    }
+
+    #[test]
+    fn parser_errors_set_the_status_to_two() {
+        let mut dispatcher = Dispatcher::new();
+        let mut session = session();
+
+        let outcome = dispatcher.execute(&mut session, "if true");
+
+        assert_eq!(outcome.action(), CommandAction::Continue);
+        assert!(
+            outcome
+                .output()
+                .is_some_and(|text| text.starts_with("Syntax error:"))
+        );
+        assert_eq!(session.last_status(), 2);
     }
 }

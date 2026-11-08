@@ -10,34 +10,36 @@ Branding is user-facing only: the product/executable is `kernext`, while every
 crate, package and Rust identifier stays `shell-*`. Do not rename crates to
 match the brand.
 
-**Layout gotcha:** the Freebuff project root is not the Cargo workspace. The
-Rust workspace lives one level down in `terminal/` (next to a `.agents/` folder
-of agent type definitions). Run every Cargo command from `terminal/`.
+The Cargo workspace **is** this project root (no nested workspace directory).
 
 ```text
 <project root>/
-├── knowledge.md
-├── .agents/types/          # Freebuff agent definition types (not used at runtime)
-└── terminal/               # the Cargo workspace — README.md, AGENTS.md live here
-    ├── Cargo.toml
-    ├── .cargo/config.toml
-    ├── apps/shell-cli/     # binary `kernext`
-    ├── crates/…
-    ├── installers/         # bash + PowerShell installers
-    ├── docs/               # ARCHITECTURE.md, BRANDING.md
-    └── .github/workflows/release.yaml
+├── Cargo.toml               # workspace, edition 2024, rust-version 1.85
+├── .cargo/config.toml       # pins build.target-dir (see build gotcha)
+├── apps/shell-cli/          # binary `kernext`
+├── crates/                  # shell-core, shell-config, shell-runtime,
+│                            # shell-builtins, shell-line-editor
+├── installers/              # install-linux.sh, install-macos.sh, install-windows.ps1
+├── docs/                    # ARCHITECTURE.md, BRANDING.md
+├── README.md                # user-facing feature/behavior reference
+├── AGENTS.md                # agent rules (authoritative over README)
+└── .github/workflows/       # release automation
 ```
+
+Note: `README.md` and `AGENTS.md` still describe the canonical Linux checkout at
+`/run/media/trishit/UBUNTU 26_0/Projects/terminal`, and README's tree diagram
+shows an older `terminal/` wrapper. Trust the actual filesystem layout above.
 
 ## Where the code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `terminal/crates/shell-core` | Branding constants, `ShellError`, lexer/tokenizer, parser, AST, spans. No I/O. |
-| `terminal/crates/shell-config` | Typed `Config`, color/theme validation, TOML load/save, platform config path. |
-| `terminal/crates/shell-runtime` | `Session` (cwd, variables, functions, last status), `Platform`, history, `JobTable`. |
-| `terminal/crates/shell-builtins` | Registry, AST evaluator (`eval.rs`), native commands (`commands.rs`), pipelines (`pipeline.rs`), external executor (`process.rs`), expansion (`expand.rs`). |
-| `terminal/crates/shell-line-editor` | Reedline wrapper, prompt, completer, history backing, screen clearing. |
-| `terminal/apps/shell-cli` | Clap args, startup presentation (`startup.rs`), REPL (`repl.rs`), `main.rs`. |
+| `crates/shell-core` | Branding constants, `ShellError`, lexer/tokenizer, parser, AST, spans. No I/O. |
+| `crates/shell-config` | Typed `Config`, color/theme validation, TOML load/save, platform config path. |
+| `crates/shell-runtime` | `Session` (cwd, variables, functions, last status), `Platform`, history, `JobTable`, script depth. |
+| `crates/shell-builtins` | Registry (`registry.rs`), AST evaluator (`eval.rs`), native commands (`commands.rs`), pipelines (`pipeline.rs`), external executor (`process.rs`), expansion (`expand.rs`). |
+| `crates/shell-line-editor` | Reedline wrapper, prompt, completer, history backing, screen clearing. |
+| `apps/shell-cli` | Clap args, startup presentation (`startup.rs`), REPL (`repl.rs`), `main.rs`. |
 
 Execution flow — keep every command line on this path:
 
@@ -51,7 +53,7 @@ plus `shell-cli → shell-line-editor → reedline/crossterm`.
 
 ## Commands
 
-Run from `terminal/`:
+Run from the workspace root:
 
 ```sh
 cargo build --workspace
@@ -74,18 +76,28 @@ cargo test -p shell-core --test lexer
 cargo test -p shell-cli --test repl
 ```
 
-No install step; Rust 1.85+ (edition 2024). Interactive use requires a real
-TTY — piping input into the shell is rejected by design.
+No install step; Rust 1.85+. Interactive use requires a real TTY — piping input
+into the shell is rejected by design.
 
 ## Conventions and hard constraints
 
 - **Never split input with `split_whitespace`.** The dispatcher must always use
   `lex_spanned` + `parse`; quotes, escapes and argument boundaries come from the
   lexer only.
-- **Never spawn another shell.** No `sh -c`, `bash -c`, `cmd /C`,
-  `powershell -Command`. `process.rs` passes each argument as a separate
-  `Command::arg` to the resolved executable path. Windows skips `.bat`/`.cmd`
-  for the same reason; Unix checks execute bits.
+- **Never let another shell parse KERNEXT input.** No `sh -c`, `bash -c`,
+  `cmd /C`, `powershell -Command` for command syntax. `process.rs` passes each
+  argument as a separate `Command::arg` to the resolved executable path. Unix
+  checks execute bits.
+- **Windows launchers are platform-aware.** `.exe`/`.com` launch natively;
+  `.cmd`/`.bat` run through `%COMSPEC%`/`System32\cmd.exe` with
+  `/d /v:off /s /c` and a fully quoted command line. `PATHEXT` order is
+  honoured but restricted to `.com`, `.exe`, `.bat`, `.cmd`.
+- **Extensionless files are not executables on Windows.** npm/pnpm ship a POSIX
+  `sh` shim with no extension next to the `.cmd` shim; picking the former is
+  what caused `os error 193` for `opencode`/`omnirush`.
+- Windows script arguments containing `"`, `%`, CR, LF, or NUL are refused with
+  a clear error instead of being rewritten (cmd.exe cannot escape them). Keep
+  `crates/shell-builtins/tests/windows_scripts.rs` green.
 - **Precedence is built-ins → functions → external programs.** A `PATH` program
   named `echo`/`cd`/`pwd` must never override a native command.
 - **`cd` mutates `Session::working_directory` only**, never the process-wide cwd
@@ -110,58 +122,68 @@ TTY — piping input into the shell is rejected by design.
   code, 1 built-in failure, 2 syntax error, 128+signal.
 - Cross-platform code only: `std::path`, `HOME`/`USERPROFILE`, no Unix-only APIs
   outside `#[cfg(unix)]`.
-- Startup (`startup.rs`) is presentation-only — it must never parse, evaluate or
-  launch commands, and must never fake progress or add artificial delays. It
-  reports each checklist line only after the real subsystem is constructed.
+- Startup (`apps/shell-cli/src/startup.rs`) is presentation-only — it must never
+  parse, evaluate or launch commands, and must never fake progress or add
+  artificial delays. It reports each checklist line only after the real subsystem
+  is constructed.
 - Never hardcode the version; use `VERSION` / `Session::version()`.
+- Emblem rows must all have identical character counts
+  (`emblem_rows_keep_a_constant_display_width`); never hand-edit a row blindly.
 
 ## Current feature set
 
-- The registry (`crates/shell-builtins/src/registry.rs`) defines **53 built-ins**,
-  including `tree`, `find`, `stat`, `head`, `tail`, `wc`, `grep`, `sort`,
-  `uniq`, `which`, `basename`, `dirname`, `realpath`, `jobs`, `wait`, `kill`,
-  `fg`, `bg`, `run` (script file), `test`, `[`, `expr`, `sleep`, `true`, `false`,
-  and the scripting helpers `print`, `input`, `len`, `type`, `str`, `int`,
-  `float`, `bool`.
+- The registry (`crates/shell-builtins/src/registry.rs`) defines
+  `DEFAULT_BUILTINS: [BuiltinCommand; 53]` — including `tree`, `find`, `stat`,
+  `head`, `tail`, `wc`, `grep`, `sort`, `uniq`, `which`, `basename`, `dirname`,
+  `realpath`, `jobs`, `wait`, `kill`, `fg`, `bg`, `run` (script file), `test`,
+  `[`, `expr`, `sleep`, `true`, `false`, and the scripting helpers `print`,
+  `input`, `len`, `type`, `str`, `int`, `float`, `bool`.
 - Background `&` is **real**: external commands are spawned and tracked via
   `Child` handles, other expressions run on a detached thread with a cloned
   session, and `crates/shell-runtime/src/jobs.rs` provides `JobTable`
   (`Running/Done/Failed/Killed`). There are no async completion notices, `fg`
   waits instead of taking the terminal, and `bg` only reports state.
-- `run <file>` executes a script with nesting-depth and byte-size limits
-  (`MAX_SCRIPT_DEPTH`, `MAX_SCRIPT_BYTES`).
+- `run <file>` executes a script natively with limits
+  `MAX_SCRIPT_DEPTH = 32` and `MAX_SCRIPT_BYTES = 8 MiB`. Functions stop at
+  `MAX_FUNCTION_DEPTH = 128`; loops at `MAX_LOOP_ITERATIONS = 1_000_000`.
 - Startup artwork is the Cinematic Space & Systems lockup: a K monogram in an
-  orbital ring above the block wordmark. Every emblem row must keep an identical
-  character count (there is a test for it). `animation_speed`
-  (`slow`/`normal`/`fast`) controls the reveal pace.
+  orbital ring above the block wordmark. `animation_speed`
+  (`slow`/`normal`/`fast`) controls the reveal pace; `--quiet` and
+  `--no-animation` override config.
+- Config lives in `crates/shell-config/src/lib.rs`, loaded from the platform
+  config dir (`kernext/config.toml`); missing file → defaults, invalid file →
+  warning + defaults. Unknown fields are rejected and `history_size > 0`.
 
 Still genuinely unimplemented — do not describe these as working: globbing,
-`#` comments, redirections on function calls, grouped expressions as pipeline
-stages, full job control semantics (`fg` waits rather than resuming a
-foreground process group), POSIX signal handling, macOS/Windows release builds
-in CI (only Linux GNU/musl are published).
+`#` comments, `source`/`.`, redirections on function calls, grouped expressions
+as pipeline stages, full job control (`fg` waits rather than resuming a process
+group), POSIX signal handling, macOS/Windows release builds in CI (only Linux
+GNU/musl are published).
 
 Future KERNEXT Web and Desktop are plans only. Do not start them unless asked,
 and never present them as implemented.
 
-## Build gotcha: hardcoded target dir
+## Build gotcha: pinned target dir
 
-`terminal/.cargo/config.toml` pins
-`build.target-dir = "/home/trishit/.cache/terminal-target"`, a workaround for a
-vfat-with-`showexec` checkout on the original Linux host (where extensionless
-build scripts and test binaries cannot be executed). Consequences:
+`.cargo/config.toml` pins
+`build.target-dir = "/home/trishit/.cache/terminal-target"` — a workaround for a
+vfat-with-`showexec` checkout on the original Linux host, where extensionless
+build scripts and test binaries cannot be executed.
 
-- On this Windows checkout that Unix path is meaningless; override it per
-  command with `CARGO_TARGET_DIR=…` rather than editing the file if builds fail
-  oddly.
+- On a non-Linux checkout that path is meaningless. Override per command with
+  `CARGO_TARGET_DIR=/path/to/ext4-or-local-target cargo test …` rather than
+  editing the file, unless the user asks.
 - Do not create a repo-local `target/`, and do not add a target dir or
   OS-specific linker settings to `Cargo.toml`.
 
 ## Tests
 
-379 tests pass (`cargo test --workspace`). Add tests next to the behavior: unit tests in `src/`,
-integration tests in `crates/shell-builtins/tests/`, `crates/shell-core/tests/`,
-`apps/shell-cli/tests/`.
+Add tests next to the behavior: unit tests in `src/`, integration tests in
+`crates/shell-builtins/tests/`, `crates/shell-core/tests/`,
+`apps/shell-cli/tests/`. The full suite is 414 tests on Windows, 20 of which
+live in `crates/shell-builtins/tests/windows_scripts.rs` and only build on
+Windows. The Unix baseline was 399 before those were added (Unix covers
+signal/abort termination instead).
 
 - Filesystem tests use isolated temp dirs plus `Session::set_working_directory`;
   they never mutate the process cwd.
@@ -173,8 +195,7 @@ integration tests in `crates/shell-builtins/tests/`, `crates/shell-core/tests/`,
 
 ## Git
 
-The repository has a single commit (`first commit`). The workspace was moved
-into `terminal/`, so tracked paths show as deleted while the real tree is
-untracked — do not "fix" that without being asked. Never run `git reset --hard`,
+Eight commits on `main`; all feature work after `first commit` is uncommitted
+and many files are untracked/modified. Never run `git reset --hard`,
 `git checkout -- .`, `git clean` or anything that discards working-tree changes.
-Do not commit, rebase or push unless asked.
+Do not commit, amend, rebase or push unless asked.

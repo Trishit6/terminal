@@ -245,6 +245,57 @@ mod editor_tests {
         }
     }
 
+    struct TempContext {
+        directory: PathBuf,
+    }
+
+    impl TempContext {
+        fn new() -> Self {
+            let unique = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock should be after the Unix epoch")
+                .as_nanos();
+            let directory = std::env::temp_dir().join(format!(
+                "kernext-completion-{}-{unique}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(directory.join("src"))
+                .expect("temp directory should be created");
+            std::fs::write(directory.join("src").join("main.rs"), "")
+                .expect("temp file should be created");
+            Self { directory }
+        }
+    }
+
+    impl Drop for TempContext {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.directory);
+        }
+    }
+
+    impl CompletionContext for TempContext {
+        fn builtins(&self) -> &[String] {
+            static BUILTINS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+            BUILTINS.get_or_init(|| vec!["cat".to_string()])
+        }
+
+        fn executables(&self) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn variables(&self) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn exported_variables(&self) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn working_directory(&self) -> PathBuf {
+            self.directory.clone()
+        }
+    }
+
     #[test]
     fn editor_can_be_created_with_configured_history() {
         let editor = ShellEditor::new("test > ", 25, false, None, vec!["help".to_string()]);
@@ -302,5 +353,83 @@ mod editor_tests {
         let suggestions = completer.complete("$HO", 3);
         assert_eq!(suggestions.len(), 1);
         assert_eq!(suggestions[0].value, "$HOME");
+    }
+
+    #[test]
+    fn command_completion_replaces_only_the_current_word() {
+        let mut completer = ShellCompleter::new(vec!["help".to_string()]);
+
+        let suggestions = completer.complete("echo x | he", 11);
+
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].value, "help");
+        assert_eq!(suggestions[0].span.start, 9);
+        assert_eq!(suggestions[0].span.end, 11);
+    }
+
+    #[test]
+    fn variable_completion_keeps_the_prefix_before_the_cursor() {
+        let session = Arc::new(MockContext);
+        let mut completer = ShellCompleter::new(vec![]).with_session(session);
+
+        let suggestions = completer.complete("echo $HO", 8);
+
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].value, "$HOME");
+        assert_eq!(suggestions[0].span.start, 5);
+        assert_eq!(suggestions[0].span.end, 8);
+    }
+
+    #[test]
+    fn path_completion_preserves_the_typed_directory_and_span() {
+        let context = TempContext::new();
+        let mut completer = ShellCompleter::new(vec![]).with_session(Arc::new(context));
+
+        let suggestions = completer.complete("cat src/ma", 10);
+
+        assert!(
+            suggestions
+                .iter()
+                .any(|suggestion| suggestion.value == "src/main.rs"),
+            "{suggestions:?}"
+        );
+        let file = suggestions
+            .iter()
+            .find(|suggestion| suggestion.value == "src/main.rs")
+            .expect("main.rs should be suggested");
+        assert_eq!(file.span.start, 4);
+        assert_eq!(file.span.end, 10);
+    }
+
+    #[test]
+    fn path_completion_works_immediately_after_cd() {
+        let context = TempContext::new();
+        let mut completer = ShellCompleter::new(vec![]).with_session(Arc::new(context));
+
+        let suggestions = completer.complete("cd ", 3);
+
+        let expected = format!("src{}", std::path::MAIN_SEPARATOR);
+        assert!(
+            suggestions
+                .iter()
+                .any(|suggestion| suggestion.value == expected),
+            "{suggestions:?}"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn path_completion_accepts_windows_style_separators() {
+        let context = TempContext::new();
+        let mut completer = ShellCompleter::new(vec![]).with_session(Arc::new(context));
+
+        let suggestions = completer.complete("cat src\\ma", 10);
+
+        assert!(
+            suggestions
+                .iter()
+                .any(|suggestion| suggestion.value == "src\\main.rs"),
+            "{suggestions:?}"
+        );
     }
 }

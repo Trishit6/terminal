@@ -197,8 +197,18 @@ impl VariableStore {
         }
 
         let key = NormalizedKey::new(name);
+        let keep_exported = exported
+            || self.locals.get(&key).is_some_and(|entry| entry.exported)
+            || (self.inherited.contains_key(&key) && !self.hidden_inherited.contains(&key));
+
         self.local_names.insert(key.clone(), name.to_owned());
-        self.locals.insert(key, VariableEntry { value, exported });
+        self.locals.insert(
+            key,
+            VariableEntry {
+                value,
+                exported: keep_exported,
+            },
+        );
     }
 
     /// Exports an existing local variable.
@@ -443,6 +453,57 @@ mod tests {
             exported
                 .iter()
                 .any(|(k, v)| k == "INHERITED_VAR" && v == "from_env")
+        );
+    }
+
+    #[test]
+    fn reassigning_an_exported_local_preserves_export_status() {
+        let mut store = VariableStore::with_environment(vec![]);
+        store.set_local("TEST_VAR", "first".to_owned(), true);
+        store.set_local("TEST_VAR", "second".to_owned(), false);
+
+        let exported = store.exported_env();
+        assert!(
+            exported
+                .iter()
+                .any(|(name, value)| name == "TEST_VAR" && value == "second"),
+            "{exported:?}"
+        );
+    }
+
+    #[test]
+    fn reassigning_an_inherited_variable_keeps_it_exported() {
+        let mut store = VariableStore::with_environment(vec![(
+            "INHERITED_VAR".to_owned(),
+            "from_env".to_owned(),
+        )]);
+        store.set_local("INHERITED_VAR", "overridden".to_owned(), false);
+
+        let exported = store.exported_env();
+        assert_eq!(
+            exported
+                .iter()
+                .filter(|(name, _)| name == "INHERITED_VAR")
+                .map(|(_, value)| value.as_str())
+                .collect::<Vec<_>>(),
+            ["overridden"]
+        );
+    }
+
+    #[test]
+    fn unset_then_assign_does_not_reexport_an_inherited_variable() {
+        let mut store = VariableStore::with_environment(vec![(
+            "INHERITED_VAR".to_owned(),
+            "from_env".to_owned(),
+        )]);
+        assert!(store.unset("INHERITED_VAR"));
+        store.set_local("INHERITED_VAR", "local".to_owned(), false);
+
+        assert!(
+            !store
+                .exported_env()
+                .iter()
+                .any(|(name, _)| name == "INHERITED_VAR")
         );
     }
 
