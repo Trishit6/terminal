@@ -176,6 +176,7 @@ pub(crate) fn execute(
                     session,
                     registry,
                     history,
+                    options,
                     stdin: stdin_text.as_deref(),
                 };
 
@@ -186,6 +187,7 @@ pub(crate) fn execute(
                     session: &mut isolated,
                     registry,
                     history,
+                    options,
                     stdin: stdin_text.as_deref(),
                 };
 

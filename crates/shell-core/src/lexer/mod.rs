@@ -44,8 +44,11 @@
 //! | `\ ` | space |
 //! | `\|` `\&` `\>` `\<` `\;` `\(` `\)` `\=` | literal operator character |
 //!
-//! Any other escape is an error. A trailing backslash is also an error.
-//! Backslash-newline is not treated as line continuation in Phase 3.
+//! Outside quotes, any other escape is an error. Inside quotes, an
+//! unrecognised escape keeps both the backslash and the following character,
+//! so Windows paths such as `"C:\Users\name"` survive lexing. A trailing
+//! backslash is always an error. Backslash-newline is not treated as line
+//! continuation in Phase 3.
 //!
 //! ## Operators
 //!

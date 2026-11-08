@@ -10,30 +10,6 @@ use std::ffi::OsString;
 use std::path::Path;
 use std::process;
 
-#[cfg(target_os = "windows")]
-use std::ascii::AsciiExt;
-
-/// Simple FNV-1a hasher for case-insensitive string hashing on Windows.
-#[cfg(target_os = "windows")]
-#[derive(Default)]
-struct FNVHasher {
-    state: u64,
-}
-
-#[cfg(target_os = "windows")]
-impl Hasher for FNVHasher {
-    fn finish(&self) -> u64 {
-        self.state
-    }
-
-    fn write(&mut self, bytes: &[u8]) {
-        for &byte in bytes {
-            self.state ^= byte as u64;
-            self.state = self.state.wrapping_mul(0x100000001b3);
-        }
-    }
-}
-
 /// Normalized key for environment variable lookups.
 ///
 /// On Windows, environment variable names are case-insensitive. On Unix, they
@@ -72,11 +48,17 @@ struct VariableEntry {
 pub struct VariableStore {
     /// Shell-local variables, including exported ones.
     locals: HashMap<NormalizedKey, VariableEntry>,
+    /// Original spelling of local variable names. Windows lookups are
+    /// case-insensitive, but display and restoration must preserve the case
+    /// the user typed.
+    local_names: HashMap<NormalizedKey, String>,
     /// Names of inherited environment variables that have been explicitly
     /// unset in this shell session.
     hidden_inherited: std::collections::HashSet<NormalizedKey>,
     /// Snapshot of the inherited environment at session creation.
     inherited: HashMap<NormalizedKey, String>,
+    /// Original spelling of inherited environment variable names.
+    inherited_names: HashMap<NormalizedKey, String>,
     /// Last command exit status ($?).
     last_status: i32,
     /// Shell process ID ($$).
@@ -87,10 +69,13 @@ impl VariableStore {
     /// Creates a new variable store by snapshotting the current process environment.
     pub fn new() -> Self {
         let mut inherited = HashMap::new();
+        let mut inherited_names = HashMap::new();
         for (key, value) in env::vars_os() {
             let key_str = key.to_string_lossy().into_owned();
             let value_str = value.to_string_lossy().into_owned();
-            inherited.insert(NormalizedKey::new(&key_str), value_str);
+            let normalized = NormalizedKey::new(&key_str);
+            inherited.insert(normalized.clone(), value_str);
+            inherited_names.insert(normalized, key_str);
         }
 
         // Initialize PWD from the current directory
@@ -105,8 +90,10 @@ impl VariableStore {
 
         let mut store = Self {
             locals: HashMap::new(),
+            local_names: HashMap::new(),
             hidden_inherited: std::collections::HashSet::new(),
             inherited,
+            inherited_names,
             last_status: 0,
             process_id: process::id(),
         };
@@ -125,14 +112,19 @@ impl VariableStore {
     /// Creates a variable store with a custom environment for testing.
     pub fn with_environment(env: Vec<(String, String)>) -> Self {
         let mut inherited = HashMap::new();
+        let mut inherited_names = HashMap::new();
         for (key, value) in env {
-            inherited.insert(NormalizedKey::new(&key), value);
+            let normalized = NormalizedKey::new(&key);
+            inherited.insert(normalized.clone(), value);
+            inherited_names.insert(normalized, key);
         }
 
         let mut store = Self {
             locals: HashMap::new(),
+            local_names: HashMap::new(),
             hidden_inherited: std::collections::HashSet::new(),
             inherited,
+            inherited_names,
             last_status: 0,
             process_id: process::id(),
         };
@@ -193,6 +185,7 @@ impl VariableStore {
     pub fn remove_local(&mut self, name: &str) {
         let key = NormalizedKey::new(name);
         self.locals.remove(&key);
+        self.local_names.remove(&key);
     }
 
     /// Sets a local variable.
@@ -204,6 +197,7 @@ impl VariableStore {
         }
 
         let key = NormalizedKey::new(name);
+        self.local_names.insert(key.clone(), name.to_owned());
         self.locals.insert(key, VariableEntry { value, exported });
     }
 
@@ -212,12 +206,14 @@ impl VariableStore {
         let key = NormalizedKey::new(name);
         if let Some(entry) = self.locals.get_mut(&key) {
             entry.exported = true;
+            self.local_names.insert(key, name.to_owned());
             true
         } else {
             // Also check if it's in inherited environment
             if self.inherited.contains_key(&key) && !self.hidden_inherited.contains(&key) {
                 // Re-export an inherited variable by copying it to locals
                 if let Some(value) = self.inherited.get(&key).cloned() {
+                    self.local_names.insert(key.clone(), name.to_owned());
                     self.locals.insert(
                         key,
                         VariableEntry {
@@ -236,6 +232,7 @@ impl VariableStore {
     pub fn set_exported(&mut self, name: &str, value: String) {
         if shell_core::is_valid_variable_name(name) {
             let key = NormalizedKey::new(name);
+            self.local_names.insert(key.clone(), name.to_owned());
             self.locals.insert(
                 key,
                 VariableEntry {
@@ -253,6 +250,7 @@ impl VariableStore {
     pub fn unset(&mut self, name: &str) -> bool {
         let key = NormalizedKey::new(name);
         self.locals.remove(&key);
+        self.local_names.remove(&key);
         self.hidden_inherited.insert(key);
         true
     }
@@ -264,14 +262,22 @@ impl VariableStore {
         // Add exported locals
         for (key, entry) in &self.locals {
             if entry.exported {
-                env.push((key.as_str().to_owned(), entry.value.clone()));
+                let name = self
+                    .local_names
+                    .get(key)
+                    .map_or_else(|| key.as_str().to_owned(), Clone::clone);
+                env.push((name, entry.value.clone()));
             }
         }
 
         // Add inherited variables that are not hidden and not overridden by locals
         for (key, value) in &self.inherited {
             if !self.hidden_inherited.contains(key) && !self.locals.contains_key(key) {
-                env.push((key.as_str().to_owned(), value.clone()));
+                let name = self
+                    .inherited_names
+                    .get(key)
+                    .map_or_else(|| key.as_str().to_owned(), Clone::clone);
+                env.push((name, value.clone()));
             }
         }
 
@@ -309,7 +315,13 @@ impl VariableStore {
         let mut vars: Vec<_> = self
             .locals
             .iter()
-            .map(|(k, e)| (k.as_str().to_owned(), e.value.clone(), e.exported))
+            .map(|(k, e)| {
+                let name = self
+                    .local_names
+                    .get(k)
+                    .map_or_else(|| k.as_str().to_owned(), Clone::clone);
+                (name, e.value.clone(), e.exported)
+            })
             .collect();
         vars.sort_by(|a, b| a.0.cmp(&b.0));
         vars
@@ -321,7 +333,13 @@ impl VariableStore {
             .inherited
             .iter()
             .filter(|(k, _)| !self.hidden_inherited.contains(k))
-            .map(|(k, v)| (k.as_str().to_owned(), v.clone()))
+            .map(|(k, v)| {
+                let name = self
+                    .inherited_names
+                    .get(k)
+                    .map_or_else(|| k.as_str().to_owned(), Clone::clone);
+                (name, v.clone())
+            })
             .collect();
         vars.sort_by(|a, b| a.0.cmp(&b.0));
         vars
@@ -515,6 +533,18 @@ mod tests {
         // PWD should be exported
         let exported = store.exported_env();
         assert!(exported.iter().any(|(k, v)| k == "PWD" && v == "/new/path"));
+    }
+
+    #[test]
+    fn local_variable_list_preserves_the_original_spelling() {
+        let mut store = VariableStore::with_environment(vec![]);
+        store.set_local("MixedCase", "value".to_owned(), false);
+
+        let vars = store.local_variables();
+        assert!(
+            vars.iter()
+                .any(|(name, value, _)| name == "MixedCase" && value == "value")
+        );
     }
 
     #[test]

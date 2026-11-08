@@ -2,6 +2,9 @@
 /target/
 **/*.rs.bk
 
+# Backup of the stray one-commit repository that used to sit at this path
+.git-outer-backup/
+
 # Local environment and editor files
 .env
 .idea/

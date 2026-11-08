@@ -43,6 +43,8 @@ pub struct Config {
     pub startup_animation: bool,
     /// Whether to suppress the startup banner and checklist entirely.
     pub quiet_startup: bool,
+    /// Startup animation pace: `slow`, `normal`, or `fast`.
+    pub animation_speed: String,
     /// Primary brand color (logo, prompt accent). Named ANSI, `colorN`, or hex.
     pub accent_color: String,
     /// Secondary gradient color used by the animated wordmark.
@@ -77,6 +79,7 @@ impl Default for Config {
             completion_hidden_files: false,
             startup_animation: true,
             quiet_startup: false,
+            animation_speed: "normal".to_owned(),
             accent_color: "bright-cyan".to_owned(),
             secondary_color: "bright-blue".to_owned(),
             highlight_color: "bright-magenta".to_owned(),
@@ -242,6 +245,18 @@ impl Config {
         {
             return Err(ConfigError::Invalid {
                 message: "terminal_font must not contain control characters".to_owned(),
+            });
+        }
+
+        if !matches!(
+            self.animation_speed.trim().to_ascii_lowercase().as_str(),
+            "slow" | "normal" | "fast"
+        ) {
+            return Err(ConfigError::Invalid {
+                message: format!(
+                    "animation_speed must be slow, normal, or fast, not '{}'",
+                    self.animation_speed
+                ),
             });
         }
 
@@ -772,6 +787,24 @@ mod tests {
             Config::from_toml("apply_terminal_font = true\nterminal_font = \"JetBrains Mono\"\n")
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn animation_speed_accepts_known_paces_and_rejects_others() {
+        assert_eq!(Config::default().animation_speed, "normal");
+
+        for speed in ["slow", "normal", "fast", "FAST"] {
+            let source = format!("animation_speed = \"{speed}\"\n");
+            assert!(
+                Config::from_toml(&source).is_ok(),
+                "{speed} should be accepted"
+            );
+        }
+
+        let error = Config::from_toml("animation_speed = \"turbo\"\n")
+            .expect_err("unknown animation speed should be rejected");
+
+        assert!(matches!(error, ConfigError::Invalid { .. }));
     }
 
     #[test]

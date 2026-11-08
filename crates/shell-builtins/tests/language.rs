@@ -1,7 +1,7 @@
 //! Integration tests for the scripting runtime: loops, functions, control
 //! flow, background sequencing, and execution limits.
 
-use shell_builtins::Dispatcher;
+use shell_builtins::{Dispatcher, ProcessOptions, StdioMode};
 use shell_runtime::Session;
 
 fn session() -> Session {
@@ -122,7 +122,8 @@ fn recursive_functions_stop_at_the_configured_depth() {
 
 #[test]
 fn background_separator_continues_the_command_list() {
-    let mut dispatcher = Dispatcher::new();
+    let mut dispatcher =
+        Dispatcher::with_options(ProcessOptions::new().with_stdio(StdioMode::Capture));
     let mut session = session();
 
     let output = run(
@@ -131,18 +132,40 @@ fn background_separator_continues_the_command_list() {
         "echo first & echo second; echo third",
     );
 
-    assert_eq!(output, "first\nsecond\nthird\n");
+    assert_eq!(output, "second\nthird\n");
+
+    let jobs = run(&mut dispatcher, &mut session, "wait");
+    assert_eq!(jobs, "");
+}
+
+#[test]
+fn background_jobs_can_be_listed_and_waited() {
+    let mut dispatcher =
+        Dispatcher::with_options(ProcessOptions::new().with_stdio(StdioMode::Capture));
+    let mut session = session();
+
+    run(&mut dispatcher, &mut session, "echo background &");
+    let listing = run(&mut dispatcher, &mut session, "jobs");
+    assert!(listing.contains("background"), "{listing}");
+
+    run(&mut dispatcher, &mut session, "wait");
+    let listing = run(&mut dispatcher, &mut session, "jobs");
+    assert!(listing.contains("No background jobs."), "{listing}");
 }
 
 #[test]
 fn exit_inside_a_background_expression_does_not_stop_the_shell() {
-    let mut dispatcher = Dispatcher::new();
+    let mut dispatcher =
+        Dispatcher::with_options(ProcessOptions::new().with_stdio(StdioMode::Capture));
     let mut session = session();
 
     let outcome = dispatcher.execute(&mut session, "exit & echo still-running");
 
     assert_eq!(outcome.action(), shell_builtins::CommandAction::Continue);
-    assert_eq!(outcome.output(), Some("Goodbye.\nstill-running\n"));
+    assert_eq!(outcome.output(), Some("still-running\n"));
+
+    let waited = dispatcher.execute(&mut session, "wait");
+    assert_eq!(waited.action(), shell_builtins::CommandAction::Continue);
 }
 
 #[test]

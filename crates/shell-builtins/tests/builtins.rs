@@ -372,3 +372,205 @@ fn exit_stops_later_commands_in_the_same_list() {
     assert_eq!(outcome.action(), CommandAction::Exit);
     assert_eq!(outcome.output(), Some("before\nGoodbye."));
 }
+
+#[test]
+fn tree_and_find_walk_the_session_directory() {
+    let mut harness = Harness::new();
+    fs::create_dir(harness.path().join("src")).expect("directory should be created");
+    fs::write(harness.path().join("src").join("main.rs"), "fn main() {}\n")
+        .expect("nested file should be created");
+    fs::write(harness.path().join("README.md"), "readme\n").expect("file should be created");
+
+    let tree = harness.output("tree");
+    assert!(tree.contains("src/"), "{tree}");
+    assert!(tree.contains("main.rs"), "{tree}");
+    assert!(tree.contains("1 directory"), "{tree}");
+
+    let found = harness.output("find . -name \"*.rs\" -type f");
+    assert!(found.contains("main.rs"), "{found}");
+    assert!(!found.contains("README.md"), "{found}");
+}
+
+#[test]
+fn stat_reports_file_metadata() {
+    let mut harness = Harness::new();
+    fs::write(harness.path().join("sample.txt"), "hello\n").expect("file should be created");
+
+    let output = harness.output("stat sample.txt");
+
+    assert!(output.contains("File: sample.txt"), "{output}");
+    assert!(output.contains("regular file"), "{output}");
+    assert!(output.contains("Size: 6 bytes"), "{output}");
+}
+
+#[test]
+fn head_tail_wc_grep_sort_and_uniq_process_text() {
+    let mut harness = Harness::new();
+    fs::write(harness.path().join("numbers.txt"), "three\none\ntwo\none\n")
+        .expect("file should be created");
+
+    assert_eq!(harness.output("head -n 2 numbers.txt"), "three\none\n");
+    assert_eq!(harness.output("tail -n 2 numbers.txt"), "two\none\n");
+    assert_eq!(harness.output("wc -l numbers.txt"), "4 numbers.txt");
+    assert_eq!(harness.output("grep one numbers.txt"), "one\none\n");
+    assert_eq!(harness.output("sort numbers.txt"), "one\none\nthree\ntwo\n");
+    assert_eq!(harness.output("sort -u numbers.txt"), "one\nthree\ntwo\n");
+    assert_eq!(harness.output("uniq numbers.txt"), "three\none\ntwo\none\n");
+}
+
+#[test]
+fn text_commands_work_inside_pipelines() {
+    let mut harness = Harness::new();
+    fs::write(
+        harness.path().join("words.txt"),
+        "beta\nalpha\nbeta\ngamma\n",
+    )
+    .expect("file should be created");
+
+    assert_eq!(
+        harness.output("cat words.txt | sort | uniq"),
+        "alpha\nbeta\ngamma\n"
+    );
+    assert_eq!(harness.output("cat words.txt | grep beta | wc -l"), "2");
+}
+
+#[test]
+fn grep_failure_drives_logical_chaining() {
+    let mut harness = Harness::new();
+    fs::write(harness.path().join("words.txt"), "alpha\n").expect("file should be created");
+
+    assert_eq!(
+        harness.output("grep missing words.txt || echo recovered"),
+        "recovered\n"
+    );
+}
+
+#[test]
+fn test_and_expr_evaluate_conditionals_and_arithmetic() {
+    let mut harness = Harness::new();
+
+    assert_eq!(harness.output("test 3 -gt 2 && echo larger"), "larger\n");
+    assert_eq!(
+        harness.output("test \"abc\" = \"abc\" && echo equal"),
+        "equal\n"
+    );
+    assert_eq!(harness.output("expr 2 + 3 * 4"), "14");
+    assert_eq!(harness.output("expr 10 - 4"), "6");
+}
+
+#[test]
+fn path_helpers_and_which_resolve_native_names() {
+    let mut harness = Harness::new();
+
+    assert_eq!(
+        harness.output("basename /tmp/archive.tar.gz .tar.gz"),
+        "archive"
+    );
+    assert_eq!(harness.output("dirname /tmp/archive.tar.gz"), "/tmp");
+    assert_eq!(harness.output("which echo"), "echo: shell builtin");
+
+    let resolved = harness.output("realpath .");
+    assert!(resolved.contains("kernext-builtins"), "{resolved}");
+}
+
+#[test]
+fn run_executes_a_kernext_script_with_session_state() {
+    let mut harness = Harness::new();
+    fs::write(
+        harness.path().join("script.rsh"),
+        "name = KERNEXT\nif test 3 -gt 2 {\n  echo $name\n  for i in 1..2 { echo $i }\n}\n",
+    )
+    .expect("script should be created");
+
+    assert_eq!(harness.output("run script.rsh"), "KERNEXT\n1\n2\n");
+}
+
+#[test]
+fn scripting_helpers_print_and_convert_values() {
+    let mut harness = Harness::new();
+
+    assert_eq!(harness.output("print hello world"), "hello world\n");
+    assert_eq!(harness.output("len KERNEXT"), "7");
+    assert_eq!(harness.output("len \"\""), "0");
+    assert_eq!(harness.output("type 42"), "int");
+    assert_eq!(harness.output("type -3"), "int");
+    assert_eq!(harness.output("type 4.5"), "float");
+    assert_eq!(harness.output("type true"), "bool");
+    assert_eq!(harness.output("type hello"), "string");
+    assert_eq!(harness.output("str 42"), "42");
+    assert_eq!(harness.output("int 0042"), "42");
+    assert_eq!(harness.output("float 2.50"), "2.5");
+    assert_eq!(harness.output("bool YES"), "true");
+    assert_eq!(harness.output("bool off"), "false");
+}
+
+#[test]
+fn scripting_helpers_report_invalid_conversions() {
+    let mut harness = Harness::new();
+
+    let outcome = harness.run("int nope");
+    assert!(!outcome.success());
+    assert!(
+        outcome
+            .output()
+            .unwrap_or_default()
+            .contains("cannot convert"),
+        "{outcome:?}"
+    );
+
+    assert!(!harness.run("float KERNEXT").success());
+    assert!(!harness.run("bool maybe").success());
+    assert!(!harness.run("len").success());
+    assert!(!harness.run("len a b").success());
+}
+
+#[test]
+fn input_reads_one_line_into_a_variable() {
+    let mut harness = Harness::new();
+    fs::write(
+        harness.path().join("data.txt"),
+        "hello world\nsecond line\n",
+    )
+    .expect("input file should be created");
+
+    let outcome = harness.run("input name < data.txt");
+
+    assert!(outcome.success(), "{outcome:?}");
+    assert_eq!(
+        harness.session.get_variable("name"),
+        Some("hello world".to_owned())
+    );
+    assert_eq!(harness.output("echo $name"), "hello world\n");
+}
+
+#[test]
+fn input_reports_missing_stdin_and_invalid_variable_names() {
+    let mut harness = Harness::new();
+
+    let no_input = harness.run("input name");
+    assert!(!no_input.success());
+    assert!(
+        no_input
+            .output()
+            .unwrap_or_default()
+            .contains("standard input is not available"),
+        "{no_input:?}"
+    );
+
+    fs::write(harness.path().join("blank.txt"), "value\n").expect("file should be created");
+
+    assert!(!harness.run("input 1bad < blank.txt").success());
+    assert!(!harness.run("input").success());
+}
+
+#[test]
+fn run_supports_nested_scripts_and_reports_parse_errors() {
+    let mut harness = Harness::new();
+    fs::write(harness.path().join("inner.rsh"), "echo nested\n").expect("script should be created");
+    fs::write(harness.path().join("outer.rsh"), "run inner.rsh\n")
+        .expect("script should be created");
+    fs::write(harness.path().join("broken.rsh"), "if {\n").expect("script should be created");
+
+    assert_eq!(harness.output("run outer.rsh"), "nested\n");
+    assert!(harness.output("run broken.rsh").contains("run:"));
+}

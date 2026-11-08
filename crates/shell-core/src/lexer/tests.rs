@@ -480,12 +480,34 @@ fn invalid_escape_sequences_are_rejected() {
 }
 
 #[test]
-fn invalid_escape_inside_strings_is_rejected() {
-    assert_error(
-        r#"echo "bad \q""#,
-        LexerErrorKind::InvalidEscape { character: 'q' },
-        1,
-        11,
+fn unknown_escape_inside_strings_is_literal() {
+    assert_eq!(
+        tokens(r#"echo "bad \q""#),
+        [word("echo"), string(r"bad \q"), Token::EndOfInput]
+    );
+}
+
+#[test]
+fn unquoted_windows_paths_keep_their_separators() {
+    assert_eq!(
+        tokens(r"echo C:\Users\name\project"),
+        [
+            word("echo"),
+            word(r"C:\Users\name\project"),
+            Token::EndOfInput
+        ]
+    );
+}
+
+#[test]
+fn windows_paths_inside_quotes_keep_their_separators() {
+    assert_eq!(
+        tokens(r#"cd "C:\Users\name\project""#),
+        [
+            word("cd"),
+            string(r"C:\Users\name\project"),
+            Token::EndOfInput
+        ]
     );
 }
 
@@ -699,4 +721,21 @@ fn spanned_newlines_and_end_of_input_have_ranges() {
     assert_eq!(tokens[3].token, Token::EndOfInput);
     assert!(tokens[3].span.is_empty());
     assert_eq!(tokens[3].span.start().offset(), 3);
+}
+
+#[test]
+fn leading_dots_stay_in_words_and_ranges_still_lex() {
+    let tokens = lex("cat .gitignore ./file .tar.gz 1..3").expect("input should lex");
+
+    assert_eq!(
+        tokens,
+        [
+            Token::Word("cat".to_owned()),
+            Token::Word(".gitignore".to_owned()),
+            Token::Word("./file".to_owned()),
+            Token::Word(".tar.gz".to_owned()),
+            Token::Word("1..3".to_owned()),
+            Token::EndOfInput
+        ]
+    );
 }

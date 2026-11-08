@@ -5,13 +5,16 @@
 //! CLI and line-editor crates.
 
 pub mod history;
+pub mod jobs;
 pub mod variables;
 
+pub use jobs::{JobInfo, JobStatus, JobTable};
 pub use shell_config::Config;
 use shell_core::{ShellError, VERSION as SHELL_VERSION};
 use std::env;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use crate::variables::VariableStore;
 use shell_core::FunctionDef;
@@ -92,6 +95,8 @@ pub struct Session {
     functions: std::collections::HashMap<String, FunctionDef>,
     return_value: Option<String>,
     history_limit: Option<usize>,
+    jobs: Arc<Mutex<JobTable>>,
+    script_depth: usize,
 }
 
 impl Session {
@@ -113,6 +118,8 @@ impl Session {
             functions: std::collections::HashMap::new(),
             return_value: None,
             history_limit: None,
+            jobs: Arc::new(Mutex::new(JobTable::new())),
+            script_depth: 0,
         })
     }
 
@@ -134,6 +141,8 @@ impl Session {
             functions: std::collections::HashMap::new(),
             return_value: None,
             history_limit: None,
+            jobs: Arc::new(Mutex::new(JobTable::new())),
+            script_depth: 0,
         })
     }
 
@@ -314,6 +323,59 @@ impl Session {
     /// Takes the return value, clearing it.
     pub fn take_return_value(&mut self) -> Option<String> {
         self.return_value.take()
+    }
+
+    /// Returns the shared background-job table.
+    ///
+    /// Cloned sessions share the same table, so a pipeline clone and the
+    /// interactive shell see a consistent job list.
+    #[must_use]
+    pub fn jobs(&self) -> Arc<Mutex<JobTable>> {
+        Arc::clone(&self.jobs)
+    }
+
+    /// Registers a detached shell-expression job.
+    pub fn add_shell_job(&self, command: impl Into<String>) -> u32 {
+        self.jobs
+            .lock()
+            .expect("job table mutex should not be poisoned")
+            .add_shell(command)
+    }
+
+    /// Registers a background external process.
+    pub fn add_external_job(&self, command: impl Into<String>, child: std::process::Child) -> u32 {
+        self.jobs
+            .lock()
+            .expect("job table mutex should not be poisoned")
+            .add_external(command, child)
+    }
+
+    /// Reports completion of a detached shell-expression job.
+    pub fn complete_job(&self, id: u32, success: bool, exit_code: Option<i32>) {
+        self.jobs
+            .lock()
+            .expect("job table mutex should not be poisoned")
+            .complete(id, success, exit_code);
+    }
+
+    /// Current script nesting depth.
+    #[must_use]
+    pub const fn script_depth(&self) -> usize {
+        self.script_depth
+    }
+
+    /// Enters a script invocation, rejecting nesting beyond `limit`.
+    pub fn enter_script(&mut self, limit: usize) -> bool {
+        if self.script_depth >= limit {
+            return false;
+        }
+        self.script_depth += 1;
+        true
+    }
+
+    /// Leaves the current script invocation.
+    pub fn leave_script(&mut self) {
+        self.script_depth = self.script_depth.saturating_sub(1);
     }
 }
 

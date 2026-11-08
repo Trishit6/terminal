@@ -1,32 +1,18 @@
-//! AST evaluator that connects parsed commands to built-ins and external
-//! programs.
-//!
-//! The evaluator walks the Phase 4 AST directly. It supports command lists
-//! (`;` and newlines), groups, short-circuiting `&&`/`||`, pipelines,
-//! redirections, assignments, `if`/`else`, `while`, `for`, function definitions
-//! and calls, `return`, `break`, `continue`, and background syntax.
-//!
-//! Every simple command is checked against the native registry first; only
-//! names that are not built-ins are handed to the process executor through the
-//! pipeline engine.
-
 use crate::expand::{expand_assignment_value, expand_word};
 use crate::outcome::{CommandAction, CommandOutcome};
 use crate::pipeline::{self, PipelineOutcome, Stage};
-use crate::process::ProcessOptions;
+use crate::process::{ExternalCommand, ProcessOptions, StdioMode};
 use crate::registry::BuiltinRegistry;
 use shell_core::{
     Assignment, Ast, Background, Block, Break, Command, Continue, Expression, ForLoop, FunctionDef,
-    Group, IfElse, List, LogicalOperator, Pipeline, Return, Separator, WhileLoop,
+    Group, IfElse, List, LogicalOperator, Pipeline, PipelineStage, Return, Separator, WhileLoop,
 };
 use shell_runtime::Session;
+use std::io::Write;
+use std::process::Stdio;
 
-/// Hard ceiling on nested function calls. It prevents an accidental runaway
-/// recursion from exhausting the native stack.
 const MAX_FUNCTION_DEPTH: usize = 128;
 
-/// Hard ceiling on loop iterations. It protects the shell from a programming
-/// mistake that would otherwise spin forever and consume the machine.
 const MAX_LOOP_ITERATIONS: usize = 1_000_000;
 
 pub(crate) fn evaluate(
@@ -56,16 +42,38 @@ pub(crate) fn evaluate(
     evaluator.finish()
 }
 
-/// Non-local control flow requested by a statement.
+pub(crate) fn evaluate_expression(
+    registry: &BuiltinRegistry,
+    history: &[String],
+    session: &mut Session,
+    expression: &Expression,
+    options: &ProcessOptions,
+) -> CommandOutcome {
+    let mut evaluator = Evaluator {
+        session,
+        registry,
+        history,
+        options,
+        output: String::new(),
+        action: CommandAction::Continue,
+        success: true,
+        exit_code: None,
+        stopped: false,
+        flow: Flow::Normal,
+        return_value: None,
+        call_depth: 0,
+        loop_depth: 0,
+    };
+
+    evaluator.run_expression(expression);
+    evaluator.finish()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Flow {
-    /// Continue evaluating normally.
     Normal,
-    /// Leave the nearest enclosing loop.
     Break,
-    /// Skip to the next iteration of the nearest enclosing loop.
     Continue,
-    /// Leave the current function.
     Return,
 }
 
@@ -94,16 +102,12 @@ impl Evaluator<'_> {
                 break;
             }
 
-            // `&` is parsed as a list separator. Background execution is
-            // currently synchronous, but it is isolated: an `exit`, `clear`,
-            // `break`, or `continue` inside it must not control the foreground
-            // shell or the enclosing loop.
             if item.separator == Some(Separator::Background) {
                 let stopped = self.stopped;
                 let action = self.action;
                 let flow = self.flow;
 
-                status = self.run_expression(&item.expression);
+                status = self.spawn_background(&item.expression);
 
                 self.stopped = stopped;
                 self.action = action;
@@ -191,13 +195,10 @@ impl Evaluator<'_> {
     }
 
     fn run_background(&mut self, bg: &Background) -> bool {
-        // Background syntax is evaluated synchronously for now. Preserve the
-        // parent's exit/return state so a `exit` inside the background
-        // expression cannot terminate the foreground shell.
         let stopped = self.stopped;
         let action = self.action;
         let flow = self.flow;
-        let _ = self.run_expression(&bg.expression);
+        let status = self.spawn_background(&bg.expression);
         self.stopped = stopped;
         self.action = action;
         self.flow = flow;
@@ -206,7 +207,108 @@ impl Evaluator<'_> {
             self.session.set_last_status(0);
         }
 
+        status
+    }
+
+    fn spawn_background(&mut self, expression: &Expression) -> bool {
+        let label = self.expression_label(expression);
+
+        if let Expression::Command(command) = expression {
+            let name = expand_word(&command.name, self.session);
+
+            if self.registry.get(&name).is_none()
+                && self.session.get_function(&name).is_none()
+                && command.redirections.is_empty()
+            {
+                let arguments: Vec<String> = command
+                    .arguments
+                    .iter()
+                    .map(|argument| expand_word(argument, self.session))
+                    .collect();
+                let external = ExternalCommand::new(&name)
+                    .args(arguments)
+                    .current_dir(self.session.working_directory().to_path_buf())
+                    .clear_env()
+                    .envs(self.session.child_environment(self.options.environment()));
+
+                return match external.spawn_with(Stdio::null(), Stdio::inherit(), Stdio::inherit())
+                {
+                    Ok(child) => {
+                        self.session.add_external_job(label, child);
+                        self.session.set_last_status(0);
+                        true
+                    }
+                    Err(error) => self.fail(format!("{name}: {error}")),
+                };
+            }
+        }
+
+        let expression = expression.clone();
+        let mut session = self.session.clone();
+        let registry = self.registry.clone();
+        let history = self.history.to_vec();
+        let options = self.options.clone();
+        let id = self.session.add_shell_job(label);
+        let jobs = self.session.jobs();
+
+        std::thread::spawn(move || {
+            let outcome =
+                evaluate_expression(&registry, &history, &mut session, &expression, &options);
+
+            if options.stdio() == StdioMode::Inherit
+                && let Some(output) = outcome.output()
+            {
+                let mut stdout = std::io::stdout().lock();
+                let _ = stdout.write_all(output.as_bytes());
+                if !output.ends_with('\n') {
+                    let _ = stdout.write_all(b"\n");
+                }
+                let _ = stdout.flush();
+            }
+
+            if let Ok(mut jobs) = jobs.lock() {
+                jobs.complete(id, outcome.success(), outcome.exit_code());
+            }
+        });
+
+        self.session.set_last_status(0);
         true
+    }
+
+    fn expression_label(&self, expression: &Expression) -> String {
+        match expression {
+            Expression::Command(command) => {
+                let mut words = Vec::with_capacity(command.arguments.len() + 1);
+                words.push(expand_word(&command.name, self.session));
+                words.extend(
+                    command
+                        .arguments
+                        .iter()
+                        .map(|argument| expand_word(argument, self.session)),
+                );
+                words.join(" ")
+            }
+            Expression::Pipeline(pipeline) => pipeline
+                .stages
+                .iter()
+                .map(|stage| match stage {
+                    PipelineStage::Command(command) => {
+                        let mut words = Vec::with_capacity(command.arguments.len() + 1);
+                        words.push(expand_word(&command.name, self.session));
+                        words.extend(
+                            command
+                                .arguments
+                                .iter()
+                                .map(|argument| expand_word(argument, self.session)),
+                        );
+                        words.join(" ")
+                    }
+                    PipelineStage::Group(_) => "(...)".to_owned(),
+                })
+                .collect::<Vec<_>>()
+                .join(" | "),
+            _ => "shell expression".to_owned(),
+        }
     }
 
     fn run_if_else(&mut self, if_else: &IfElse) -> bool {

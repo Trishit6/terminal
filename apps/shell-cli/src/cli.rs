@@ -138,7 +138,9 @@ pub fn run() -> Result<(), ShellError> {
     let width = startup::terminal_width();
     let theme = config.theme();
 
-    let mut startup = Startup::new(io::stdout(), mode, color, width).with_theme(theme);
+    let mut startup = Startup::new(io::stdout(), mode, color, width)
+        .with_theme(theme)
+        .with_animation_speed(&config.animation_speed);
     if config.apply_terminal_font && interactive {
         startup
             .apply_terminal_font(&config.terminal_font)

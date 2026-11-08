@@ -15,8 +15,9 @@ a wrapper around Bash, PowerShell, or CMD.
 > evaluates `&&`, `||`, and `;`. Native variable assignment, expansion,
 > environment management, loops, conditionals, functions, `return`, `break`, and
 > `continue` are implemented, and configuration is loaded at startup.
-> Background `&` syntax is evaluated synchronously but isolated from the parent
-> shell; detached jobs and job control are still incomplete. See
+> Background `&` now starts real detached work tracked by a job table, and
+> `jobs`, `wait`, `kill`, `fg`, and `bg` operate on shell job numbers. Signal
+> handling and process-group ownership are still incomplete. See
 > [Not implemented yet](#not-implemented-yet).
 
 ## Brand
@@ -49,7 +50,7 @@ The shell provides:
 - Home/End and Page Up/Page Down navigation on Linux, macOS, and Windows,
 - a custom lexer/tokenizer with quote metadata and source spans,
 - a custom recursive-descent parser and AST,
-- 21 native built-in commands,
+- 53 native built-in commands,
 - direct external process execution using the system `PATH`,
 - pipelines connected by real operating-system pipes,
 - input, output, append, and error redirections (`<`, `>`, `>>`, `2>`, `2>>`),
@@ -169,12 +170,32 @@ has actually finished initializing:
 [OK] Starting Session
 ```
 
-The animation is a presentation layer, not a fake boot delay. On a real
-terminal the wordmark is drawn in place for a short, bounded sequence of frames
-while a 24-bit gradient travels across every character. The colors are derived
-from elapsed time and the configured palette, so the reveal is continuously
-color-changing rather than a fixed two-tone logo. Initialization stages are
-still reported only after the corresponding subsystem actually finishes.
+The animation is a presentation layer, not a fake boot delay. The startup
+lockup is the **Cinematic Space & Systems** identity adapted to a terminal:
+
+```text
+          ╭────────────────────────────────────╮
+      ╭───╯                                    ╰───╮
+  ╱          ◇           ██╗  ██╗           ◇          ╲
+│                        ██║ ██╔╝                        │
+│                        █████╔╝                         │
+│                        ██╔═██╗                         │
+  ╲          ◇           ██║  ██╗           ◇          ╱
+      ╰───╮                                    ╭───╯
+          ╰────────────────────────────────────╯
+```
+
+The metallic K monogram sits inside a luminous orbital ring, above the block
+wordmark. It is composed only of box-drawing and block glyphs, so it stays
+text-only, inherits the terminal font, and keeps a fixed 58-column width.
+
+On a real terminal the emblem is revealed top to bottom, then the wordmark is
+redrawn in place for a short, bounded sequence of frames while a 24-bit gradient
+travels across every character. Colors come from elapsed time and the configured
+palette, so the sweep is continuously color-changing rather than a fixed
+two-tone logo. Initialization stages are still reported only after the
+corresponding subsystem actually finishes. The whole reveal is well under a
+second at the default pace and never delays readiness.
 
 ### Theme and navigation
 
@@ -219,17 +240,20 @@ Behavior by environment:
   reveal; color still follows the terminal and `NO_COLOR`.
 - **`--quiet`, `startup_animation`, or `quiet_startup = true`** — no startup
   output at all.
-- **Narrow terminal** — compact 3-row logo at 24–79 columns and the plain
-  `KERNEXT` wordmark below 24 columns.
-- **Ctrl+C during startup** — the cursor is restored and colors are reset
-  before the program exits.
+- **Narrow terminal** — the compact core badge appears at 44–75 columns; below
+  44 columns the emblem is omitted entirely.
 - **Startup failure** — a failed stage is reported as `[FAIL]` and terminal
   state is restored.
+- **Ctrl+C during startup** — the shell has no signal handler yet, so an
+  interrupt during the sub-second reveal ends the process the way the platform
+  handles Ctrl+C. Destructor-based cursor/colour restoration covers error paths
+  but is not guaranteed on a signal exit.
 
-Logo layout:
+Artwork layout:
 
-- **80+ columns**: full six-row block wordmark.
-- **24–79 columns**: compact three-row wordmark.
+- **76+ columns**: full nine-row orbital emblem + six-row block wordmark.
+- **44–75 columns**: three-row core badge + three-row wordmark.
+- **24–43 columns**: three-row wordmark only.
 - **Below 24 columns**: plain `KERNEXT` wordmark.
 
 ## Screen clearing
@@ -332,15 +356,39 @@ Built-in commands:
 | `pwd` | Prints the session working directory. |
 | `cd` | Changes and validates the session working directory. |
 | `ls` | Lists directory contents (directories get a trailing separator). |
+| `tree` | Displays a directory tree. |
+| `find` | Searches for files and directories with name/type filters. |
+| `stat` | Shows file metadata. |
 | `mkdir` | Creates directories, with `-p`/`--parents`. |
 | `touch` | Creates files or updates modification times. |
 | `cat` | Prints file contents, or standard input when no file is given. |
+| `head` / `tail` | Shows the first or last lines of files or standard input. |
+| `wc` | Counts lines, words, and bytes. |
+| `grep` | Searches text for a pattern. |
+| `sort` | Sorts lines of text. |
+| `uniq` | Reports or omits repeated lines. |
 | `echo` | Prints arguments separated by spaces. |
+| `print` | Scripting form of `echo`. |
+| `input` | Reads one line of piped/redirected input into a variable. |
+| `len` / `type` | Reports a value's length or inferred type. |
+| `str` / `int` / `float` / `bool` | Converts a value, failing with a clear message when it cannot. |
 | `cp` | Copies files, with `-r`/`--recursive` for directories. |
 | `mv` | Moves or renames files and directories. |
 | `rm` | Removes entries, with `-r`/`-R` and `-f`. |
+| `which` | Resolves a built-in or executable. |
+| `basename` / `dirname` / `realpath` | Path helpers. |
 | `clear` | Clears the terminal and scrollback through the line editor. |
 | `history` | Shows the in-memory command history. |
+| `jobs` | Lists tracked background jobs. |
+| `wait` | Waits for one job or all jobs. |
+| `kill` | Terminates a background job by job number. |
+| `fg` | Waits for a background job and prints its command. |
+| `bg` | Reports a background job's state (see job control limits). |
+| `run` | Runs a KERNEXT script file natively. |
+| `test` / `[` | Evaluates a conditional expression. |
+| `expr` | Evaluates arithmetic and comparison expressions. |
+| `sleep` | Pauses for a number of seconds. |
+| `true` / `false` | Returns a fixed exit status. |
 | `whoami` | Shows the current user name. |
 | `date` | Shows the local date and time. |
 | `version` | Prints `KERNEXT v<version>`. |
@@ -566,17 +614,25 @@ Special variables:
 - `$PWD` — Synchronized with successful `cd` operations.
 - `$HOME` — Initialized from the inherited environment or `USERPROFILE`.
 
-### Background syntax
+### Background jobs
 
-- `command &` is accepted by the lexer and parser.
-- `&` has the same precedence as `;` and newline.
-- A quoted `&` inside `"hello & world"` stays literal.
-- The evaluator currently runs the background expression immediately and then
-  returns success. It does not detach a process, track a PID, or notify on
-  completion. Treat this as syntax that parses, not as working job control.
-- Background evaluation is isolated: `exit`, `clear`, `break`, and `continue`
-  inside a `&` expression cannot terminate the foreground shell or the
-  enclosing loop.
+- `command &` starts real background work. `&` has the same precedence as `;`
+  and newline, and a quoted `&` inside `"hello & world"` stays literal.
+- A backgrounded external command is spawned directly so its `Child` handle is
+  owned by the job table; it can therefore be waited for and killed.
+- Any other background expression runs on a detached thread with a cloned
+  session, so its variables and working directory stay isolated from the
+  foreground shell. `exit`, `clear`, `break`, and `continue` inside `&` cannot
+  terminate the shell or the enclosing loop.
+- `jobs` lists job number, state (`running`, `done`, `failed`, `killed`), and
+  exit code. `wait [id]` blocks until the job (or every job) finishes. `kill id`
+  terminates a running job. `fg id` waits for a job and prints its command.
+- Background jobs are announced only when `jobs`/`wait`/`fg` inspect them;
+  there is no asynchronous completion notification yet.
+- A detached shell-expression job cannot be interrupted safely from another
+  thread, so `kill` marks it killed and the job may still finish independently.
+- These are shell job numbers, never operating-system PIDs, so an invalid job
+  number cannot terminate an unrelated process.
 
 ## What works today
 
@@ -595,6 +651,9 @@ Special variables:
   `unset`, `env`, `set`).
 - `if`/`else`, `while`, `for`, function definitions/calls, recursion limits,
   and `return`/`break`/`continue`.
+- Native scripting helpers: `run script.rsh`, `print`, `input`, `len`, `type`,
+  `str`, `int`, `float`, `bool`, `test`, and `expr`.
+- Background jobs with a job table and `jobs`, `wait`, `kill`, `fg`, `bg`.
 - Persistent history with file-backed storage and credential filtering.
 - Tab completion for built-ins, executables, paths, and variables.
 - Animated, continuously color-changing startup with a configurable theme.
@@ -608,15 +667,17 @@ Special variables:
 
 ## Not implemented yet
 
-- **Real background execution.** `&` parses and is accepted, but `run_background`
-  evaluates the expression synchronously and returns; no detached job, PID
-  tracking, reaping, or completion notification exists.
+- **Asynchronous job notifications.** Background jobs run for real and are
+  tracked, but the shell does not print completion notices while you type; run
+  `jobs`/`wait` to inspect them.
 - **Script sourcing.** `if`, `else`, `while`, `for`, functions, recursion, and
   `return`/`break`/`continue` run natively, but there is no `source`/`.` command
   for loading a script file yet.
 - **Redirections on function calls.** Function bodies can redirect their own
   commands, but `fn arg > file` reports a clear unsupported-operation message.
-- Full job control (`fg`, `bg`, `jobs`, `wait`, `kill` with job IDs).
+- Full job control. `jobs`, `wait`, `kill`, `fg`, and `bg` exist and operate on
+  job numbers, but there is no process-group hand-off: `fg` waits for a job
+  instead of giving it the terminal, and `bg` only reports state.
 - Signal handling (SIGINT, SIGTERM, SIGHUP, SIGSTOP, SIGCONT).
 - Process group/terminal ownership management.
 - Globbing and pattern matching.
@@ -656,6 +717,8 @@ suggestions_enabled = true
 completion_hidden_files = false
 startup_animation = true
 quiet_startup = false
+# Startup animation pace: "slow", "normal", or "fast".
+animation_speed = "normal"
 
 # Theme: ANSI names, colorN (0-255), or #RGB/#RRGGBB.
 accent_color = "bright-cyan"
@@ -672,7 +735,8 @@ apply_terminal_font = false
 
 Missing fields use defaults, unknown fields are rejected, and `history_size`
 must be greater than zero. `history_file` is resolved relative to the config
-directory unless it is absolute. Every color is validated at load time, and
+directory unless it is absolute. Every color is validated at load time,
+`animation_speed` must be `slow`, `normal`, or `fast`, and
 `apply_terminal_font = true` requires a non-empty `terminal_font`.
 
 Startup mode precedence:
@@ -723,8 +787,9 @@ particular program being installed.
 - **Phase 9:** Runtime support for functions, recursion limits, `if`/`else`,
   `while`, `for`, and `return`/`break`/`continue`; script sourcing remains
   future work.
-- **Phase 10:** Background syntax (`&`) parses and evaluates synchronously in an
-  isolated evaluator state; it is not asynchronous job control.
+- **Phase 10:** Background execution (`&`) with a job table, real detached
+  external processes, threaded isolation for shell expressions, and
+  `jobs`/`wait`/`kill`/`fg`/`bg` over shell job numbers.
 - **Phase 11:** Job control, signal handling, and process groups are not
   implemented.
 - **KERNEXT CLI phase:** Brand identity, startup presentation, `clear`/Ctrl+L,

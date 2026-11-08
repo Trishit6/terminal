@@ -28,13 +28,42 @@ const DIM: &str = "\x1b[2m";
 const HIDE_CURSOR: &str = "\x1b[?25l";
 const SHOW_CURSOR: &str = "\x1b[?25h";
 
-/// Delay between animation frames. Kept intentionally short: the animation is
-/// a polish layer, not an artificial boot delay. The whole reveal is under a
-/// third of a second.
+/// Delay between in-place wordmark frames. Kept intentionally short: the
+/// animation is a polish layer, not an artificial boot delay.
 const ANIMATION_FRAME: Duration = Duration::from_millis(18);
+
+/// Delay between emblem reveal rows.
+const EMBLEM_FRAME: Duration = Duration::from_millis(24);
 
 /// Number of in-place gradient frames drawn while the wordmark is revealed.
 const ANIMATION_FRAMES: usize = 16;
+
+/// Cinematic K emblem shown above the wordmark on wide terminals.
+///
+/// The metallic K monogram sits inside a luminous orbital ring, drawn entirely
+/// with box-drawing and block glyphs so the mark stays text-only, inherits the
+/// terminal's font, and keeps a fixed display width on every platform. Every
+/// row is exactly 58 columns; a unit test enforces that so the ring can never
+/// drift out of alignment.
+const EMBLEM_FULL: [&str; 9] = [
+    r"          ╭────────────────────────────────────╮          ",
+    r"      ╭───╯                                    ╰───╮      ",
+    r"  ╱          ◇           ██╗  ██╗           ◇          ╲  ",
+    r"│                        ██║ ██╔╝                        │",
+    r"│                        █████╔╝                         │",
+    r"│                        ██╔═██╗                         │",
+    r"  ╲          ◇           ██║  ██╗           ◇          ╱  ",
+    r"      ╰───╮                                    ╭───╯      ",
+    r"          ╰────────────────────────────────────╯          ",
+];
+
+/// Compact three-row core badge for mid-width terminals. The full ring does not
+/// fit below 76 columns, so the badge carries the product name instead.
+const EMBLEM_COMPACT: [&str; 3] = [
+    r"  ╭────────────────────────────────╮  ",
+    r"  │        K E R N E X T           │  ",
+    r"  ╰────────────────────────────────╯  ",
+];
 
 /// Full six-row block wordmark, used when the terminal is wide enough.
 const LOGO_FULL: [&str; 6] = [
@@ -75,6 +104,42 @@ fn logo_rows(width: usize) -> &'static [&'static str] {
     }
 }
 
+/// Returns the emblem rows for a terminal of `width` columns.
+///
+/// The full orbital ring needs 58 columns, so it only appears at 76 or wider;
+/// narrower terminals get the compact badge, and very narrow terminals get the
+/// wordmark alone.
+fn emblem_rows(width: usize) -> &'static [&'static str] {
+    if width >= 76 {
+        &EMBLEM_FULL
+    } else if width >= 44 {
+        &EMBLEM_COMPACT
+    } else {
+        &[]
+    }
+}
+
+/// Maps the configured `animation_speed` to the delay between reveal steps.
+///
+/// Unknown values fall back to `normal`; configuration validation rejects them
+/// first, so this only protects against a value changed after loading.
+fn frame_delay(speed: &str) -> Duration {
+    match speed.to_ascii_lowercase().as_str() {
+        "slow" => ANIMATION_FRAME.mul_f64(1.6),
+        "fast" => ANIMATION_FRAME.mul_f64(0.5),
+        _ => ANIMATION_FRAME,
+    }
+}
+
+/// Maps the configured `animation_speed` to the emblem reveal delay.
+fn emblem_frame_delay(speed: &str) -> Duration {
+    match speed.to_ascii_lowercase().as_str() {
+        "slow" => EMBLEM_FRAME.mul_f64(1.6),
+        "fast" => EMBLEM_FRAME.mul_f64(0.5),
+        _ => EMBLEM_FRAME,
+    }
+}
+
 /// How the startup sequence should present itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StartupMode {
@@ -111,15 +176,28 @@ pub fn resolve_mode(
 #[must_use]
 pub fn supports_color() -> bool {
     let term = std::env::var("TERM").ok();
-    let windows_terminal = std::env::var_os("WT_SESSION").is_some()
-        || std::env::var_os("ANSICON").is_some()
-        || term.is_some();
 
     color_allowed(
         std::env::var_os("NO_COLOR").is_some(),
         term.as_deref(),
-        windows_terminal,
+        platform_supports_ansi(term.as_deref()),
     )
+}
+
+#[cfg(windows)]
+fn platform_supports_ansi(term: Option<&str>) -> bool {
+    // crossterm enables virtual-terminal processing when the console supports
+    // it. This covers Windows Terminal, ConHost on modern Windows, and
+    // ANSI-capable third-party terminals.
+    crossterm::ansi_support::supports_ansi()
+        || std::env::var_os("WT_SESSION").is_some()
+        || std::env::var_os("ANSICON").is_some()
+        || term.is_some()
+}
+
+#[cfg(not(windows))]
+fn platform_supports_ansi(_term: Option<&str>) -> bool {
+    true
 }
 
 /// Pure color-gating policy used by [`supports_color`].
@@ -151,6 +229,25 @@ pub fn terminal_width() -> usize {
         .map(|(width, _)| usize::from(width))
         .filter(|width| *width > 0)
         .unwrap_or(80)
+}
+
+/// Renders the cinematic emblem for a terminal of `width` columns.
+#[must_use]
+pub fn render_emblem(width: usize, color: bool) -> String {
+    render_emblem_themed(width, color, &Theme::default(), 0.0)
+}
+
+/// Renders the emblem with a time-derived gradient.
+#[must_use]
+pub fn render_emblem_themed(width: usize, color: bool, theme: &Theme, phase: f64) -> String {
+    emblem_rows(width)
+        .iter()
+        .enumerate()
+        .map(|(row, line)| {
+            gradient_line(line, theme, color, phase + row as f64 * GRADIENT_ROW_STEP)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Renders the KERNEXT logo for a terminal of `width` columns using the default
@@ -191,21 +288,24 @@ pub fn render_intro(width: usize, color: bool) -> String {
 /// Renders the branded introduction with an explicit theme.
 #[must_use]
 pub fn render_intro_themed(width: usize, color: bool, theme: &Theme) -> String {
+    let emblem = render_emblem_themed(width, color, theme, 0.0);
+    let logo = render_logo_themed(width, color, theme, 0.0);
+    let emblem = if emblem.is_empty() {
+        String::new()
+    } else {
+        format!("{emblem}\n\n")
+    };
+
     format!(
-        "\n{logo}\n\n{name}  {version}\n{tagline}\n{values}\n",
-        logo = render_logo_themed(width, color, theme, 0.0),
+        "\n{emblem}{logo}\n\n{name}  {version}\n{tagline}\n{values}\n",
         name = style(
             PRODUCT_NAME,
             &format!("{BOLD}{}", theme.accent.foreground()),
             color
         ),
         version = style(&format!("[v{VERSION}]"), DIM, color),
-        tagline = style(&TAGLINE.to_uppercase(), BOLD, color),
-        values = style(
-            VALUES,
-            &format!("{DIM}{}", theme.secondary.foreground()),
-            color
-        ),
+        tagline = gradient_line(&TAGLINE.to_uppercase(), theme, color, 0.4),
+        values = gradient_line(VALUES, theme, color, 1.1),
     )
 }
 
@@ -304,6 +404,21 @@ fn style(text: &str, code: &str, enabled: bool) -> String {
     }
 }
 
+/// Reveals a line from left to right without ANSI color.
+///
+/// This keeps the startup animation visible in terminals where color is
+/// disabled or unavailable; the final frame always contains the complete line.
+fn reveal_line(text: &str, progress: f64) -> String {
+    let characters: Vec<char> = text.chars().collect();
+    let visible = ((characters.len() as f64) * progress.clamp(0.0, 1.0)).ceil() as usize;
+
+    characters
+        .into_iter()
+        .enumerate()
+        .map(|(index, character)| if index < visible { character } else { ' ' })
+        .collect()
+}
+
 fn gradient_line(text: &str, theme: &Theme, color: bool, phase: f64) -> String {
     if !color {
         return text.to_owned();
@@ -344,10 +459,12 @@ pub struct Startup<W: Write> {
     color: bool,
     width: usize,
     theme: Theme,
+    frame: Duration,
+    emblem_frame: Duration,
 }
 
 impl<W: Write> Startup<W> {
-    /// Creates a startup renderer with the default theme.
+    /// Creates a startup renderer with the default theme and `normal` pace.
     pub fn new(writer: W, mode: StartupMode, color: bool, width: usize) -> Self {
         Self {
             writer,
@@ -355,6 +472,8 @@ impl<W: Write> Startup<W> {
             color,
             width,
             theme: Theme::default(),
+            frame: frame_delay("normal"),
+            emblem_frame: emblem_frame_delay("normal"),
         }
     }
 
@@ -362,6 +481,14 @@ impl<W: Write> Startup<W> {
     #[must_use]
     pub fn with_theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
+        self
+    }
+
+    /// Applies the configured `slow`, `normal`, or `fast` animation pace.
+    #[must_use]
+    pub fn with_animation_speed(mut self, speed: &str) -> Self {
+        self.frame = frame_delay(speed);
+        self.emblem_frame = emblem_frame_delay(speed);
         self
     }
 
@@ -376,8 +503,17 @@ impl<W: Write> Startup<W> {
         }
 
         if self.mode == StartupMode::Animated {
+            self.animated_emblem()?;
             self.animated_logo()?;
         } else {
+            let emblem = render_emblem_themed(self.width, self.color, &self.theme, 0.0);
+            if !emblem.is_empty() {
+                for line in emblem.lines() {
+                    writeln!(self.writer, "{line}")?;
+                }
+                writeln!(self.writer)?;
+            }
+
             for line in render_logo_themed(self.width, self.color, &self.theme, 0.0).lines() {
                 writeln!(self.writer, "{line}")?;
             }
@@ -397,19 +533,42 @@ impl<W: Write> Startup<W> {
         writeln!(
             self.writer,
             "{}",
-            style(&TAGLINE.to_uppercase(), BOLD, self.color)
+            gradient_line(&TAGLINE.to_uppercase(), &self.theme, self.color, 0.4)
         )?;
         writeln!(
             self.writer,
             "{}",
-            style(
-                VALUES,
-                &format!("{DIM}{}", self.theme.secondary.foreground()),
-                self.color
-            )
+            gradient_line(VALUES, &self.theme, self.color, 1.1)
         )?;
         writeln!(self.writer)?;
         self.writer.flush()
+    }
+
+    /// Reveals the emblem from top to bottom.
+    ///
+    /// Each row is a real line of the final artwork; nothing is invented and no
+    /// initialization work is simulated. The reveal is bounded to a handful of
+    /// short frames so the shell becomes usable immediately afterwards.
+    fn animated_emblem(&mut self) -> io::Result<()> {
+        let emblem = render_emblem_themed(self.width, self.color, &self.theme, 0.0);
+
+        if emblem.is_empty() {
+            return Ok(());
+        }
+
+        let rows: Vec<&str> = emblem.lines().collect();
+
+        for (index, line) in rows.iter().enumerate() {
+            writeln!(self.writer, "{line}")?;
+            self.writer.flush()?;
+
+            if index + 1 < rows.len() {
+                std::thread::sleep(self.emblem_frame);
+            }
+        }
+
+        writeln!(self.writer)?;
+        Ok(())
     }
 
     /// Draws the wordmark in place while the gradient sweeps across it.
@@ -432,18 +591,20 @@ impl<W: Write> Startup<W> {
 
         for frame in 0..ANIMATION_FRAMES {
             let phase = started.elapsed().as_secs_f64() * 2.2;
+            let progress = (frame + 1) as f64 / ANIMATION_FRAMES as f64;
 
             for (row, line) in rows.iter().enumerate() {
-                writeln!(
-                    self.writer,
-                    "{}",
+                let line = if self.color {
                     gradient_line(
                         line,
                         &self.theme,
                         self.color,
-                        phase + row as f64 * GRADIENT_ROW_STEP
+                        phase + row as f64 * GRADIENT_ROW_STEP,
                     )
-                )?;
+                } else {
+                    reveal_line(line, progress)
+                };
+                writeln!(self.writer, "{line}")?;
             }
 
             self.writer.flush()?;
@@ -451,7 +612,7 @@ impl<W: Write> Startup<W> {
             if frame + 1 < ANIMATION_FRAMES {
                 write!(self.writer, "\x1b[{}A", rows.len())?;
                 self.writer.flush()?;
-                std::thread::sleep(ANIMATION_FRAME);
+                std::thread::sleep(self.frame);
             }
         }
 
@@ -787,6 +948,68 @@ mod tests {
         assert!(first.contains("\x1b[38;2;"));
         assert_ne!(first, second, "the gradient must change over time");
         assert!(!render_logo_themed(100, false, &theme, 1.0).contains('\x1b'));
+    }
+
+    #[test]
+    fn emblem_rows_keep_a_constant_display_width() {
+        for rows in [&EMBLEM_FULL[..], &EMBLEM_COMPACT[..]] {
+            let widths: Vec<usize> = rows.iter().map(|row| row.chars().count()).collect();
+            let first = widths[0];
+
+            assert!(
+                widths.iter().all(|width| *width == first),
+                "every emblem row must be {first} columns, got {widths:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn full_emblem_fits_its_width_threshold() {
+        let widest = EMBLEM_FULL
+            .iter()
+            .map(|row| row.chars().count())
+            .max()
+            .expect("the emblem has rows");
+
+        assert!(widest <= 76, "the full emblem must fit at 76 columns");
+    }
+
+    #[test]
+    fn emblem_scales_with_the_terminal_width() {
+        assert_eq!(emblem_rows(120), &EMBLEM_FULL);
+        assert_eq!(emblem_rows(76), &EMBLEM_FULL);
+        assert_eq!(emblem_rows(60), &EMBLEM_COMPACT);
+        assert_eq!(emblem_rows(44), &EMBLEM_COMPACT);
+        assert!(emblem_rows(43).is_empty());
+        assert_eq!(render_emblem(40, false), "");
+    }
+
+    #[test]
+    fn animation_speed_maps_to_bounded_frame_delays() {
+        assert_eq!(frame_delay("normal"), ANIMATION_FRAME);
+        assert_eq!(frame_delay("unknown"), ANIMATION_FRAME);
+        assert!(frame_delay("fast") < frame_delay("normal"));
+        assert!(frame_delay("slow") > frame_delay("normal"));
+        assert!(emblem_frame_delay("slow") > EMBLEM_FRAME);
+        assert!(emblem_frame_delay("fast") < EMBLEM_FRAME);
+    }
+
+    #[test]
+    fn animated_emblem_reveal_is_bounded_and_complete() {
+        // Colorless output keeps the assertions readable: every emblem row is
+        // written verbatim, without per-character gradient escapes.
+        let mut startup = Startup::new(Vec::new(), StartupMode::Animated, false, 120)
+            .with_animation_speed("fast");
+        startup.intro().expect("animated intro should write");
+
+        let output = rendered(&mut startup);
+
+        for row in EMBLEM_FULL {
+            assert!(
+                output.contains(row.trim_end()),
+                "every emblem row should appear in the reveal"
+            );
+        }
     }
 
     #[test]

@@ -144,16 +144,14 @@ impl<'a> Lexer<'a> {
                     self.bump();
                     (Token::Comma, None)
                 }
-                '.' => {
+                '.' if self.peek_second() == Some('.') => {
                     self.bump();
-                    if self.peek() == Some('.') {
-                        self.bump();
-                        (Token::Range, None)
-                    } else {
-                        // Single dot is part of a word (e.g., file.txt)
-                        (self.lex_word()?, None)
-                    }
+                    self.bump();
+                    (Token::Range, None)
                 }
+                // A single dot is part of a word, including a leading dot in
+                // hidden-file names and relative paths such as `./file`.
+                '.' => (self.lex_word()?, None),
                 '\'' => {
                     let token = self.lex_string('\'', start.line(), start.column())?;
                     let end = self.position();
@@ -219,6 +217,23 @@ impl<'a> Lexer<'a> {
             }
 
             match character {
+                '\\' if looks_like_windows_path(&value) && !self.next_is_shell_escape() => {
+                    // Preserve path separators in unquoted Windows paths such
+                    // as `C:\temp` or `\\server\share`. Explicit shell escapes
+                    // (spaces, quotes, operators) still take precedence.
+                    let (line, column) = self.position_pair();
+                    self.bump();
+                    let Some(escaped) = self.peek() else {
+                        return Err(LexerError::new(
+                            LexerErrorKind::DanglingEscape,
+                            line,
+                            column,
+                        ));
+                    };
+                    self.bump();
+                    value.push('\\');
+                    value.push(escaped);
+                }
                 '\\' => {
                     let (line, column) = self.position_pair();
                     self.bump();
@@ -258,7 +273,6 @@ impl<'a> Lexer<'a> {
             "return" => Token::Return,
             "break" => Token::Break,
             "continue" => Token::Continue,
-            "run" => Token::Run,
             _ => Token::Word(value),
         };
 
@@ -290,6 +304,20 @@ impl<'a> Lexer<'a> {
             }
 
             match character {
+                '\\' if looks_like_windows_path(&value) && !self.next_is_shell_escape() => {
+                    let (line, column) = self.position_pair();
+                    self.bump();
+                    let Some(escaped) = self.peek() else {
+                        return Err(LexerError::new(
+                            LexerErrorKind::DanglingEscape,
+                            line,
+                            column,
+                        ));
+                    };
+                    self.bump();
+                    value.push('\\');
+                    value.push(escaped);
+                }
                 '\\' => {
                     let (line, column) = self.position_pair();
                     self.bump();
@@ -301,7 +329,19 @@ impl<'a> Lexer<'a> {
                         ));
                     };
                     self.bump();
-                    value.push(self.decode_escape(escaped, line, column)?);
+                    // Inside quotes, an unrecognised escape is a literal
+                    // backslash. This is required for Windows paths such as
+                    // "C:\Users\name" while preserving explicit escapes.
+                    match self.decode_escape(escaped, line, column) {
+                        Ok(decoded) => value.push(decoded),
+                        Err(error)
+                            if matches!(error.kind(), LexerErrorKind::InvalidEscape { .. }) =>
+                        {
+                            value.push('\\');
+                            value.push(escaped);
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
                 '\n' => {
                     self.bump();
@@ -383,6 +423,20 @@ impl<'a> Lexer<'a> {
                     pieces.push((token, Span::new(variable_start, variable_end), None));
                     text_start = self.position();
                 }
+                '\\' if looks_like_windows_path(&text) && !self.next_is_shell_escape() => {
+                    let (line, column) = self.position_pair();
+                    self.bump();
+                    let Some(escaped) = self.peek() else {
+                        return Err(LexerError::new(
+                            LexerErrorKind::DanglingEscape,
+                            line,
+                            column,
+                        ));
+                    };
+                    self.bump();
+                    text.push('\\');
+                    text.push(escaped);
+                }
                 '\\' => {
                     let (line, column) = self.position_pair();
                     self.bump();
@@ -394,7 +448,18 @@ impl<'a> Lexer<'a> {
                         ));
                     };
                     self.bump();
-                    text.push(self.decode_escape(escaped, line, column)?);
+                    // Keep unknown escapes literal inside double quotes so
+                    // Windows paths such as "C:\Users\name" survive lexing.
+                    match self.decode_escape(escaped, line, column) {
+                        Ok(decoded) => text.push(decoded),
+                        Err(error)
+                            if matches!(error.kind(), LexerErrorKind::InvalidEscape { .. }) =>
+                        {
+                            text.push('\\');
+                            text.push(escaped);
+                        }
+                        Err(error) => return Err(error),
+                    }
                 }
                 '\n' => {
                     self.bump();
@@ -522,6 +587,16 @@ impl<'a> Lexer<'a> {
         }
     }
 
+    /// Returns true when the next character has an explicit shell meaning
+    /// after a backslash. Used to keep Windows path separators literal while
+    /// still allowing `C:\Program\ Files` and escaped operators.
+    fn next_is_shell_escape(&self) -> bool {
+        matches!(
+            self.peek_second(),
+            Some('\\' | '"' | '\'' | '$' | ' ' | '|' | '&' | '>' | '<' | ';' | '(' | ')' | '=')
+        )
+    }
+
     fn decode_escape(
         &self,
         character: char,
@@ -586,6 +661,20 @@ impl<'a> Lexer<'a> {
     }
 }
 
+/// Heuristic for unquoted Windows paths. Once a word contains a drive prefix
+/// (`C:`) or has started with a UNC separator, later backslashes are treated as
+/// path separators rather than escapes.
+fn looks_like_windows_path(value: &str) -> bool {
+    if value.starts_with('\\') || value.contains(":\\") {
+        return true;
+    }
+
+    let bytes = value.as_bytes();
+    bytes.len() >= 2
+        && bytes[bytes.len() - 1] == b':'
+        && bytes[bytes.len() - 2].is_ascii_alphabetic()
+}
+
 fn push_double_text(
     pieces: &mut Vec<(Token, Span, Option<QuoteKind>)>,
     text: &mut String,
@@ -601,4 +690,16 @@ fn push_double_text(
         Span::new(start, end),
         Some(QuoteKind::Double),
     ));
+}
+
+#[cfg(test)]
+mod path_heuristic_tests {
+    use super::looks_like_windows_path;
+
+    #[test]
+    fn drive_prefix_is_recognised() {
+        assert!(looks_like_windows_path("C:"));
+        assert!(looks_like_windows_path("--path=C:"));
+        assert!(looks_like_windows_path(r"C:\Users"));
+    }
 }

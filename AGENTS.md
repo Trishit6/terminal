@@ -67,13 +67,26 @@ must keep using `lex_spanned` + `parse`.
 - Modes: `Animated`, `Plain`, `Quiet`. Resolve them with `resolve_mode`.
 - Animated only on an interactive terminal with animation enabled.
 - Piped/redirected output is plain. `NO_COLOR` and `TERM=dumb` disable ANSI.
-- Narrow terminal fallback: full 6-row logo at 80+, compact 3-row at 24–79,
-  plain `KERNEXT` below 24.
+- Artwork is the **Cinematic Space & Systems** identity adapted to text: a
+  metallic K monogram inside an orbital ring (`EMBLEM_FULL`, 9 rows, 58 columns)
+  above the block wordmark. Use only box-drawing/block glyphs so it stays
+  single-width in every terminal font.
+- Fallbacks: full emblem + 6-row wordmark at 76+, 3-row core badge + 3-row
+  wordmark at 44–75, 3-row wordmark at 24–43, plain `KERNEXT` below 24.
+  `render_emblem` returns an empty string below 44 columns.
+- **Alignment is a test invariant:** `emblem_rows_keep_a_constant_display_width`
+  requires every emblem row to have the same character count. Never hand-edit a
+  row without keeping that true.
+- Animated mode reveals the emblem top to bottom, then redraws the wordmark in
+  place while a 24-bit gradient derived from `Theme::gradient_rgb` and elapsed
+  time sweeps across every character. Keep it continuous and palette-driven.
 - `--quiet` and `--no-animation` are CLI flags.
-- `startup_animation` and `quiet_startup` are config fields.
-- The animated wordmark is drawn in place for a bounded number of frames while
-  a 24-bit gradient derived from `Theme::gradient_rgb` and elapsed time sweeps
-  across every character. Keep it continuous and palette-driven.
+- `startup_animation`, `quiet_startup`, and `animation_speed` (`slow`/`normal`/
+  `fast`) are config fields. Speed maps to `frame_delay`/`emblem_frame_delay`;
+  the whole reveal stays well under a second at `normal`.
+- Startup interrupts are not signal-handled yet: `Drop`/`abort` restore the
+  cursor and colors on error paths, but a Ctrl+C during the reveal ends the
+  process as the platform dictates. Do not claim otherwise.
 - `Startup` implements `Drop` to restore the cursor and reset colors on errors.
 - Never add artificial boot delays. The animation step is a short presentation
   pause, not a progress simulation.
@@ -225,20 +238,27 @@ The interactive shell requires a real TTY. Piping input directly into
 `cargo run` is rejected because KERNEXT is interactive. Use a terminal, or
 `screen`/`tmux`, for manual verification.
 
-## Background execution (synchronous)
+## Background jobs
 
-- Lexer: `Token::Background` for `&`.
-- Parser: `Separator::Background` for `&` in command lists.
-- AST: `Expression::Background` with a boxed inner expression.
-- `parse_list` recognizes `&` as a separator.
-- `run_background` and the `Separator::Background` branch in `run_list`
-  evaluate the expression synchronously and return success. They do not detach,
-  track a PID, reap, or notify.
+- Lexer: `Token::Background` for `&`. Parser: `Separator::Background`.
+  AST: `Expression::Background`. `parse_list` recognizes `&` as a separator.
+- `run_background` + `spawn_background` in `eval.rs` implement it: a simple
+  external command is spawned directly so the job table owns its `Child`;
+  anything else runs on a detached thread with a cloned session.
+- Job model: `crates/shell-runtime/src/jobs.rs` (`JobTable`, `JobInfo`,
+  `JobStatus::{Running, Done, Failed, Killed}`). The table is shared through
+  `Arc<Mutex<_>>` so pipeline clones see the same jobs.
+- Built-ins: `jobs`, `wait`, `kill`, `fg`, `bg` in `commands.rs`.
 - Background evaluation is isolated: `exit`, `clear`, `break`, and `continue`
   inside the expression cannot control the foreground shell or enclosing loop.
-- Quoted `&` stays literal.
-- **Do not claim background execution works as real job control.** It is syntax
-  that parses and evaluates, not an asynchronous job system.
+  Quoted `&` stays literal.
+- **Limits to keep documented:** there is no asynchronous completion notice
+  (the user must run `jobs`/`wait`), `fg` waits instead of handing over the
+  terminal, `bg` only reports state, and a detached shell-expression job cannot
+  be interrupted from another thread. Job IDs are shell job numbers, never
+  OS PIDs.
+- Do not reintroduce synchronous-only background evaluation, and do not claim
+  full process-group job control.
 
 ## Scripting runtime
 
@@ -248,7 +268,7 @@ The interactive shell requires a real TTY. Piping input directly into
 - Assignment evaluation: `crates/shell-builtins/src/eval.rs` (`run_assignment`).
 - Built-ins: `crates/shell-builtins/src/commands.rs` (`export_builtin`,
   `unset_builtin`, `env_builtin`, `set_builtin`).
-- Registry: `crates/shell-builtins/src/registry.rs` (21 commands).
+- Registry: `crates/shell-builtins/src/registry.rs` (53 commands).
 - Lexer tokens: `Token::Equals`, `Token::SpecialVariable`,
   `SpecialVariable::{LastStatus, ProcessId}`.
 - AST: `Expression::Assignment`, `WordPart::Special`, variable-name helpers in
@@ -316,11 +336,12 @@ The interactive shell requires a real TTY. Piping input directly into
 - Missing file → defaults. Invalid file → warning plus defaults.
 - Fields: `prompt`, `history_size`, `color`, `history_enabled`, `history_file`,
   `history_filter_secrets`, `suggestions_enabled`, `completion_hidden_files`,
-  `startup_animation`, `quiet_startup`, `accent_color`, `secondary_color`,
-  `highlight_color`, `success_color`, `error_color`, `prompt_color`,
-  `terminal_font`, `apply_terminal_font`.
+  `startup_animation`, `quiet_startup`, `animation_speed`, `accent_color`,
+  `secondary_color`, `highlight_color`, `success_color`, `error_color`,
+  `prompt_color`, `terminal_font`, `apply_terminal_font`.
 - Defaults: prompt `kernext ~ $ `, `color = true`, `startup_animation = true`,
-  `quiet_startup = false`, `accent_color = "bright-cyan"`,
+  `quiet_startup = false`, `animation_speed = "normal"`,
+  `accent_color = "bright-cyan"`,
   `secondary_color = "bright-blue"`, `highlight_color = "bright-magenta"`,
   `success_color = "bright-green"`, `error_color = "bright-red"`,
   `prompt_color = "bright-cyan"`, `terminal_font = ""`,
@@ -338,8 +359,16 @@ The interactive shell requires a real TTY. Piping input directly into
 - Registry and command metadata: `crates/shell-builtins/src/registry.rs`.
 - Implementations: `crates/shell-builtins/src/commands.rs`.
 - AST evaluator: `crates/shell-builtins/src/eval.rs`.
-- 21 commands: help, pwd, cd, ls, mkdir, touch, cat, echo, cp, mv, rm, clear,
-  history, whoami, date, version, exit, export, unset, env, set.
+- 53 commands: help, pwd, cd, ls, tree, find, stat, mkdir, touch, cat, head,
+  tail, wc, grep, sort, uniq, echo, print, input, len, type, str, int, float,
+  bool, cp, mv, rm, which, basename, dirname, realpath, clear, history, jobs,
+  wait, kill, fg, bg, run, test, `[`, expr, sleep, true, false, whoami, date,
+  version, exit, export, unset, env, set.
+- `print`/`input`/`len`/`type`/`str`/`int`/`float`/`bool` are the native
+  scripting helpers. Value commands print a bare value (no trailing newline,
+  like `expr`/`wc`); `print` behaves like `echo`. `input <variable>` reads one
+  line from pipeline or `<` input and assigns it; it never reads the terminal,
+  so interactive use without redirection errors clearly.
 - `version` prints `KERNEXT v<version>`. `help` starts with
   `KERNEXT — Available commands:`.
 - `Session::working_directory` is the single source of truth for relative
@@ -376,7 +405,7 @@ The interactive shell requires a real TTY. Piping input directly into
 - Startup tests live in `apps/shell-cli/src/startup.rs`; clear/Ctrl+L tests live
   in `apps/shell-cli/tests/repl.rs` and
   `crates/shell-line-editor/src/editor.rs`.
-- The full suite currently has 356 tests; do not weaken or delete tests to make
+- The full suite currently has 379 tests; do not weaken or delete tests to make
   a build pass.
 
 ## Git and uncommitted work
