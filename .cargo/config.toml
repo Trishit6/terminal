@@ -1,11 +1,2 @@
-# Cargo configuration for the KERNEXT project
-#
-# This project lives on a VFAT filesystem with `showexec` mount option.
-# `showexec` only allows execution of files with .exe/.com/.bat/.btm/.cmd extensions,
-# which breaks Cargo's build scripts and test binaries (extensionless).
-#
-# To work around this, we configure Cargo to place all build artifacts
-# on the ext4 filesystem at $HOME/.cache/terminal-target
-
 [build]
 target-dir = "/home/trishit/.cache/terminal-target"

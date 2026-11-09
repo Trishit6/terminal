@@ -12,7 +12,7 @@
 #>
 
 param(
-    [switch]$Confirm = $true,
+    [bool]$Confirm = $true,
     [string]$InstallDir = "$env:USERPROFILE\.local\bin",
     [string]$Version = "0.1.0"
 )
@@ -24,7 +24,6 @@ $REPO_URL = "https://github.com/Trishit6/terminal"
 $BINARY_NAME = "kernext.exe"
 $ARCHIVE_NAME = "kernext-x86_64-pc-windows-gnu.zip"
 $ARCHIVE_URL = "$REPO_URL/releases/download/v$VERSION/$ARCHIVE_NAME"
-$INSTALL_DIR = $InstallDir
 
 # The banner and spinner are presentation only. They are skipped when output is
 # redirected, when NO_COLOR is set, or when the host has no real console.
@@ -179,7 +178,7 @@ try {
                 Write-Success "Added $InstallDir to User PATH. Restart your terminal for changes to take effect."
             }
         } else {
-            Write-Warning "Add $InstallDir to your PATH manually: setx PATH \"%PATH%;$InstallDir\""
+            Write-Warning "Add $InstallDir to your PATH manually: setx PATH `"$currentPath;$InstallDir`""
         }
     }
 

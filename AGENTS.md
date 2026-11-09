@@ -31,6 +31,7 @@ Workspace members:
 - `crates/shell-runtime` — `Session` (cwd, config, lifecycle, platform, variables, functions)
 - `crates/shell-line-editor` — Reedline integration behind `LineReader`, clear helpers
 - `crates/shell-config` — TOML configuration model
+- `crates/shell-api` — serializable session/terminal API contracts (not yet wired to a server)
 - `installers/` — Linux, macOS, Windows installation scripts
 - `docs/` — branding and architecture documentation
 
@@ -195,6 +196,11 @@ A second checkout may exist at `/home/trishit/Projects/custom-shell`. Do not
 edit both. Do not create another copy or workspace. If both exist, confirm which
 one the user wants active before changing files.
 
+On the current Windows workstation, the active checkout is
+`D:\projects\React-Ts\terminal`; the Linux path above is the canonical checkout
+when that volume is mounted. No other KERNEXT Cargo workspace was found under
+`D:\projects` or the Windows user profile during the Phase 0 audit.
+
 ## Critical build constraint (removable drive)
 
 `terminal` is on a **vfat** mount with **`showexec`**, not a literal `noexec`.
@@ -212,7 +218,9 @@ Do not change mount options without explicit permission.
 **Permanent fix:** `.cargo/config.toml` sets
 `build.target-dir = "/home/trishit/.cache/terminal-target"`.
 All Cargo commands automatically use the ext4 target directory.
-No `export CARGO_TARGET_DIR` is required.
+No `export CARGO_TARGET_DIR` is required. On Windows the same path resolves
+under the current drive (for this checkout:
+`D:\home\trishit\.cache\terminal-target`), still outside the source tree.
 
 Sources stay only in `terminal`; all build artifacts land on ext4. Do not
 hardcode a target directory in `Cargo.toml` or add OS-specific linker settings.
@@ -430,8 +438,8 @@ The interactive shell requires a real TTY. Piping input directly into
 
 ## Git and uncommitted work
 
-The repository has one commit (`first commit`). All later work is uncommitted,
-and several files are untracked. **Never** run `git reset --hard`,
+The repository has multiple commits. The working tree may contain uncommitted
+changes and untracked files. **Never** run `git reset --hard`,
 `git checkout -- .`, `git clean`, or any command that discards working-tree
 changes without explicit permission. Do not commit, amend, rebase, or push
 unless asked.

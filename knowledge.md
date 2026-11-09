@@ -28,7 +28,9 @@ The Cargo workspace **is** this project root (no nested workspace directory).
 
 Note: `README.md` and `AGENTS.md` still describe the canonical Linux checkout at
 `/run/media/trishit/UBUNTU 26_0/Projects/terminal`, and README's tree diagram
-shows an older `terminal/` wrapper. Trust the actual filesystem layout above.
+shows an older `terminal/` wrapper. On this Windows workstation the active
+checkout is `D:\projects\React-Ts\terminal`. Trust the actual filesystem layout
+above.
 
 ## Where the code lives
 

@@ -1,0 +1,15 @@
+{
+  "name": "kernext",
+  "private": true,
+  "version": "0.1.0",
+  "description": "KERNEXT — The Next Core of Computing.",
+  "packageManager": "pnpm@11.25.0",
+  "scripts": {
+    "web:dev": "pnpm --filter @kernext/web dev",
+    "web:build": "pnpm --filter @kernext/web build",
+    "web:preview": "pnpm --filter @kernext/web preview",
+    "web:typecheck": "pnpm --filter @kernext/web typecheck",
+    "desktop:dev": "pnpm --filter @kernext/desktop tauri dev",
+    "desktop:build": "pnpm --filter @kernext/desktop tauri build"
+  }
+}

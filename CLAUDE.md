@@ -94,12 +94,13 @@ Workspace members:
 
 ## Git discipline
 
-The repo has one commit (`first commit`); all later work is uncommitted and many
-files are untracked. **Never** run `git reset --hard`, `git checkout -- .`,
+The repo has multiple commits. The working tree may contain uncommitted changes
+and untracked files. **Never** run `git reset --hard`, `git checkout -- .`,
 `git clean`, or anything that discards working-tree changes without explicit
 permission. Do not commit, amend, rebase, or push unless asked.
 
-The canonical checkout is the one at this path. A second checkout may exist at
+On this Windows workstation the canonical checkout is
+`D:\projects\React-Ts\terminal`. A second checkout may exist at
 `/home/trishit/Projects/custom-shell` — do not edit both.
 
 ## Docs

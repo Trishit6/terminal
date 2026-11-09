@@ -31,7 +31,7 @@ use windows_sys::Win32::System::Threading::{
     UpdateProcThreadAttribute,
     DeleteProcThreadAttributeList,
     LPPROC_THREAD_ATTRIBUTE_LIST,
-    CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
+    CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, STARTF_USESTDHANDLES,
 };
 use windows_sys::Win32::System::Memory::{
     HeapAlloc, HeapFree, GetProcessHeap, HEAP_ZERO_MEMORY,
@@ -202,6 +202,11 @@ impl PtyProcess {
         // Prepare startup info with ConPTY attribute
         let mut si: STARTUPINFOEXW = unsafe { std::mem::zeroed() };
         si.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXW>() as u32;
+        // Without this flag Windows duplicates the parent's redirected
+        // standard handles into the child, so the child writes to the
+        // terminal that launched KERNEXT instead of the pseudoconsole.
+        // The handles stay null; the pseudoconsole supplies its own.
+        si.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
 
         // Initialize attribute list for pseudoconsole
         let mut attr_list_size = 0usize;
@@ -247,7 +252,7 @@ impl PtyProcess {
                 attr_list_mem,
                 0,
                 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE as usize,
-                &hpc as *const _ as _,
+                hpc as *const std::ffi::c_void,
                 std::mem::size_of::<HPCON>(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
@@ -282,36 +287,29 @@ impl PtyProcess {
         // Always use CREATE_UNICODE_ENVIRONMENT since we now always pass an environment block
         let creation_flags = EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT;
 
-        // Build full command line for lpCommandLine
-        // When lpApplicationName is NULL, cmd.exe parses the command line
-        let mut cmd_line = String::new();
-
+        // Build the full command line. `lpApplicationName` names the actual
+        // image, while `lpCommandLine` starts with that image by convention.
+        // Batch scripts arrive as `cmd.exe /d /v:off /s /c` plus the
+        // pre-escaped script line from `launch_spec`.
+        let mut cmd_line = quote_arg(&spec.executable.to_string_lossy());
+        for arg in &spec.arguments {
+            cmd_line.push(' ');
+            cmd_line.push_str(&quote_arg(arg));
+        }
         if let Some(raw) = &spec.raw_arguments {
-            // For batch scripts: cmd.exe /c already in raw_arguments from shell-command
-            // The raw_arguments is like "exit 42" or "echo hello"
+            cmd_line.push(' ');
             cmd_line.push_str(raw);
-        } else {
-            // For native executables: build command line with executable and all args
-            cmd_line.push_str(&quote_arg(&spec.executable.to_string_lossy()));
-            for arg in &spec.arguments {
-                cmd_line.push(' ');
-                cmd_line.push_str(&quote_arg(arg));
-            }
         }
 
-        let cmd_wide: Vec<u16> = cmd_line.encode_utf16().chain(Some(0)).collect();
-        let cmd_ptr = Box::into_raw(cmd_wide.into_boxed_slice()) as *mut u16;
-
-        // DEBUG: Print what we're passing to CreateProcessW
-        eprintln!("DEBUG CreateProcessW: app_name=NULL, cmd_line={}", cmd_line);
+        let mut cmd_wide: Vec<u16> = cmd_line.encode_utf16().chain(Some(0)).collect();
 
         let result = unsafe {
             CreateProcessW(
-                std::ptr::null(),     // lpApplicationName - let cmd.exe parse from cmd_line
-                cmd_ptr,              // lpCommandLine - full command line
+                std::ptr::null(),
+                cmd_wide.as_mut_ptr(),
                 std::ptr::null_mut(),
                 std::ptr::null_mut(),
-                1, // bInheritHandles = TRUE
+                0, // bInheritHandles = FALSE; the pseudoconsole is passed via the attribute list
                 creation_flags,
                 env_ptr as _,
                 working_dir_ptr,
@@ -319,9 +317,6 @@ impl PtyProcess {
                 &mut pi,
             )
         };
-
-        // Free command line
-        unsafe { HeapFree(GetProcessHeap(), 0, cmd_ptr as _) };
 
         // Cleanup attribute list
         unsafe { DeleteProcThreadAttributeList(attr_list_mem) };

@@ -363,7 +363,7 @@ mod tests {
             PtyProcess::spawn(&command, PtySize::DEFAULT).expect("pseudoterminal should start");
         let mut writer = process.take_writer().expect("writer should be available");
         writer
-            .write_all(b"typed-line\n")
+            .write_all(b"typed-line\r\n")
             .expect("input should be accepted");
         writer.flush().expect("input should be flushed");
 
