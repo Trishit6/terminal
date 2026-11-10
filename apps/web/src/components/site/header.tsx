@@ -27,7 +27,7 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
     <header
       className={cn(
         'sticky top-0 z-40 border-b border-border bg-background/75 backdrop-blur-xl',
-        compact ? 'supports-backdrop-filter:bg-background/65' : '',
+        compact ? 'supports-[backdrop-filter]:bg-background/65' : '',
       )}
     >
       <div className="mx-auto flex h-16 w-full max-w-site items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
