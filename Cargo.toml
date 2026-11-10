@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "apps/shell-cli",
     "apps/shell-server",
+    "apps/desktop/src-tauri",
     "crates/shell-builtins",
     "crates/shell-config",
     "crates/shell-core",
@@ -25,6 +26,9 @@ futures-util = "0.3"
 reedline = "0.49"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-build = { version = "2", features = [] }
+tauri-plugin-opener = "2"
 tokio = { version = "1", features = ["full"] }
 toml = "0.9"
 tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }

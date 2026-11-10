@@ -2,7 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working in this repository.
 
-KERNEXT is a custom Rust CLI shell. `AGENTS.md` is the full project constitution — it
+KERNEXT is a custom Rust CLI shell with three implemented surfaces sharing one
+engine: the CLI (`apps/shell-cli`), the local web server and React front end
+(`apps/shell-server`, `apps/web`), and the Tauri 2 desktop application
+(`apps/desktop`). `AGENTS.md` is the full project constitution — it
 overrides this file when they disagree. This file is the quick-reference version:
 how to build, where the pieces live, and the non-obvious constraints.
 
@@ -10,11 +13,12 @@ how to build, where the pieces live, and the non-obvious constraints.
 
 - Product: **KERNEXT**. Tagline: **The Next Core of Computing.**
   Values: **OPEN • POWERFUL • INDEPENDENT**. Support phrase: **Build. Execute. Innovate.**
-- Prompt: `kernext ~ $ `. Executable: `kernext`.
+- Prompt: `kernext ~ $ `. Executable: `kernext` (desktop: `kernext-desktop`).
 - Internal crate/package names stay `shell-*`. Never rename them to match the brand.
 - Branding constants live in `crates/shell-core/src/lib.rs` (`SHELL_NAME`,
   `PRODUCT_NAME`, `TAGLINE`, `VALUES`, `MOTTO`, `VERSION`). `SHELL_NAME = "kernext"`.
-- The CLI is text-only. No graphical splash — that belongs to future Web/Desktop.
+- The CLI is text-only. The graphical splash and mountain wallpaper belong to
+  the Web and Desktop surfaces in `apps/web` / `apps/desktop`.
 
 ## Build constraint (removable drive)
 
@@ -30,15 +34,27 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all -- --check
 cargo run -p shell-cli
+
+pnpm install --frozen-lockfile
+pnpm typecheck          # web typecheck (alias of web:typecheck)
+pnpm test               # web Vitest suite (alias of web:test)
+pnpm build              # web production build (alias of web:build)
+pnpm web:dev            # vite dev server (http://127.0.0.1:5173)
+pnpm desktop:dev        # tauri dev
+pnpm desktop:build      # tauri build
+cargo run -p shell-server   # local web API server
 ```
 
 Run a single test or test file:
 
 ```bash
 cargo test -p shell-builtins --test pipeline
-cargo test -p shell-builtins --test pipeline paths_containing_spaces
+cargo test -p shell-builtins --test external_tools
+cargo test -p shell-builtins --test builtins paths_containing_spaces
 cargo test -p shell-core --test parser
 cargo test -p shell-cli --test repl
+cargo test -p shell-server
+cargo test -p shell-desktop
 ```
 
 The interactive shell needs a real TTY. Piping input into `cargo run` is rejected;
@@ -59,19 +75,29 @@ Workspace members:
 
 - `apps/shell-cli` — binary `shell-cli`, executable `kernext`. `cli.rs` (arg parsing,
   mode resolution), `repl.rs` (Reedline loop), `startup.rs` (presentation only — never
-  parses or evaluates), `main.rs`.
+  parses or evaluates), `worker.rs` (embedded worker used by desktop PTY sessions),
+  `main.rs`.
+- `apps/shell-server` — local Axum server: HTTP sessions, engine and PTY WebSockets.
+- `apps/web` — React + Vite + Tailwind front end shared by web and desktop.
+- `apps/desktop` — Tauri 2 application (crate `shell-desktop`, binary
+  `kernext-desktop`); crate root is `apps/desktop/src-tauri`.
 - `crates/shell-core` — `lib.rs` (branding), `lexer/`, `parser/`. Hand-written lexer
   and parser; no pest/nom/lalrpop.
-- `crates/shell-builtins` — `registry.rs` (53 commands + metadata), `commands.rs`
+- `crates/shell-builtins` — `registry.rs` (56 commands + metadata), `commands.rs`
   (implementations), `eval.rs` (AST evaluator, control flow, background jobs),
-  `pipeline.rs` (engine), `process.rs` (external executor), `expand.rs`, `outcome.rs`.
+  `pipeline.rs` (engine), `process.rs` (external executor), `expand.rs`, `outcome.rs`,
+  `pty.rs` (ConPTY/openpty pseudoterminals).
 - `crates/shell-runtime` — `Session` (cwd, config, lifecycle, platform, variables,
   functions), `variables.rs`, `history.rs`, `jobs.rs`.
 - `crates/shell-line-editor` — Reedline behind `LineReader`; `clear_terminal` /
   `clear_terminal_if` helpers in `editor.rs`.
 - `crates/shell-config` — TOML config model.
+- `crates/shell-api` — serializable session/terminal contracts shared by server and
+  desktop.
 - `installers/` — Linux, macOS, Windows scripts.
-- `docs/` — `BRANDING.md`, `ARCHITECTURE.md`.
+- `docs/` — `BRANDING.md`, `ARCHITECTURE.md`, `COMMANDS.md`, `DESKTOP.md`,
+  `DEPLOYMENT.md`, `PROJECT_STATUS.md`, `SECURITY.md`, `TROUBLESHOOTING.md`;
+  plus root `CONTRIBUTING.md`.
 
 ## Key invariants
 
@@ -90,7 +116,16 @@ Workspace members:
   exit code, 1 for built-in failure, 2 for syntax/lex errors, 128+signal for signal
   termination.
 - **Background `&`** spawns real detached work tracked by a job table
-  (`crates/shell-runtime/src/jobs.py`). Job IDs are shell job numbers, never OS PIDs.
+  (`crates/shell-runtime/src/jobs.rs`). Job IDs are shell job numbers, never OS PIDs.
+- **Desktop executes locally.** Desktop commands run through the local Tauri
+  Rust runtime only — never the public web server, never a JavaScript shell
+  simulation. `apps/desktop/src-tauri/build.rs` must keep shadowing the MinGW
+  `default-manifest.o` on `*-pc-windows-gnu` (see `docs/DESKTOP.md`); removing
+  it makes the binary die at startup with `STATUS_ENTRYPOINT_NOT_FOUND`.
+- **Root pnpm scripts delegate.** `desktop:dev`/`desktop:build` call the
+  `dev`/`build` scripts in `apps/desktop/package.json`. `pnpm --filter <pkg>
+  <bin>` only runs package scripts, so `--filter @kernext/desktop tauri …`
+  fails; do not reintroduce it.
 
 ## Git discipline
 
@@ -105,6 +140,9 @@ On this Windows workstation the canonical checkout is
 
 ## Docs
 
-`README.md`, `AGENTS.md`, `RELEASE_NOTES.md`, `docs/BRANDING.md`, and
-`docs/ARCHITECTURE.md` should stay in sync with behavior. Trust the source and tests
+`README.md`, `AGENTS.md`, `RELEASE_NOTES.md`, `CONTRIBUTING.md`,
+`docs/BRANDING.md`, `docs/ARCHITECTURE.md`, `docs/COMMANDS.md`,
+`docs/DESKTOP.md`, `docs/SECURITY.md`, `docs/DEPLOYMENT.md`,
+`docs/TROUBLESHOOTING.md`, and `docs/PROJECT_STATUS.md`
+should stay in sync with behavior. Trust the source and tests
 over the docs when they disagree.

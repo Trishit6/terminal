@@ -7,6 +7,7 @@ use shell_runtime::{JobStatus, Session};
 use std::env;
 use std::fs::{self, OpenOptions};
 use std::io;
+use std::net::ToSocketAddrs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
@@ -201,6 +202,8 @@ pub(crate) fn run(context: &mut CommandContext<'_>, name: &str, args: &[String])
         "false" => CommandResult::status(false),
         "whoami" => whoami(),
         "date" => date(),
+        "host" => host(args),
+        "sysinfo" => sysinfo(context.session),
         "version" => CommandResult::ok(format!("{PRODUCT_NAME} v{}", context.session.version())),
         "exit" => exit_builtin(context.session, args),
         "export" => export_builtin(context.session, args),
@@ -2684,6 +2687,86 @@ fn whoami() -> CommandResult {
 
 fn date() -> CommandResult {
     CommandResult::ok(Local::now().format("%Y-%m-%d %H:%M:%S %Z").to_string())
+}
+
+/// Resolves a hostname (or literal IP address) with the operating system's
+/// resolver and prints every address it returns.
+///
+/// This is the native networking utility: it uses `ToSocketAddrs`, so it
+/// follows the host's DNS configuration without any third-party dependency
+/// and works offline for literal addresses and hosts file entries.
+fn host(args: &[String]) -> CommandResult {
+    if args.len() != 1 {
+        return CommandResult::error("usage: host <hostname>");
+    }
+
+    let name = &args[0];
+    if name.is_empty() {
+        return CommandResult::error("host: hostname must not be empty");
+    }
+
+    // `to_socket_addrs` needs a `host:port` pair; the port is irrelevant for
+    // address resolution. A literal `host:port` input is honoured as typed.
+    let target = if name.contains(':') {
+        name.clone()
+    } else {
+        format!("{name}:0")
+    };
+
+    let addresses = match target.to_socket_addrs() {
+        Ok(addresses) => addresses,
+        Err(error) => {
+            return CommandResult::error(format!("host: {name}: {error}"));
+        }
+    };
+
+    let mut lines = Vec::new();
+    let mut seen = Vec::new();
+    for address in addresses {
+        let ip = address.ip();
+        if seen.contains(&ip) {
+            continue;
+        }
+        seen.push(ip);
+        if ip.is_ipv6() {
+            lines.push(format!("{name} has IPv6 address {ip}"));
+        } else {
+            lines.push(format!("{name} has address {ip}"));
+        }
+    }
+
+    if lines.is_empty() {
+        return CommandResult::error(format!("host: {name}: no addresses found"));
+    }
+
+    CommandResult::ok(lines.join("\n"))
+}
+
+/// Prints a system snapshot from process APIs only: no invented data, no
+/// registry calls, and no platform-specific crate.
+fn sysinfo(session: &Session) -> CommandResult {
+    let user = env::var("USER")
+        .or_else(|_| env::var("USERNAME"))
+        .or_else(|_| env::var("LOGNAME"))
+        .unwrap_or_else(|_| "unknown".to_owned());
+
+    let cores = std::thread::available_parallelism()
+        .map(|cores| cores.get().to_string())
+        .unwrap_or_else(|_| "unknown".to_owned());
+
+    let output = format!(
+        "product    {PRODUCT_NAME}\nversion    {}\nplatform   {}\nfamily     {}\narch       {}\ncpu-cores  {}\nuser       {}\npid        {}\ncwd        {}",
+        session.version(),
+        env::consts::OS,
+        env::consts::FAMILY,
+        env::consts::ARCH,
+        cores,
+        user,
+        std::process::id(),
+        session.working_directory().display(),
+    );
+
+    CommandResult::ok(output)
 }
 
 pub(crate) fn resolve_path(session: &Session, input: &str) -> PathBuf {

@@ -1,0 +1,3504 @@
+diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+index 50ac5fc..b66a0cd 100644
+--- a/.github/workflows/ci.yml
++++ b/.github/workflows/ci.yml
+@@ -17,13 +17,13 @@ jobs:
+     name: Format and Clippy
+     runs-on: ubuntu-latest
+     steps:
+-      - uses: actions/checkout@v4
++      - uses: actions/checkout@v7
+       - name: Install Rust
+         uses: dtolnay/rust-toolchain@stable
+         with:
+           components: clippy, rustfmt
+       - name: Cache cargo target
+-        uses: actions/cache@v4
++        uses: actions/cache@v6
+         with:
+           path: ${{ runner.temp }}/cargo-target
+           key: ${{ runner.os }}-ci-lint-${{ hashFiles('**/Cargo.lock') }}
+@@ -34,20 +34,44 @@ jobs:
+       - name: Clippy
+         run: cargo clippy --workspace --all-targets -- -D warnings
+ 
++  web:
++    name: Web typecheck, tests, and build
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v7
++      - name: Install pnpm
++        uses: pnpm/action-setup@v6
++        # Version comes from the packageManager pin in package.json.
++      - name: Install Node
++        uses: actions/setup-node@v7
++        with:
++          node-version: 24
++          cache: pnpm
++      - name: Install dependencies
++        run: pnpm install --frozen-lockfile
++      - name: Typecheck
++        run: pnpm typecheck
++      - name: Unit tests
++        run: pnpm test
++      - name: Build
++        run: pnpm build
++
+   test:
+     name: Test and release build (${{ matrix.os }})
+     needs: lint
+     strategy:
+       fail-fast: false
+       matrix:
+-        os: [ubuntu-latest, windows-latest, macos-latest]
++        # Windows x64, Linux x64, macOS Apple Silicon (macos-latest), and
++        # macOS Intel (macos-15-intel is the last x86_64 runner image).
++        os: [ubuntu-latest, windows-latest, macos-latest, macos-15-intel]
+     runs-on: ${{ matrix.os }}
+     steps:
+-      - uses: actions/checkout@v4
++      - uses: actions/checkout@v7
+       - name: Install Rust
+         uses: dtolnay/rust-toolchain@stable
+       - name: Cache cargo target
+-        uses: actions/cache@v4
++        uses: actions/cache@v6
+         with:
+           path: ${{ runner.temp }}/cargo-target
+           key: ${{ runner.os }}-ci-${{ hashFiles('**/Cargo.lock') }}
+@@ -57,3 +81,50 @@ jobs:
+         run: cargo test --workspace
+       - name: Release build
+         run: cargo build --workspace --release
++
++  desktop:
++    name: Desktop build (${{ matrix.os }})
++    needs: [lint, web]
++    strategy:
++      fail-fast: false
++      matrix:
++        os: [ubuntu-latest, windows-latest, macos-latest, macos-15-intel]
++    runs-on: ${{ matrix.os }}
++    steps:
++      - uses: actions/checkout@v7
++      - name: Install Linux system dependencies
++        if: runner.os == 'Linux'
++        run: |
++          sudo apt-get update
++          sudo apt-get install -y \
++            libwebkit2gtk-4.1-dev \
++            build-essential \
++            curl \
++            wget \
++            file \
++            libxdo-dev \
++            libayatana-appindicator3-dev \
++            librsvg2-dev
++      - name: Install pnpm
++        uses: pnpm/action-setup@v6
++      - name: Install Node
++        uses: actions/setup-node@v7
++        with:
++          node-version: 24
++          cache: pnpm
++      - name: Install Rust
++        uses: dtolnay/rust-toolchain@stable
++      - name: Cache cargo target
++        uses: actions/cache@v6
++        with:
++          path: ${{ runner.temp }}/cargo-target
++          key: ${{ runner.os }}-ci-desktop-${{ hashFiles('**/Cargo.lock') }}
++          restore-keys: |
++            ${{ runner.os }}-ci-desktop-
++      - name: Install dependencies
++        run: pnpm install --frozen-lockfile
++      - name: Build desktop application
++        # Compiles the desktop app in release mode with the embedded front
++        # end (beforeBuildCommand runs the web build) but skips installer
++        # bundling; the release workflow produces the installers.
++        run: pnpm desktop:build --no-bundle
+diff --git a/.github/workflows/release.yaml b/.github/workflows/release.yaml
+index 69f6231..506e4f6 100644
+--- a/.github/workflows/release.yaml
++++ b/.github/workflows/release.yaml
+@@ -4,7 +4,7 @@ on:
+   workflow_dispatch:
+     inputs:
+       version:
+-        description: 'Release version (e.g., v0.2.0)'
++        description: 'Release version (e.g., v0.2.0); must match the workspace Cargo.toml version'
+         required: true
+         type: string
+       tag:
+@@ -12,123 +12,425 @@ on:
+         required: false
+         type: string
+ 
++permissions:
++  contents: read
++
+ env:
+-  CARGO_TARGET_DIR: /home/runner/.cache/terminal-target
++  CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
++  CARGO_TERM_COLOR: always
+ 
+ jobs:
+   check:
+-    name: Check formatting, clippy, tests
++    name: Check formatting, clippy, tests, and web
+     runs-on: ubuntu-latest
++    outputs:
++      version: ${{ steps.version.outputs.version }}
+     steps:
+-      - uses: actions/checkout@v4
++      - uses: actions/checkout@v7
+       - name: Install Rust
+         uses: dtolnay/rust-toolchain@stable
+         with:
+           components: clippy, rustfmt
++      - name: Install pnpm
++        uses: pnpm/action-setup@v6
++      - name: Install Node
++        uses: actions/setup-node@v7
++        with:
++          node-version: 24
++          cache: pnpm
+       - name: Cache cargo target
+-        uses: actions/cache@v4
++        uses: actions/cache@v6
+         with:
+-          path: /home/runner/.cache/terminal-target
+-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
++          path: ${{ runner.temp }}/cargo-target
++          key: ${{ runner.os }}-release-check-${{ hashFiles('**/Cargo.lock') }}
+           restore-keys: |
+-            ${{ runner.os }}-cargo-
++            ${{ runner.os }}-release-check-
++      - name: Verify release version matches the workspace version
++        id: version
++        run: |
++          REQUESTED="${{ github.event.inputs.version }}"
++          REQUESTED="${REQUESTED#v}"
++          WORKSPACE="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "shell-core") | .version')"
++          if [ -z "$WORKSPACE" ] || [ "$REQUESTED" != "$WORKSPACE" ]; then
++            echo "::error::Requested release version '${{ github.event.inputs.version }}' does not match the workspace version '${WORKSPACE}'. Bump the version in Cargo.toml first so the shell, website, and desktop all report it."
++            exit 1
++          fi
++          echo "version=$WORKSPACE" >> "$GITHUB_OUTPUT"
+       - name: Format check
+         run: cargo fmt --all -- --check
+       - name: Clippy
+         run: cargo clippy --workspace --all-targets -- -D warnings
+       - name: Tests
+         run: cargo test --workspace
++      - name: Install web dependencies
++        run: pnpm install --frozen-lockfile
++      - name: Web typecheck
++        run: pnpm typecheck
++      - name: Web tests
++        run: pnpm test
++      - name: Web build
++        run: pnpm build
++
++  cli-windows:
++    name: CLI Windows (x86_64, GNU)
++    runs-on: windows-latest
++    needs: check
++    steps:
++      - uses: actions/checkout@v7
++      - name: Install Rust
++        uses: dtolnay/rust-toolchain@stable
++        with:
++          # The Windows installers ship the GNU build, which is also the
++          # toolchain the project's Windows test suite runs on. The
++          # windows-gnu target is self-contained and links without an
++          # external MinGW installation.
++          targets: x86_64-pc-windows-gnu
++      - name: Cache cargo target
++        uses: actions/cache@v6
++        with:
++          path: ${{ runner.temp }}/cargo-target
++          key: ${{ runner.os }}-release-cli-${{ hashFiles('**/Cargo.lock') }}
++          restore-keys: |
++            ${{ runner.os }}-release-cli-
++      - name: Build release binaries
++        run: cargo build --release --target x86_64-pc-windows-gnu -p shell-cli -p shell-server
++      - name: Upload artifact
++        uses: actions/upload-artifact@v7
++        with:
++          name: cli-windows-x86_64
++          path: |
++            ${{ runner.temp }}/cargo-target/x86_64-pc-windows-gnu/release/kernext.exe
++            ${{ runner.temp }}/cargo-target/x86_64-pc-windows-gnu/release/kernext-server.exe
++          if-no-files-found: error
++          retention-days: 30
+ 
+-  build-linux-musl:
+-    name: Build Linux musl (x86_64)
++  cli-linux-gnu:
++    name: CLI Linux GNU (x86_64)
+     runs-on: ubuntu-latest
+     needs: check
+     steps:
+-      - uses: actions/checkout@v4
++      - uses: actions/checkout@v7
++      - name: Install Rust
++        uses: dtolnay/rust-toolchain@stable
++      - name: Cache cargo target
++        uses: actions/cache@v6
++        with:
++          path: ${{ runner.temp }}/cargo-target
++          key: ${{ runner.os }}-release-cli-${{ hashFiles('**/Cargo.lock') }}
++          restore-keys: |
++            ${{ runner.os }}-release-cli-
++      - name: Build release binaries
++        run: cargo build --release -p shell-cli -p shell-server
++      - name: Upload artifact
++        uses: actions/upload-artifact@v7
++        with:
++          name: cli-linux-x86_64-gnu
++          path: |
++            ${{ runner.temp }}/cargo-target/release/kernext
++            ${{ runner.temp }}/cargo-target/release/kernext-server
++          if-no-files-found: error
++          retention-days: 30
++
++  cli-linux-musl:
++    name: CLI Linux musl (x86_64)
++    runs-on: ubuntu-latest
++    needs: check
++    steps:
++      - uses: actions/checkout@v7
+       - name: Install Rust
+         uses: dtolnay/rust-toolchain@stable
+         with:
+           targets: x86_64-unknown-linux-musl
+       - name: Cache cargo target
+-        uses: actions/cache@v4
++        uses: actions/cache@v6
++        with:
++          path: ${{ runner.temp }}/cargo-target
++          key: ${{ runner.os }}-release-musl-${{ hashFiles('**/Cargo.lock') }}
++          restore-keys: |
++            ${{ runner.os }}-release-musl-
++      - name: Build release binaries
++        run: cargo build --release --target x86_64-unknown-linux-musl -p shell-cli -p shell-server
++      - name: Upload artifact
++        uses: actions/upload-artifact@v7
++        with:
++          name: cli-linux-x86_64-musl
++          path: |
++            ${{ runner.temp }}/cargo-target/x86_64-unknown-linux-musl/release/kernext
++            ${{ runner.temp }}/cargo-target/x86_64-unknown-linux-musl/release/kernext-server
++          if-no-files-found: error
++          retention-days: 30
++
++  cli-macos-arm64:
++    name: CLI macOS (Apple Silicon)
++    runs-on: macos-latest
++    needs: check
++    steps:
++      - uses: actions/checkout@v7
++      - name: Install Rust
++        uses: dtolnay/rust-toolchain@stable
++      - name: Cache cargo target
++        uses: actions/cache@v6
++        with:
++          path: ${{ runner.temp }}/cargo-target
++          key: ${{ runner.os }}-release-cli-${{ hashFiles('**/Cargo.lock') }}
++          restore-keys: |
++            ${{ runner.os }}-release-cli-
++      - name: Build release binaries
++        run: cargo build --release -p shell-cli -p shell-server
++      - name: Upload artifact
++        uses: actions/upload-artifact@v7
++        with:
++          name: cli-macos-aarch64
++          path: |
++            ${{ runner.temp }}/cargo-target/release/kernext
++            ${{ runner.temp }}/cargo-target/release/kernext-server
++          if-no-files-found: error
++          retention-days: 30
++
++  cli-macos-intel:
++    name: CLI macOS (Intel)
++    runs-on: macos-15-intel
++    needs: check
++    steps:
++      - uses: actions/checkout@v7
++      - name: Install Rust
++        uses: dtolnay/rust-toolchain@stable
++      - name: Cache cargo target
++        uses: actions/cache@v6
++        with:
++          path: ${{ runner.temp }}/cargo-target
++          key: ${{ runner.os }}-release-cli-${{ hashFiles('**/Cargo.lock') }}
++          restore-keys: |
++            ${{ runner.os }}-release-cli-
++      - name: Build release binaries
++        run: cargo build --release -p shell-cli -p shell-server
++      - name: Upload artifact
++        uses: actions/upload-artifact@v7
++        with:
++          name: cli-macos-x86_64
++          path: |
++            ${{ runner.temp }}/cargo-target/release/kernext
++            ${{ runner.temp }}/cargo-target/release/kernext-server
++          if-no-files-found: error
++          retention-days: 30
++
++  desktop-windows:
++    name: Desktop bundle Windows
++    runs-on: windows-latest
++    needs: check
++    steps:
++      - uses: actions/checkout@v7
++      - name: Install pnpm
++        uses: pnpm/action-setup@v6
++      - name: Install Node
++        uses: actions/setup-node@v7
++        with:
++          node-version: 24
++          cache: pnpm
++      - name: Install Rust
++        uses: dtolnay/rust-toolchain@stable
++      - name: Cache cargo target
++        uses: actions/cache@v6
+         with:
+-          path: /home/runner/.cache/terminal-target
+-          key: ${{ runner.os }}-cargo-musl-${{ hashFiles('**/Cargo.lock') }}
++          path: ${{ runner.temp }}/cargo-target
++          key: ${{ runner.os }}-release-desktop-${{ hashFiles('**/Cargo.lock') }}
+           restore-keys: |
+-            ${{ runner.os }}-cargo-musl-
+-      - name: Build musl
+-        run: cargo build --workspace --release --target x86_64-unknown-linux-musl
++            ${{ runner.os }}-release-desktop-
++      - name: Install web dependencies
++        run: pnpm install --frozen-lockfile
++      - name: Build desktop bundle
++        run: pnpm desktop:build
+       - name: Upload artifact
+-        uses: actions/upload-artifact@v4
++        uses: actions/upload-artifact@v7
+         with:
+-          name: kernext-x86_64-unknown-linux-musl
+-          path: /home/runner/.cache/terminal-target/x86_64-unknown-linux-musl/release/kernext
++          name: desktop-bundle-windows
++          path: ${{ runner.temp }}/cargo-target/release/bundle
++          if-no-files-found: error
+           retention-days: 30
+ 
+-  build-linux-gnu:
+-    name: Build Linux GNU (x86_64)
++  desktop-linux:
++    name: Desktop bundle Linux
+     runs-on: ubuntu-latest
+     needs: check
+     steps:
+-      - uses: actions/checkout@v4
++      - uses: actions/checkout@v7
++      - name: Install Linux system dependencies
++        run: |
++          sudo apt-get update
++          sudo apt-get install -y \
++            libwebkit2gtk-4.1-dev \
++            build-essential \
++            curl \
++            wget \
++            file \
++            libxdo-dev \
++            libayatana-appindicator3-dev \
++            librsvg2-dev
++      - name: Install pnpm
++        uses: pnpm/action-setup@v6
++      - name: Install Node
++        uses: actions/setup-node@v7
++        with:
++          node-version: 24
++          cache: pnpm
+       - name: Install Rust
+         uses: dtolnay/rust-toolchain@stable
+       - name: Cache cargo target
+-        uses: actions/cache@v4
++        uses: actions/cache@v6
+         with:
+-          path: /home/runner/.cache/terminal-target
+-          key: ${{ runner.os }}-cargo-gnu-${{ hashFiles('**/Cargo.lock') }}
++          path: ${{ runner.temp }}/cargo-target
++          key: ${{ runner.os }}-release-desktop-${{ hashFiles('**/Cargo.lock') }}
+           restore-keys: |
+-            ${{ runner.os }}-cargo-gnu-
+-      - name: Build GNU
+-        run: cargo build --workspace --release
++            ${{ runner.os }}-release-desktop-
++      - name: Install web dependencies
++        run: pnpm install --frozen-lockfile
++      - name: Build desktop bundle
++        run: pnpm desktop:build
+       - name: Upload artifact
+-        uses: actions/upload-artifact@v4
++        uses: actions/upload-artifact@v7
+         with:
+-          name: kernext-x86_64-unknown-linux-gnu
+-          path: /home/runner/.cache/terminal-target/release/kernext
++          name: desktop-bundle-linux
++          path: ${{ runner.temp }}/cargo-target/release/bundle
++          if-no-files-found: error
+           retention-days: 30
+ 
+-  create-release:
+-    name: Create Release
++  desktop-macos-arm64:
++    name: Desktop bundle macOS (Apple Silicon)
++    runs-on: macos-latest
++    needs: check
++    steps:
++      - uses: actions/checkout@v7
++      - name: Install pnpm
++        uses: pnpm/action-setup@v6
++      - name: Install Node
++        uses: actions/setup-node@v7
++        with:
++          node-version: 24
++          cache: pnpm
++      - name: Install Rust
++        uses: dtolnay/rust-toolchain@stable
++      - name: Cache cargo target
++        uses: actions/cache@v6
++        with:
++          path: ${{ runner.temp }}/cargo-target
++          key: ${{ runner.os }}-release-desktop-${{ hashFiles('**/Cargo.lock') }}
++          restore-keys: |
++            ${{ runner.os }}-release-desktop-
++      - name: Install web dependencies
++        run: pnpm install --frozen-lockfile
++      - name: Build desktop bundle
++        run: pnpm desktop:build
++      - name: Upload artifact
++        uses: actions/upload-artifact@v7
++        with:
++          name: desktop-bundle-macos-aarch64
++          path: ${{ runner.temp }}/cargo-target/release/bundle
++          if-no-files-found: error
++          retention-days: 30
++
++  desktop-macos-intel:
++    name: Desktop bundle macOS (Intel)
++    runs-on: macos-15-intel
++    needs: check
++    steps:
++      - uses: actions/checkout@v7
++      - name: Install pnpm
++        uses: pnpm/action-setup@v6
++      - name: Install Node
++        uses: actions/setup-node@v7
++        with:
++          node-version: 24
++          cache: pnpm
++      - name: Install Rust
++        uses: dtolnay/rust-toolchain@stable
++      - name: Cache cargo target
++        uses: actions/cache@v6
++        with:
++          path: ${{ runner.temp }}/cargo-target
++          key: ${{ runner.os }}-release-desktop-${{ hashFiles('**/Cargo.lock') }}
++          restore-keys: |
++            ${{ runner.os }}-release-desktop-
++      - name: Install web dependencies
++        run: pnpm install --frozen-lockfile
++      - name: Build desktop bundle
++        run: pnpm desktop:build
++      - name: Upload artifact
++        uses: actions/upload-artifact@v7
++        with:
++          name: desktop-bundle-macos-x86_64
++          path: ${{ runner.temp }}/cargo-target/release/bundle
++          if-no-files-found: error
++          retention-days: 30
++
++  release:
++    name: Package and create draft release
+     runs-on: ubuntu-latest
+-    needs: [build-linux-musl, build-linux-gnu]
++    needs:
++      - cli-windows
++      - cli-linux-gnu
++      - cli-linux-musl
++      - cli-macos-arm64
++      - cli-macos-intel
++      - desktop-windows
++      - desktop-linux
++      - desktop-macos-arm64
++      - desktop-macos-intel
+     if: github.event.inputs.version != ''
++    permissions:
++      contents: write
+     steps:
+-      - uses: actions/checkout@v4
+-      - name: Download Linux GNU artifact
+-        uses: actions/download-artifact@v4
+-        with:
+-          name: kernext-x86_64-unknown-linux-gnu
+-          path: artifacts/linux-gnu
+-      - name: Download Linux musl artifact
+-        uses: actions/download-artifact@v4
+-        with:
+-          name: kernext-x86_64-unknown-linux-musl
+-          path: artifacts/linux-musl
+-      - name: Create release archives
++      - uses: actions/checkout@v7
++      - name: Download CLI artifacts
++        uses: actions/download-artifact@v7
++        with:
++          path: artifacts
++          pattern: cli-*
++      - name: Download desktop artifacts
++        uses: actions/download-artifact@v7
++        with:
++          path: artifacts
++          pattern: desktop-*
++      - name: Create archives and checksums
+         run: |
+           mkdir -p release
+-          cd artifacts/linux-gnu
+-          tar -czf ../../release/kernext-x86_64-unknown-linux-gnu.tar.gz kernext
+-          cd ../../release
+-          sha256sum kernext-x86_64-unknown-linux-gnu.tar.gz > kernext-x86_64-unknown-linux-gnu.tar.gz.sha256
+-          cd ../artifacts/linux-musl
+-          tar -czf ../../release/kernext-x86_64-unknown-linux-musl.tar.gz kernext
+-          cd ../../release
+-          sha256sum kernext-x86_64-unknown-linux-musl.tar.gz > kernext-x86_64-unknown-linux-musl.tar.gz.sha256
+-      - name: Create GitHub Release
+-        uses: softprops/action-gh-release@v1
+-        if: github.event.inputs.version != ''
+-        with:
+-          tag_name: ${{ github.event.inputs.tag || github.event.inputs.version }}
+-          name: KERNEXT ${{ github.event.inputs.version }}
+-          files: |
+-            release/kernext-x86_64-unknown-linux-gnu.tar.gz
+-            release/kernext-x86_64-unknown-linux-gnu.tar.gz.sha256
+-            release/kernext-x86_64-unknown-linux-musl.tar.gz
+-            release/kernext-x86_64-unknown-linux-musl.tar.gz.sha256
+-          draft: true
+-          generate_release_notes: true
++
++          # CLI archives, one per platform.
++          tar -czf release/kernext-x86_64-unknown-linux-gnu.tar.gz \
++            -C artifacts/cli-linux-x86_64-gnu kernext kernext-server
++          tar -czf release/kernext-x86_64-unknown-linux-musl.tar.gz \
++            -C artifacts/cli-linux-x86_64-musl kernext kernext-server
++          tar -czf release/kernext-aarch64-apple-darwin.tar.gz \
++            -C artifacts/cli-macos-aarch64 kernext kernext-server
++          tar -czf release/kernext-x86_64-apple-darwin.tar.gz \
++            -C artifacts/cli-macos-x86_64 kernext kernext-server
++          zip -j release/kernext-x86_64-pc-windows-gnu.zip \
++            artifacts/cli-windows-x86_64/kernext.exe \
++            artifacts/cli-windows-x86_64/kernext-server.exe
++
++          # Desktop bundles, renamed with a clear platform prefix.
++          for platform in linux windows macos-aarch64 macos-x86_64; do
++            for f in $(find "artifacts/desktop-bundle-${platform}" -type f); do
++              cp "$f" "release/kernext-desktop-${platform}-$(basename "$f")"
++            done
++          done
++
++          if [ -z "$(find release -maxdepth 1 -type f ! -name '*.sha256')" ]; then
++            echo "::error::No release files were assembled."
++            exit 1
++          fi
++
++          # SHA-256 checksum for every artifact.
++          find release -maxdepth 1 -type f ! -name '*.sha256' -print0 |
++            while IFS= read -r -d '' f; do
++              (cd release && sha256sum "$(basename "$f")" > "$(basename "$f").sha256")
++            done
++      - name: Create draft GitHub Release
+         env:
+-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
++          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
++          VERSION: ${{ needs.check.outputs.version }}
++        run: |
++          TAG="${{ github.event.inputs.tag || github.event.inputs.version }}"
++          gh release create "$TAG" release/* \
++            --draft \
++            --title "KERNEXT v${VERSION}" \
++            --generate-notes
+diff --git a/AGENTS.md b/AGENTS.md
+index 257b23b..b7b18cf 100644
+--- a/AGENTS.md
++++ b/AGENTS.md
+@@ -2,9 +2,12 @@
+ 
+ ## Project
+ 
+-KERNEXT is a custom Rust CLI shell. The CLI phase is implemented, including
+-branding, startup presentation, genuine `clear`/Ctrl+L, and config loading.
+-Do not start KERNEXT Web or Desktop work unless explicitly asked.
++KERNEXT is a custom Rust CLI shell with three implemented surfaces that share
++one engine: the CLI (`apps/shell-cli`), the local web server and React front
++end (`apps/shell-server`, `apps/web`), and the Tauri 2 desktop application
++(`apps/desktop`). The CLI phase is implemented, including branding, startup
++presentation, genuine `clear`/Ctrl+L, and config loading. Do not start new
++KERNEXT Web or Desktop feature work unless explicitly asked.
+ 
+ Official identity:
+ 
+@@ -25,15 +28,21 @@ Pipelines and redirections are implemented natively; keep them that way.
+ Workspace members:
+ 
+ - `apps/shell-cli` — binary package `shell-cli`; executable name is `kernext`
++- `apps/shell-server` — local Axum server (HTTP sessions, engine and PTY
++  WebSockets)
++- `apps/web` — React + Vite + Tailwind front end shared by web and desktop
++- `apps/desktop` — Tauri 2 desktop application (crate `shell-desktop`,
++  binary `kernext-desktop`); `apps/desktop/src-tauri` is the crate root
+ - `crates/shell-core` — branding constants, lexer, parser, AST, spans, shared errors
+ - `crates/shell-builtins` — native command registry, AST evaluator, built-ins,
+   pipeline engine, external process executor, variable expansion, background syntax
+ - `crates/shell-runtime` — `Session` (cwd, config, lifecycle, platform, variables, functions)
+ - `crates/shell-line-editor` — Reedline integration behind `LineReader`, clear helpers
+ - `crates/shell-config` — TOML configuration model
+-- `crates/shell-api` — serializable session/terminal API contracts (not yet wired to a server)
++- `crates/shell-api` — serializable session/terminal API contracts shared by
++  the web server and the desktop runtime
+ - `installers/` — Linux, macOS, Windows installation scripts
+-- `docs/` — branding and architecture documentation
++- `docs/` — branding, architecture, desktop, and status documentation
+ 
+ Execution flow is:
+ 
+@@ -230,6 +239,27 @@ without explicit permission.
+ A source tree on vfat can still be inspected, edited, diffed, formatted, and
+ used by `cargo metadata --no-deps`.
+ 
++## Desktop build notes (Windows GNU)
++
++- `apps/desktop/src-tauri/build.rs` must keep shadowing the MinGW
++  `default-manifest.o` on `*-pc-windows-gnu` targets. Some MinGW-w64
++  distributions link a default manifest without the Common Controls v6
++  dependency; GNU ld keeps it over Tauri's manifest and the binary dies at
++  startup with `STATUS_ENTRYPOINT_NOT_FOUND` (`TaskDialogIndirect` missing
++  from comctl32 v5). The build script compiles a replacement manifest object
++  with `windres` and prepends its directory through
++  `cargo:rustc-link-arg=-B<out-dir>\` so the GCC endfile spec picks it. Do not
++  remove this or "simplify" it back to plain `tauri_build::build()` on GNU.
++- On GNU targets the script uses
++  `WindowsAttributes::new_without_app_manifest()`; MSVC and non-Windows
++  targets keep Tauri's default manifest. See `docs/DESKTOP.md`.
++- `tauri.conf.json` `frontendDist` is `../../web/dist` — Tauri resolves it
++  relative to `src-tauri`, not the package root.
++- Keep the Rust `tauri` crate and the npm `@tauri-apps/api` on the same
++  major/minor version, or `tauri build` aborts with a version-mismatch error.
++- Desktop commands execute through the local Rust runtime only — never the
++  public web server, never a JavaScript simulation of the shell.
++
+ ## Commands
+ 
+ Run from the workspace root of the buildable checkout.
+@@ -244,20 +274,51 @@ cargo clippy --workspace --all-targets -- -D warnings
+ cargo run -p shell-cli
+ ```
+ 
++Front end and desktop (pnpm only; `package.json` pins `pnpm@11.25.0`):
++
++```bash
++pnpm install --frozen-lockfile
++pnpm typecheck          # web typecheck (alias of web:typecheck)
++pnpm test               # web Vitest suite (alias of web:test)
++pnpm build              # web production build (alias of web:build)
++pnpm web:dev            # vite dev server (http://127.0.0.1:5173)
++pnpm desktop:dev        # tauri dev (web + desktop window)
++pnpm desktop:build      # tauri build (production bundle)
++cargo run -p shell-server   # local web API server
++```
++
++The root `desktop:*` scripts delegate to the `dev`/`build` scripts inside
++`apps/desktop/package.json`. `pnpm --filter <pkg> <bin>` does not work — it
++only runs package scripts — so do not change them back to
++`pnpm --filter @kernext/desktop tauri …`.
++
+ Focused tests:
+ 
+ ```bash
+ cargo test -p shell-builtins --test external
++cargo test -p shell-builtins --test external_tools
+ cargo test -p shell-builtins --test builtins
+ cargo test -p shell-builtins --test builtins paths_containing_spaces
+ cargo test -p shell-builtins --test pipeline
+ cargo test -p shell-core --test parser
+ cargo test -p shell-cli --test repl
++cargo test -p shell-server
++cargo test -p shell-desktop
+ ```
+ 
+ External-process and pipeline tests use the test binary itself as a portable
+ helper; they do not require `python`, `git`, `sort`, `grep`, or any other
+-particular program.
++particular program. `external_tools.rs` checks common developer tools
++(`git`, `cargo`, `rustc`, `node`, `pnpm`, `python`, `curl`, `code`,
++`opencode`) through the full engine and skips any that are not installed.
++
++CI lives in `.github/workflows/ci.yml` (fmt, clippy, web job, test matrix
++across Windows x64, Linux x64, macOS Apple Silicon + Intel, and a desktop
++bundling matrix). Releases live in `.github/workflows/release.yaml`
++(`workflow_dispatch` only, draft-only; CLI archives + desktop bundles +
++SHA-256 checksums per artifact). Do not trigger the release workflow without
++explicit authorization, and do not claim a workflow passed unless its run
++completed.
+ 
+ The interactive shell requires a real TTY. Piping input directly into
+ `cargo run` is rejected because KERNEXT is interactive. Use a terminal, or
+@@ -293,7 +354,7 @@ The interactive shell requires a real TTY. Piping input directly into
+ - Assignment evaluation: `crates/shell-builtins/src/eval.rs` (`run_assignment`).
+ - Built-ins: `crates/shell-builtins/src/commands.rs` (`export_builtin`,
+   `unset_builtin`, `env_builtin`, `set_builtin`).
+-- Registry: `crates/shell-builtins/src/registry.rs` (53 commands).
++- Registry: `crates/shell-builtins/src/registry.rs` (56 commands).
+ - Lexer tokens: `Token::Equals`, `Token::SpecialVariable`,
+   `SpecialVariable::{LastStatus, ProcessId}`.
+ - AST: `Expression::Assignment`, `WordPart::Special`, variable-name helpers in
+@@ -384,11 +445,12 @@ The interactive shell requires a real TTY. Piping input directly into
+ - Registry and command metadata: `crates/shell-builtins/src/registry.rs`.
+ - Implementations: `crates/shell-builtins/src/commands.rs`.
+ - AST evaluator: `crates/shell-builtins/src/eval.rs`.
+-- 53 commands: help, pwd, cd, ls, tree, find, stat, mkdir, touch, cat, head,
++- 56 commands: help, pwd, cd, ls, tree, find, stat, mkdir, touch, cat, head,
+   tail, wc, grep, sort, uniq, echo, print, input, len, type, str, int, float,
+   bool, cp, mv, rm, which, basename, dirname, realpath, clear, history, jobs,
+   wait, kill, fg, bg, run, test, `[`, expr, sleep, true, false, whoami, date,
+-  version, exit, export, unset, env, set.
++  host, sysinfo, version, exit, export, unset, env, set. `[` is the bracket
++  alias of `test` and requires a closing `]`.
+ - `print`/`input`/`len`/`type`/`str`/`int`/`float`/`bool` are the native
+   scripting helpers. Value commands print a bare value (no trailing newline,
+   like `expr`/`wc`); `print` behaves like `echo`. `input <variable>` reads one
+@@ -417,8 +479,8 @@ The interactive shell requires a real TTY. Piping input directly into
+ - Filesystem tests use isolated temp dirs and call
+   `Session::set_working_directory`; never mutate the process cwd in tests.
+ - Add focused tests next to the behavior: unit tests in `src/`, integration
+-  tests in `crates/shell-builtins/tests/`, `crates/shell-core/tests/`, and
+-  `apps/shell-cli/tests/`.
++  tests in `crates/shell-builtins/tests/`, `crates/shell-core/tests/`,
++  `apps/shell-cli/tests/`, and `apps/shell-server/tests/`.
+ - External-process tests live in `crates/shell-builtins/tests/external.rs` and
+   use the test binary itself as a helper via `CUSTOM_SHELL_TEST_HELPER`. Do not
+   replace them with tests that require a particular external program.
+@@ -430,11 +492,13 @@ The interactive shell requires a real TTY. Piping input directly into
+ - Startup tests live in `apps/shell-cli/src/startup.rs`; clear/Ctrl+L tests live
+   in `apps/shell-cli/tests/repl.rs` and
+   `crates/shell-line-editor/src/editor.rs`.
+-- The full suite currently has 414 tests on Windows, including 20 in
+-  `crates/shell-builtins/tests/windows_scripts.rs`. The Unix baseline was 399
+-  before those Windows-only tests were added (Unix runs signal/abort tests
+-  instead of the Windows launcher tests); do not weaken or delete tests to make
+-  a build pass.
++- The full suite currently has 469 tests on Windows (467 unit/integration plus
++  2 `shell-core` doc-tests), including 20 in
++  `crates/shell-builtins/tests/windows_scripts.rs`, 2 in `external_tools.rs`,
++  16 in `shell-desktop`, and 17 in `shell-server` (unit, `api`, `consistency`,
++  and `ws` integration suites). Unix runs
++  signal/abort tests instead of the Windows launcher and ConPTY suites; do not
++  weaken or delete tests to make a build pass.
+ 
+ ## Git and uncommitted work
+ 
+@@ -449,6 +513,12 @@ repo.
+ 
+ ## Documentation
+ 
+-Keep `README.md`, `AGENTS.md`, `RELEASE_NOTES.md`, `docs/BRANDING.md`, and
+-`docs/ARCHITECTURE.md` in sync with behavior. Trust the source and tests if docs
+-disagree. Clearly label Web and Desktop as future plans, never as implemented.
++Keep `README.md`, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`,
++`RELEASE_NOTES.md`, `docs/BRANDING.md`, `docs/ARCHITECTURE.md`,
++`docs/COMMANDS.md`, `docs/DESKTOP.md`, `docs/SECURITY.md`,
++`docs/DEPLOYMENT.md`, `docs/TROUBLESHOOTING.md`, and
++`docs/PROJECT_STATUS.md` in sync with behavior. Trust the source and tests if
++docs disagree. Web and Desktop are implemented surfaces now; describe their
++actual behavior and their verification state rather than calling them future
++plans. The built-in count in prose must always match
++`crates/shell-builtins/src/registry.rs` (`DEFAULT_BUILTINS`).
+diff --git a/CLAUDE.md b/CLAUDE.md
+index d79d3a0..3cce5af 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -2,7 +2,10 @@
+ 
+ This file provides guidance to Claude Code (claude.ai/code) when working in this repository.
+ 
+-KERNEXT is a custom Rust CLI shell. `AGENTS.md` is the full project constitution — it
++KERNEXT is a custom Rust CLI shell with three implemented surfaces sharing one
++engine: the CLI (`apps/shell-cli`), the local web server and React front end
++(`apps/shell-server`, `apps/web`), and the Tauri 2 desktop application
++(`apps/desktop`). `AGENTS.md` is the full project constitution — it
+ overrides this file when they disagree. This file is the quick-reference version:
+ how to build, where the pieces live, and the non-obvious constraints.
+ 
+@@ -10,11 +13,12 @@ how to build, where the pieces live, and the non-obvious constraints.
+ 
+ - Product: **KERNEXT**. Tagline: **The Next Core of Computing.**
+   Values: **OPEN • POWERFUL • INDEPENDENT**. Support phrase: **Build. Execute. Innovate.**
+-- Prompt: `kernext ~ $ `. Executable: `kernext`.
++- Prompt: `kernext ~ $ `. Executable: `kernext` (desktop: `kernext-desktop`).
+ - Internal crate/package names stay `shell-*`. Never rename them to match the brand.
+ - Branding constants live in `crates/shell-core/src/lib.rs` (`SHELL_NAME`,
+   `PRODUCT_NAME`, `TAGLINE`, `VALUES`, `MOTTO`, `VERSION`). `SHELL_NAME = "kernext"`.
+-- The CLI is text-only. No graphical splash — that belongs to future Web/Desktop.
++- The CLI is text-only. The graphical splash and mountain wallpaper belong to
++  the Web and Desktop surfaces in `apps/web` / `apps/desktop`.
+ 
+ ## Build constraint (removable drive)
+ 
+@@ -30,15 +34,27 @@ cargo test --workspace
+ cargo clippy --workspace --all-targets -- -D warnings
+ cargo fmt --all -- --check
+ cargo run -p shell-cli
++
++pnpm install --frozen-lockfile
++pnpm typecheck          # web typecheck (alias of web:typecheck)
++pnpm test               # web Vitest suite (alias of web:test)
++pnpm build              # web production build (alias of web:build)
++pnpm web:dev            # vite dev server (http://127.0.0.1:5173)
++pnpm desktop:dev        # tauri dev
++pnpm desktop:build      # tauri build
++cargo run -p shell-server   # local web API server
+ ```
+ 
+ Run a single test or test file:
+ 
+ ```bash
+ cargo test -p shell-builtins --test pipeline
+-cargo test -p shell-builtins --test pipeline paths_containing_spaces
++cargo test -p shell-builtins --test external_tools
++cargo test -p shell-builtins --test builtins paths_containing_spaces
+ cargo test -p shell-core --test parser
+ cargo test -p shell-cli --test repl
++cargo test -p shell-server
++cargo test -p shell-desktop
+ ```
+ 
+ The interactive shell needs a real TTY. Piping input into `cargo run` is rejected;
+@@ -59,19 +75,29 @@ Workspace members:
+ 
+ - `apps/shell-cli` — binary `shell-cli`, executable `kernext`. `cli.rs` (arg parsing,
+   mode resolution), `repl.rs` (Reedline loop), `startup.rs` (presentation only — never
+-  parses or evaluates), `main.rs`.
++  parses or evaluates), `worker.rs` (embedded worker used by desktop PTY sessions),
++  `main.rs`.
++- `apps/shell-server` — local Axum server: HTTP sessions, engine and PTY WebSockets.
++- `apps/web` — React + Vite + Tailwind front end shared by web and desktop.
++- `apps/desktop` — Tauri 2 application (crate `shell-desktop`, binary
++  `kernext-desktop`); crate root is `apps/desktop/src-tauri`.
+ - `crates/shell-core` — `lib.rs` (branding), `lexer/`, `parser/`. Hand-written lexer
+   and parser; no pest/nom/lalrpop.
+-- `crates/shell-builtins` — `registry.rs` (53 commands + metadata), `commands.rs`
++- `crates/shell-builtins` — `registry.rs` (56 commands + metadata), `commands.rs`
+   (implementations), `eval.rs` (AST evaluator, control flow, background jobs),
+-  `pipeline.rs` (engine), `process.rs` (external executor), `expand.rs`, `outcome.rs`.
++  `pipeline.rs` (engine), `process.rs` (external executor), `expand.rs`, `outcome.rs`,
++  `pty.rs` (ConPTY/openpty pseudoterminals).
+ - `crates/shell-runtime` — `Session` (cwd, config, lifecycle, platform, variables,
+   functions), `variables.rs`, `history.rs`, `jobs.rs`.
+ - `crates/shell-line-editor` — Reedline behind `LineReader`; `clear_terminal` /
+   `clear_terminal_if` helpers in `editor.rs`.
+ - `crates/shell-config` — TOML config model.
++- `crates/shell-api` — serializable session/terminal contracts shared by server and
++  desktop.
+ - `installers/` — Linux, macOS, Windows scripts.
+-- `docs/` — `BRANDING.md`, `ARCHITECTURE.md`.
++- `docs/` — `BRANDING.md`, `ARCHITECTURE.md`, `COMMANDS.md`, `DESKTOP.md`,
++  `DEPLOYMENT.md`, `PROJECT_STATUS.md`, `SECURITY.md`, `TROUBLESHOOTING.md`;
++  plus root `CONTRIBUTING.md`.
+ 
+ ## Key invariants
+ 
+@@ -90,7 +116,16 @@ Workspace members:
+   exit code, 1 for built-in failure, 2 for syntax/lex errors, 128+signal for signal
+   termination.
+ - **Background `&`** spawns real detached work tracked by a job table
+-  (`crates/shell-runtime/src/jobs.py`). Job IDs are shell job numbers, never OS PIDs.
++  (`crates/shell-runtime/src/jobs.rs`). Job IDs are shell job numbers, never OS PIDs.
++- **Desktop executes locally.** Desktop commands run through the local Tauri
++  Rust runtime only — never the public web server, never a JavaScript shell
++  simulation. `apps/desktop/src-tauri/build.rs` must keep shadowing the MinGW
++  `default-manifest.o` on `*-pc-windows-gnu` (see `docs/DESKTOP.md`); removing
++  it makes the binary die at startup with `STATUS_ENTRYPOINT_NOT_FOUND`.
++- **Root pnpm scripts delegate.** `desktop:dev`/`desktop:build` call the
++  `dev`/`build` scripts in `apps/desktop/package.json`. `pnpm --filter <pkg>
++  <bin>` only runs package scripts, so `--filter @kernext/desktop tauri …`
++  fails; do not reintroduce it.
+ 
+ ## Git discipline
+ 
+@@ -105,6 +140,9 @@ On this Windows workstation the canonical checkout is
+ 
+ ## Docs
+ 
+-`README.md`, `AGENTS.md`, `RELEASE_NOTES.md`, `docs/BRANDING.md`, and
+-`docs/ARCHITECTURE.md` should stay in sync with behavior. Trust the source and tests
++`README.md`, `AGENTS.md`, `RELEASE_NOTES.md`, `CONTRIBUTING.md`,
++`docs/BRANDING.md`, `docs/ARCHITECTURE.md`, `docs/COMMANDS.md`,
++`docs/DESKTOP.md`, `docs/SECURITY.md`, `docs/DEPLOYMENT.md`,
++`docs/TROUBLESHOOTING.md`, and `docs/PROJECT_STATUS.md`
++should stay in sync with behavior. Trust the source and tests
+ over the docs when they disagree.
+\ No newline at end of file
+diff --git a/Cargo.toml b/Cargo.toml
+index 40bba88..b8b6dc2 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -3,6 +3,7 @@ resolver = "3"
+ members = [
+     "apps/shell-cli",
+     "apps/shell-server",
++    "apps/desktop/src-tauri",
+     "crates/shell-builtins",
+     "crates/shell-config",
+     "crates/shell-core",
+@@ -25,6 +26,9 @@ futures-util = "0.3"
+ reedline = "0.49"
+ serde = { version = "1.0", features = ["derive"] }
+ serde_json = "1"
++tauri = { version = "2", features = [] }
++tauri-build = { version = "2", features = [] }
++tauri-plugin-opener = "2"
+ tokio = { version = "1", features = ["full"] }
+ toml = "0.9"
+ tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+diff --git a/README.md b/README.md
+index e5acd86..3690996 100644
+--- a/README.md
++++ b/README.md
+@@ -8,6 +8,15 @@ It runs inside an existing terminal and contains its own lexer, parser, AST,
+ command dispatcher, built-in commands, and external process executor. It is not
+ a wrapper around Bash, PowerShell, or CMD.
+ 
++The same Rust engine now powers three surfaces that share one codebase:
++
++- **KERNEXT CLI** — the reference terminal shell (`kernext`).
++- **KERNEXT Web** — a React + Vite front end served by a local Axum server with
++  engine-backed sessions and real pseudoterminal (ConPTY/openpty) streaming.
++- **KERNEXT Desktop** — a native Tauri 2 application reusing the web front end
++  while executing everything through a local Rust runtime, never a browser
++  simulation.
++
+ > **Status:** The KERNEXT CLI is implemented. It parses input with its own lexer
+ > and parser, runs native built-ins directly, launches non-built-in commands as
+ > external processes through `std::process::Command`, connects pipeline stages
+@@ -15,10 +24,15 @@ a wrapper around Bash, PowerShell, or CMD.
+ > evaluates `&&`, `||`, and `;`. Native variable assignment, expansion,
+ > environment management, loops, conditionals, functions, `return`, `break`, and
+ > `continue` are implemented, and configuration is loaded at startup.
+-> Background `&` now starts real detached work tracked by a job table, and
+-> `jobs`, `wait`, `kill`, `fg`, and `bg` operate on shell job numbers. Signal
+-> handling and process-group ownership are still incomplete. See
+-> [Not implemented yet](#not-implemented-yet).
++> Background `&` starts real detached work tracked by a job table, and `jobs`,
++> `wait`, `kill`, `fg`, and `bg` operate on shell job numbers.
++>
++> The Web server and Desktop application are implemented on Windows and verified
++> through their automated suites; interactive GUI verification on Linux and
++> macOS hosts is still pending. Signal handling and process-group ownership in
++> the CLI remain incomplete. See
++> [Not implemented yet](#not-implemented-yet) and
++> [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md).
+ 
+ ## Brand
+ 
+@@ -35,9 +49,9 @@ The internal Rust crates and package names (`shell-cli`, `shell-core`,
+ `shell-builtins`, and so on) remain unchanged so the engine stays stable and
+ reusable. Only the user-facing product name and executable are KERNEXT.
+ 
+-The CLI is intentionally text-only. A graphical splash, mountain wallpaper, and
+-richer visual surfaces belong to the planned Web and Desktop products, not to
+-this terminal binary.
++The CLI is intentionally text-only. The graphical splash, mountain wallpaper,
++and richer visual surfaces belong to the Web and Desktop products, which now
++exist under `apps/web` and `apps/desktop`.
+ 
+ ## Overview
+ 
+@@ -50,7 +64,7 @@ The shell provides:
+ - Home/End and Page Up/Page Down navigation on Linux, macOS, and Windows,
+ - a custom lexer/tokenizer with quote metadata and source spans,
+ - a custom recursive-descent parser and AST,
+-- 53 native built-in commands,
++- 56 native built-in commands,
+ - direct external process execution using the system `PATH`,
+ - pipelines connected by real operating-system pipes,
+ - input, output, append, and error redirections (`<`, `>`, `>>`, `2>`, `2>>`),
+@@ -86,6 +100,8 @@ platform-specific code isolated:
+ - Rust 1.85 or newer (Rust 2024 edition).
+ - A working platform linker (a C toolchain on Linux/macOS, MSVC Build Tools or
+   MinGW-w64 on Windows).
++- Node.js and pnpm 11+ for the Web front end and Desktop shell
++  (`package.json` pins `pnpm@11.25.0` via `packageManager`).
+ - A real terminal for the interactive shell. Piping input into KERNEXT reports
+   that standard input is not a terminal.
+ 
+@@ -99,6 +115,36 @@ cargo run -p shell-cli
+ The binary is `kernext` (`kernext.exe` on Windows). `--help` and `--version`
+ are handled by Clap without starting a session.
+ 
++### KERNEXT Web
++
++```sh
++pnpm install --frozen-lockfile
++pnpm web:dev          # vite dev server on http://127.0.0.1:5173
++cargo run -p shell-server   # local API server (default http://127.0.0.1:7878)
++```
++
++The browser terminal talks to the server over
++`/api/v1/sessions/{id}/ws` (engine sessions) and `/api/v1/pty`
++(real pseudoterminal). The web front end builds with:
++
++```sh
++pnpm web:typecheck
++pnpm web:build
++```
++
++### KERNEXT Desktop
++
++```sh
++pnpm desktop:dev      # tauri dev: vite + debug desktop window
++pnpm desktop:build    # tauri build: production bundle
++```
++
++The desktop application embeds the same React front end and executes commands
++through the local Tauri runtime only — it never calls the public web server and
++never simulates the shell in JavaScript. See
++[`docs/DESKTOP.md`](docs/DESKTOP.md) for configuration, architecture, and the
++Windows MinGW manifest handling.
++
+ ### Startup flags
+ 
+ ```text
+@@ -127,10 +173,14 @@ automatically for piped output, `NO_COLOR`, and `TERM=dumb`. Set
+ `KERNEXT_VERSION` (or pass `-Version` on Windows) to install a different
+ release.
+ 
+-The release workflow currently publishes Linux GNU and musl archives. The macOS
+-and Windows installers expect matching archives, which must be produced by a
+-host with the corresponding toolchain until those CI jobs are added.
+-
++The `.github/workflows/release.yaml` workflow builds CLI archives for Linux
++(GNU and musl), Windows, and macOS (Apple Silicon and Intel), plus desktop
++bundles per platform, and attaches a SHA-256 checksum for every artifact. It
++creates only a **draft** GitHub Release, is triggered manually through
++`workflow_dispatch`, and never publishes or tags on its own. macOS and Windows
++installers expect matching archives; until a release is actually published,
++download from <https://github.com/Trishit6/terminal/releases> or
++[build from source](#build-and-run).
+ ### VFAT / `showexec` mount note
+ 
+ This project lives on a VFAT filesystem mounted with `showexec`.
+@@ -292,6 +342,9 @@ input
+ terminal/
+ ├── Cargo.toml
+ ├── Cargo.lock
++├── package.json               # pnpm workspace scripts (web:*, desktop:*)
++├── pnpm-workspace.yaml
++├── pnpm-lock.yaml
+ ├── README.md
+ ├── AGENTS.md
+ ├── RELEASE_NOTES.md
+@@ -307,7 +360,10 @@ terminal/
+ │   ├── shell-config/       # Typed configuration and TOML persistence
+ │   └── shell-line-editor/  # Reedline integration, prompt, history, clear
+ └── apps/
+-    └── shell-cli/          # Binary entry point, startup, REPL orchestration
++    ├── shell-cli/          # CLI binary entry point, startup, REPL
++    ├── shell-server/       # Local Axum API server (HTTP + WebSocket)
++    ├── web/                # React + Vite front end (web + desktop UI)
++    └── desktop/            # Tauri 2 desktop application (src-tauri)
+ ```
+ 
+ | Crate | Responsibility |
+@@ -318,6 +374,9 @@ terminal/
+ | `shell-config` | Typed `Config`, validation, TOML load/save, default path |
+ | `shell-line-editor` | Reedline wrapper, prompt rendering, history, terminal clearing |
+ | `shell-cli` | Clap arguments, KERNEXT startup, REPL loop, error reporting |
++| `shell-api` | Serializable session/terminal API contracts shared by server and desktop |
++| `shell-server` | Local Axum server: sessions, execution, engine and PTY WebSockets |
++| `shell-desktop` | Tauri 2 runtime: local engine, PTY, filesystem, settings commands |
+ 
+ Dependency direction:
+ 
+@@ -327,12 +386,31 @@ shell-cli ──> shell-builtins ──> shell-runtime ──> shell-config ─
+     │                                └──────────> shell-core
+     ├──────────> shell-line-editor ──> reedline / crossterm
+     └──────────> shell-core
++
++shell-server ──> shell-api ──> shell-builtins ──> shell-runtime ──> shell-core
++shell-desktop ─> shell-server (engine sessions) + shell-cli (embedded worker)
+ ```
+ 
+ The reusable core boundary is `shell-core` + `shell-runtime` +
+-`shell-builtins`. Future Web and Desktop surfaces are intended to call the same
+-lexer, parser, evaluator, and outcome types rather than reimplementing shell
+-semantics. No Web or Desktop code exists yet.
++`shell-builtins`. The Web and Desktop surfaces call the same lexer, parser,
++evaluator, and outcome types rather than reimplementing shell semantics.
++
++### Web and Desktop execution flow
++
++```text
++browser / desktop window
++  -> React front end (apps/web)
++  -> WebSocket (web) OR Tauri invoke IPC (desktop)
++  -> shell-server (web) OR shell-desktop commands (desktop)
++  -> shell-builtins evaluator + pipeline        (engine sessions)
++  -> OR a real PTY (ConPTY / openpty)           (pty sessions)
++```
++
++Desktop commands execute through the local Rust runtime only. The desktop
++application never routes commands through the public web server and never
++simulates the shell in JavaScript. PTY sessions on the desktop spawn this same
++executable with `KERNEXT_DESKTOP_WORKER=1` to run the embedded CLI worker, so
++an interactive terminal is available without shipping a sidecar binary.
+ 
+ ## Command execution
+ 
+@@ -393,6 +471,8 @@ Built-in commands:
+ | `true` / `false` | Returns a fixed exit status. |
+ | `whoami` | Shows the current user name. |
+ | `date` | Shows the local date and time. |
++| `host` | Resolves a hostname to its addresses. |
++| `sysinfo` | Shows system and runtime information. |
+ | `version` | Prints `KERNEXT v<version>`. |
+ | `exit` | Prints a farewell and shuts down. |
+ | `export` | Marks variables for export to child processes. |
+@@ -676,6 +756,8 @@ Special variables:
+   and `return`/`break`/`continue`.
+ - Native scripting helpers: `run script.rsh`, `print`, `input`, `len`, `type`,
+   `str`, `int`, `float`, `bool`, `test`, and `expr`.
++- Host and system introspection: `host` (DNS resolution) and `sysinfo`
++  (platform, architecture, CPU count, process ID, directories, user).
+ - Background jobs with a job table and `jobs`, `wait`, `kill`, `fg`, `bg`.
+ - Persistent history with file-backed storage and credential filtering.
+ - Tab completion for built-ins, executables, paths, and variables.
+@@ -712,10 +794,10 @@ Special variables:
+   pipeline stage.
+ - Built-in `cd` updates the session directory, not the process-wide directory.
+ - Flag/option completion.
+-- macOS and Windows release builds in CI. The installers are present; Linux is
+-  the only target produced by the current workflow.
+-- KERNEXT Web and KERNEXT Desktop. Both are future products and have no code in
+-  this repository.
++- Linux and macOS hosts for the Web and Desktop applications. Both are
++  implemented and tested on Windows; their GUIs still need interactive
++  verification on the other platforms, and macOS bundling requires a macOS
++  host.
+ 
+ ## Configuration
+ 
+@@ -779,21 +861,53 @@ cargo check --workspace --all-targets
+ cargo build --workspace
+ cargo test --workspace
+ cargo clippy --workspace --all-targets -- -D warnings
++pnpm install --frozen-lockfile
++pnpm typecheck
++pnpm test
++pnpm build
+ ```
+ 
++The `pnpm` scripts are defined at the workspace root: `web:dev`, `web:build`,
++`web:preview`, `web:typecheck`, `web:test` (Vitest logic tests for the terminal
++engine), `desktop:dev`, `desktop:build`, plus the short aliases `typecheck`,
++`build`, and `test`.
++
+ Focused test commands:
+ 
+ ```sh
+ cargo test -p shell-builtins --test external
++cargo test -p shell-builtins --test external_tools
+ cargo test -p shell-builtins --test builtins
+ cargo test -p shell-builtins --test pipeline
+ cargo test -p shell-core --test parser
+ cargo test -p shell-cli --test repl
++cargo test -p shell-server
++cargo test -p shell-desktop
+ ```
+ 
+ External-process and pipeline tests use the test binary itself as a portable
+ helper, so they do not depend on `python`, `git`, `sort`, `grep`, or any other
+-particular program being installed.
++particular program being installed. `external_tools.rs` additionally verifies
++the common developer tools (`git`, `cargo`, `rustc`, `node`, `pnpm`, `python`,
++`curl`, `code`, `opencode`) through the full engine and skips any that are not
++installed on the host.
++
++CI (`.github/workflows/ci.yml`) runs fmt, clippy, and tests on Windows x64,
++Linux x64, and macOS (Apple Silicon and Intel), a web job (typecheck, Vitest,
++production build), and a desktop bundling job across the same operating systems.
++
++### Further documentation
++
++- [`docs/COMMANDS.md`](docs/COMMANDS.md) — every built-in command with usage.
++- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — workspace and data flow.
++- [`docs/DESKTOP.md`](docs/DESKTOP.md) — desktop build, packaging, and MinGW
++  manifest handling.
++- [`docs/SECURITY.md`](docs/SECURITY.md) — web terminal security model.
++- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — deploying the web server.
++- [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — common problems.
++- [`docs/BRANDING.md`](docs/BRANDING.md) — logo, palette, and voice.
++- [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to contribute.
++- [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) — per-surface status.
+ 
+ ## Implementation status
+ 
+@@ -819,6 +933,21 @@ particular program being installed.
+   implemented.
+ - **KERNEXT CLI phase:** Brand identity, startup presentation, `clear`/Ctrl+L,
+   and configuration loading.
++- **Web phase 1–4:** Local Axum server (`shell-server`) with session and
++  execution endpoints, engine WebSocket, real ConPTY/openpty WebSocket relay,
++  and the React + Tailwind + shadcn/ui web front end with a cinematic
++  startup animation, marketing site, docs page, and interactive terminal.
++- **Desktop phase 5:** Tauri 2 application (`shell-desktop`) reusing the web
++  front end, with local engine sessions, real PTY sessions running the
++  embedded CLI worker, multi-tab terminal, dashboard, command explorer, file
++  explorer, settings, and about screens, plus a custom title bar and sidebar.
++- **Product integration (Phase 6):** complete public website (home, features,
++  documentation, downloads, about, contact, 404) with a build-time version
++  badge; `host`/`sysinfo` built-ins and a registered `[` alias; a
++  cross-interface consistency suite; external-tool compatibility tests;
++  full documentation set (commands, security, deployment, troubleshooting,
++  contributing); cross-platform CI matrices and a draft-only release workflow
++  with per-artifact checksums; fixed the broken root `desktop:*` pnpm scripts.
+ 
+ ## Roadmap
+ 
+@@ -827,18 +956,28 @@ particular program being installed.
+ - Complete real background jobs and job control.
+ - Add script sourcing, function-call redirections, globbing, script comments,
+   and richer diagnostics.
+-- Verify macOS and Windows release builds.
+-
+-### KERNEXT Web — planned, not implemented
+-
+-A browser-based KERNEXT surface sharing the same parser and evaluator, with a
+-graphical splash and a mountain-wallpaper visual identity. No web code exists
+-yet, and none is started in this phase.
+-
+-### KERNEXT Desktop — planned, not implemented
+-
+-A native desktop application built on the same core engine. The terminal CLI
+-remains text-only. No desktop code exists yet.
++- Run the configured CI/release workflows on GitHub to verify macOS, Windows,
++  and Intel macOS builds for real (they have not been executed yet).
++
++### KERNEXT Web — implemented
++
++The browser surface runs on `apps/shell-server` + `apps/web`: engine-backed
++sessions over a WebSocket, a real pseudoterminal relay (ConPTY on Windows,
++`openpty` on Unix), the cinematic splash and mountain-wallpaper visual
++identity, and the full public website — marketing home page, features,
++documentation, downloads, about, and contact pages. The server is a local
++companion by design: loopback bind, optional bearer token, origin allowlist,
++session caps, and idle cleanup, all documented in
++[`docs/SECURITY.md`](docs/SECURITY.md) with a deployment guide in
++[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
++
++### KERNEXT Desktop — implemented
++
++The native desktop application runs on Tauri 2 (`apps/desktop`) and reuses the
++web front end. It offers a multi-tab interactive terminal (engine or PTY
++modes), dashboard, command explorer, file explorer, sessions, settings, and
++about screens. Remaining work: interactive verification on Linux and macOS,
++macOS bundling on a macOS host, and desktop release automation.
+ 
+ ## License
+ 
+diff --git a/RELEASE_NOTES.md b/RELEASE_NOTES.md
+index dffa74a..0ee35e3 100644
+--- a/RELEASE_NOTES.md
++++ b/RELEASE_NOTES.md
+@@ -32,7 +32,7 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
+ - **Custom lexer/parser**: independent Rust implementation with Unicode support,
+   quote metadata, and source spans.
+ - **AST evaluation**: recursive-descent parser with structured expressions.
+-- **53 native built-ins**, covering filesystem/text operations, environment and
++- **56 native built-ins**, covering filesystem/text operations, environment and
+   scripting helpers, job control, and shell lifecycle commands. See `help` or
+   the registry for the complete list.
+ - **External process execution**: direct `std::process::Command` execution
+@@ -68,18 +68,22 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
+   source.
+ 
+ ### Platform support
+-- **Linux (GNU)**: canonical target; release automation builds it.
+-- **Linux (musl)**: build target configured in CI.
+-- **macOS**: source-compatible; requires a macOS host and SDK to build.
+-- **Windows**: source-compatible and exercised by the test suite; requires a
+-  Windows toolchain to build.
++- **Linux (GNU and musl)**: canonical target; release automation builds both.
++- **macOS (Apple Silicon and Intel)**: source-compatible; the release workflow
++  builds both architectures on GitHub runners. Interactive macOS verification is
++  still open.
++- **Windows x64**: source-compatible and exercised by the test suite; the
++  release workflow builds MSVC artifacts on GitHub runners and the GNU build
++  is verified on the development host.
+ 
+ ### Security
+ - No command injection through a shell wrapper.
+ - No `eval` or dynamic code execution.
+ - Arguments are passed as separate `Command::arg` values.
+ - No `sh -c`, `bash -c`, or `cmd /C` is used.
+-- Windows resolution skips `.bat` and `.cmd` so no implicit shell runs.
++- Windows `.cmd`/`.bat` scripts launch through the system command interpreter
++  (`%COMSPEC%`) with a dedicated, pre-escaped command line; arguments containing
++  `"`, `%`, CR, LF, or NUL are refused rather than rewritten.
+ - The parent process environment is not modified.
+ - Child processes receive inherited plus exported variables, minus hidden names.
+ - Path handling resolves relative names against the session working directory.
+@@ -105,9 +109,9 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
+ - No comments in scripts.
+ - No flag/option completion.
+ - Grouped expressions are not supported as pipeline stages.
+-- Release automation currently builds Linux targets only. The macOS and Windows
+-  installers are provided, but their archives must be produced by a matching
+-  host toolchain until those CI jobs are added.
++- Release workflows are configured for every platform but have not yet been
++  executed on GitHub; they produce draft releases only and never publish on
++  their own.
+ 
+ ---
+ 
+@@ -120,13 +124,49 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
+ - Globbing, pattern matching, and script comments.
+ - Richer diagnostics and completion for command flags.
+ 
+-### KERNEXT Web — planned, not implemented
+-- Browser-based terminal experience sharing the same Rust parser, evaluator,
+-  and session engine.
+-- A graphical splash and mountain-wallpaper identity for the web surface.
+-- No web code exists in this repository yet.
++### KERNEXT Web — implemented
++- Local Axum server (`apps/shell-server`) with engine sessions and a real
++  pseudoterminal relay (ConPTY on Windows, `openpty` on Unix).
++- Loopback bind by default, optional bearer token, fixed browser-origin
++  allowlist, session caps, and idle cleanup — see `docs/SECURITY.md`.
++- React front end (`apps/web`) with the graphical splash and
++  mountain-wallpaper identity, the full public website (home, features,
++  documentation, downloads, about, contact), and an interactive browser
++  terminal. The site's version badge comes from the workspace version at build
++  time.
+ 
+-### KERNEXT Desktop — planned, not implemented
+-- Native desktop shell surface built on the same execution engine.
+-- The current CLI intentionally remains text-only.
+-- No desktop code exists in this repository yet.
++### KERNEXT Desktop — implemented
++- Native desktop application (`apps/desktop`) built on Tauri 2, reusing the
++  web front end with a local Rust runtime: multi-tab terminal (engine or PTY),
++  dashboard, command explorer, file explorer, sessions, settings, and about
++  screens.
++- Desktop commands execute through the local Rust runtime only — never the
++  public web server, never a JavaScript shell simulation.
++- Windows release bundles (MSI and NSIS installers) build successfully through
++  `pnpm desktop:build`; the release binary passes a launch smoke test.
++- Verified on Windows; interactive Linux/macOS verification and macOS
++  bundling remain open. See `docs/PROJECT_STATUS.md`.
++
++### Product integration (Phase 6)
++- **New built-ins**: `host` (system-resolver DNS lookup) and `sysinfo`
++  (platform/runtime report), plus the previously missing `[` registry entry
++  so the documented bracket alias of `test` actually dispatches as a built-in
++  on every platform.
++- **Cross-interface consistency suite**: HTTP sessions and the CLI engine are
++  checked for identical help, version, `pwd`/`cd`, `ls`, `mkdir`, `echo`,
++  pipeline, redirection, and environment behavior; HTTP sessions now persist
++  directory changes the same way the CLI does.
++- **External-tool compatibility tests**: `git`, `cargo`, `rustc`, `node`,
++  `pnpm`, `python`, `curl`, `code`, and `opencode` run through the full engine
++  (absent tools are skipped, never assumed).
++- **CI**: lint, web, test, and desktop-bundle matrices across Windows x64,
++  Linux x64, and macOS (Apple Silicon + Intel) on Node 24 action versions.
++- **Releases**: manual, draft-only workflow covering CLI archives (GNU, musl,
++  Windows, macOS both architectures, each including `kernext-server`), desktop
++  bundles, and SHA-256 checksums for every artifact.
++- **Documentation**: command reference (`docs/COMMANDS.md`), security model
++  (`docs/SECURITY.md`), deployment guide (`docs/DEPLOYMENT.md`),
++  troubleshooting (`docs/TROUBLESHOOTING.md`), and contribution guide
++  (`CONTRIBUTING.md`).
++- **Fixed**: the root `pnpm desktop:dev` / `pnpm desktop:build` scripts, which
++  previously failed with "None of the selected packages has a 'tauri' script".
+diff --git a/apps/shell-cli/src/cli.rs b/apps/shell-cli/src/cli.rs
+index 78046c5..b317916 100644
+--- a/apps/shell-cli/src/cli.rs
++++ b/apps/shell-cli/src/cli.rs
+@@ -33,9 +33,9 @@ pub struct Cli {
+ }
+ 
+ /// Wrapper to provide completion context from Session.
+-struct SessionCompletionContext {
+-    session: RwLock<Session>,
+-    builtins: Vec<String>,
++pub(crate) struct SessionCompletionContext {
++    pub(crate) session: RwLock<Session>,
++    pub(crate) builtins: Vec<String>,
+ }
+ 
+ impl CompletionContext for SessionCompletionContext {
+diff --git a/apps/shell-cli/src/lib.rs b/apps/shell-cli/src/lib.rs
+index ccdb88c..650be6a 100644
+--- a/apps/shell-cli/src/lib.rs
++++ b/apps/shell-cli/src/lib.rs
+@@ -6,3 +6,4 @@
+ pub mod cli;
+ pub mod repl;
+ pub mod startup;
++pub mod worker;
+diff --git a/apps/shell-server/Cargo.toml b/apps/shell-server/Cargo.toml
+index 6d2a05a..886d01f 100644
+--- a/apps/shell-server/Cargo.toml
++++ b/apps/shell-server/Cargo.toml
+@@ -4,6 +4,12 @@ version = "0.1.0"
+ edition = "2024"
+ description = "KERNEXT Axum backend and WebSocket terminal bridge"
+ 
++# The user-facing executable is `kernext-server`, matching the `kernext` CLI
++# and `kernext-desktop` naming; the crate name stays `shell-server`.
++[[bin]]
++name = "kernext-server"
++path = "src/main.rs"
++
+ [dependencies]
+ axum = { workspace = true }
+ futures-util = { workspace = true }
+diff --git a/apps/shell-server/src/error.rs b/apps/shell-server/src/error.rs
+index 9d51d53..6db8c2b 100644
+--- a/apps/shell-server/src/error.rs
++++ b/apps/shell-server/src/error.rs
+@@ -51,21 +51,13 @@ impl ApiError {
+     /// `500 Internal Server Error`.
+     #[must_use]
+     pub fn internal(message: impl Into<String>) -> Self {
+-        Self::new(
+-            StatusCode::INTERNAL_SERVER_ERROR,
+-            "internal_error",
+-            message,
+-        )
++        Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", message)
+     }
+ 
+     /// `503 Service Unavailable`.
+     #[must_use]
+     pub fn unavailable(message: impl Into<String>) -> Self {
+-        Self::new(
+-            StatusCode::SERVICE_UNAVAILABLE,
+-            "unavailable",
+-            message,
+-        )
++        Self::new(StatusCode::SERVICE_UNAVAILABLE, "unavailable", message)
+     }
+ 
+     /// Stable machine-readable code.
+diff --git a/apps/shell-server/src/routes.rs b/apps/shell-server/src/routes.rs
+index a2b28b7..e8a51ee 100644
+--- a/apps/shell-server/src/routes.rs
++++ b/apps/shell-server/src/routes.rs
+@@ -64,12 +64,7 @@ fn cors_layer() -> CorsLayer {
+ 
+     CorsLayer::new()
+         .allow_origin(AllowOrigin::list(origins))
+-        .allow_methods([
+-            Method::GET,
+-            Method::POST,
+-            Method::DELETE,
+-            Method::OPTIONS,
+-        ])
++        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
+         .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
+ }
+ 
+diff --git a/apps/shell-server/src/state.rs b/apps/shell-server/src/state.rs
+index f56ab62..7352798 100644
+--- a/apps/shell-server/src/state.rs
++++ b/apps/shell-server/src/state.rs
+@@ -147,15 +147,23 @@ impl ShellSession {
+     }
+ 
+     /// Applies request-scoped working-directory and environment overrides.
++    ///
++    /// Only the entries the request actually supplies are recorded. In
++    /// particular, a request without a `working_directory` override must not
++    /// restore anything, or a `cd` executed by the command would be silently
++    /// reverted — the CLI and the engine WebSocket keep it, so the HTTP path
++    /// has to as well.
+     pub fn begin_overrides(
+         &mut self,
+         request: &ExecuteCommandRequest,
+     ) -> Result<SessionOverrides, ApiError> {
++        let mut directory_overridden = false;
+         let old_directory = self.session.working_directory().to_path_buf();
+ 
+         if let Some(directory) = &request.working_directory {
+             self.session
+                 .set_working_directory(resolve_directory(directory)?);
++            directory_overridden = true;
+         }
+ 
+         let exported: HashMap<String, bool> = self
+@@ -178,6 +186,7 @@ impl ShellSession {
+         }
+ 
+         Ok(SessionOverrides {
++            directory_overridden,
+             old_directory,
+             environment,
+         })
+@@ -185,8 +194,9 @@ impl ShellSession {
+ 
+     /// Restores the state saved by [`ShellSession::begin_overrides`].
+     pub fn end_overrides(&mut self, overrides: SessionOverrides) {
+-        self.session
+-            .set_working_directory(overrides.old_directory);
++        if overrides.directory_overridden {
++            self.session.set_working_directory(overrides.old_directory);
++        }
+ 
+         for (name, previous, was_exported) in overrides.environment {
+             match previous {
+@@ -200,6 +210,7 @@ impl ShellSession {
+ /// State captured before request-scoped overrides are applied.
+ #[derive(Debug)]
+ pub struct SessionOverrides {
++    directory_overridden: bool,
+     old_directory: PathBuf,
+     environment: Vec<(String, Option<String>, bool)>,
+ }
+@@ -244,9 +255,16 @@ fn validate_variable_name(name: &str) -> Result<(), ApiError> {
+ 
+ fn is_sensitive_name(name: &str) -> bool {
+     let upper = name.to_ascii_uppercase();
+-    ["TOKEN", "SECRET", "PASSWORD", "PASSWD", "PRIVATE_KEY", "API_KEY"]
+-        .iter()
+-        .any(|needle| upper.contains(needle))
++    [
++        "TOKEN",
++        "SECRET",
++        "PASSWORD",
++        "PASSWD",
++        "PRIVATE_KEY",
++        "API_KEY",
++    ]
++    .iter()
++    .any(|needle| upper.contains(needle))
+ }
+ 
+ /// Maps a REPL action onto the API vocabulary.
+@@ -301,6 +319,20 @@ impl AppState {
+         self.token.as_deref()
+     }
+ 
++    /// Builds a local-only state with no authentication token.
++    ///
++    /// The desktop application embeds the session registry directly and never
++    /// exposes it over HTTP, so it does not read `KERNEXT_SERVER_TOKEN`.
++    #[must_use]
++    pub fn local() -> Self {
++        Self {
++            sessions: Arc::new(Mutex::new(HashMap::new())),
++            next_id: Arc::new(AtomicUsize::new(1)),
++            token: None,
++            max_sessions: 16,
++        }
++    }
++
+     /// Number of live sessions.
+     #[must_use]
+     pub fn len(&self) -> usize {
+@@ -423,11 +455,7 @@ mod tests {
+         let original = session.info().working_directory;
+         let request = ExecuteCommandRequest {
+             command: "pwd".to_owned(),
+-            working_directory: Some(
+-                std::env::temp_dir()
+-                    .to_string_lossy()
+-                    .into_owned(),
+-            ),
++            working_directory: Some(std::env::temp_dir().to_string_lossy().into_owned()),
+             environment: Some(HashMap::from([(
+                 "KERNEXT_TEST_OVERRIDE".to_owned(),
+                 "present".to_owned(),
+@@ -451,6 +479,53 @@ mod tests {
+         );
+     }
+ 
++    #[test]
++    fn cd_persists_when_no_directory_override_is_supplied() {
++        let mut session = new_session();
++        let original = session.info().working_directory;
++        let request = ExecuteCommandRequest {
++            command: "cd ..".to_owned(),
++            ..ExecuteCommandRequest::default()
++        };
++
++        let overrides = session
++            .begin_overrides(&request)
++            .expect("plain requests should not fail");
++        let response = session.execute(&request.command);
++        session.end_overrides(overrides);
++
++        assert!(response.success, "{response:?}");
++        let moved = session.info().working_directory;
++        assert_ne!(
++            moved, original,
++            "cd executed by the command must persist, like the CLI"
++        );
++        assert_eq!(
++            response.session.working_directory, moved,
++            "the response snapshot must report the directory after the command"
++        );
++
++        // And a request-scoped override still wins for one command only.
++        let request = ExecuteCommandRequest {
++            command: "pwd".to_owned(),
++            working_directory: Some(std::env::temp_dir().to_string_lossy().into_owned()),
++            ..ExecuteCommandRequest::default()
++        };
++        let overrides = session
++            .begin_overrides(&request)
++            .expect("override should apply");
++        let response = session.execute(&request.command);
++        session.end_overrides(overrides);
++
++        assert!(response.success, "{response:?}");
++        assert!(
++            response.output.contains("Temp") || response.output.contains("tmp"),
++            "{}",
++            response.output
++        );
++        assert_eq!(session.info().working_directory, moved);
++    }
++
+     #[test]
+     fn unknown_working_directories_are_rejected() {
+         let mut session = new_session();
+@@ -463,4 +538,3 @@ mod tests {
+         assert!(session.begin_overrides(&request).is_err());
+     }
+ }
+-
+diff --git a/apps/shell-server/src/ws.rs b/apps/shell-server/src/ws.rs
+index 8171fee..6c706eb 100644
+--- a/apps/shell-server/src/ws.rs
++++ b/apps/shell-server/src/ws.rs
+@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
+ use tokio::sync::mpsc;
+ 
+ #[derive(Debug, Default, Deserialize)]
+-struct WsAuth {
++pub struct WsAuth {
+     token: Option<String>,
+ }
+ 
+@@ -228,12 +228,9 @@ async fn handle_session_socket(socket: WebSocket, session: Arc<Mutex<ShellSessio
+                 }
+             }
+             ClientMessage::Input { .. } => {
+-                if send_error(
+-                    &mut sink,
+-                    "raw input is only supported by /api/v1/pty",
+-                )
+-                .await
+-                .is_err()
++                if send_error(&mut sink, "raw input is only supported by /api/v1/pty")
++                    .await
++                    .is_err()
+                 {
+                     break;
+                 }
+@@ -277,7 +274,8 @@ async fn handle_pty_socket(socket: WebSocket, binary: PathBuf) {
+         }
+     };
+ 
+-    let (Some(mut reader), Some(mut writer)) = (process.take_reader(), process.take_writer()) else {
++    let (Some(mut reader), Some(mut writer)) = (process.take_reader(), process.take_writer())
++    else {
+         let _ = out_tx
+             .send(text_message(&ServerMessage::Error {
+                 message: "the pseudoterminal did not expose its streams".to_owned(),
+@@ -441,13 +439,15 @@ pub fn pty_binary() -> Option<PathBuf> {
+         }
+     }
+ 
+-    if let Ok(executable) = std::env::current_exe() {
+-        if let Some(directory) = executable.parent() {
+-            for name in ["kernext.exe", "kernext"] {
+-                let candidate = directory.join(name);
+-                if candidate.is_file() {
+-                    return Some(candidate);
+-                }
++    let sibling = std::env::current_exe()
++        .ok()
++        .and_then(|executable| executable.parent().map(|directory| directory.to_path_buf()));
++
++    if let Some(directory) = sibling {
++        for name in ["kernext.exe", "kernext"] {
++            let candidate = directory.join(name);
++            if candidate.is_file() {
++                return Some(candidate);
+             }
+         }
+     }
+diff --git a/apps/shell-server/tests/api.rs b/apps/shell-server/tests/api.rs
+index 9856a80..e8fb9d5 100644
+--- a/apps/shell-server/tests/api.rs
++++ b/apps/shell-server/tests/api.rs
+@@ -80,10 +80,7 @@ async fn session_lifecycle_executes_real_commands() {
+     let executed: ExecuteCommandResponse =
+         serde_json::from_slice(&body).expect("execute response should be JSON");
+     assert!(executed.success, "{executed:?}");
+-    assert!(
+-        executed.output.contains("kernext-server"),
+-        "{executed:?}"
+-    );
++    assert!(executed.output.contains("kernext-server"), "{executed:?}");
+ 
+     let (status, body) = send(
+         &app,
+diff --git a/apps/web/package.json b/apps/web/package.json
+index 57f3d8a..df2a546 100644
+--- a/apps/web/package.json
++++ b/apps/web/package.json
+@@ -7,7 +7,8 @@
+     "dev": "vite --host 127.0.0.1 --port 5173",
+     "build": "tsc --noEmit && vite build",
+     "preview": "vite preview --host 127.0.0.1 --port 4173",
+-    "typecheck": "tsc --noEmit --pretty false"
++    "typecheck": "tsc --noEmit --pretty false",
++    "test": "vitest run"
+   },
+   "dependencies": {
+     "@radix-ui/react-dialog": "^1.1.15",
+@@ -15,6 +16,7 @@
+     "@radix-ui/react-tabs": "^1.1.13",
+     "@radix-ui/react-tooltip": "^1.2.8",
+     "@tanstack/react-router": "^1.140.0",
++    "@tauri-apps/api": "^2.9.0",
+     "class-variance-authority": "^0.7.1",
+     "clsx": "^2.1.1",
+     "lucide-react": "^0.468.0",
+@@ -31,6 +33,7 @@
+     "@vitejs/plugin-react": "^5.1.1",
+     "tailwindcss": "^4.1.17",
+     "typescript": "^5.9.3",
+-    "vite": "^7.2.2"
++    "vite": "^7.2.2",
++    "vitest": "^5.1.0"
+   }
+ }
+diff --git a/apps/web/src/components/site/footer.tsx b/apps/web/src/components/site/footer.tsx
+index 925281a..18cfdb9 100644
+--- a/apps/web/src/components/site/footer.tsx
++++ b/apps/web/src/components/site/footer.tsx
+@@ -3,6 +3,7 @@ import { ArrowUpRight, TerminalSquare } from 'lucide-react';
+ import { Logo } from '@/components/site/logo';
+ import { Badge } from '@/components/ui/badge';
+ import { Separator } from '@/components/ui/separator';
++import { KERNEXT_VERSION } from '@/lib/version';
+ 
+ export function SiteFooter() {
+   return (
+@@ -33,13 +34,13 @@ export function SiteFooter() {
+                 </Link>
+               </li>
+               <li>
+-                <Link to="/" hash="platform" className="text-muted-foreground transition-colors hover:text-foreground">
+-                  Platform
++                <Link to="/features" className="text-muted-foreground transition-colors hover:text-foreground">
++                  Features
+                 </Link>
+               </li>
+               <li>
+-                <Link to="/" hash="surfaces" className="text-muted-foreground transition-colors hover:text-foreground">
+-                  Surfaces
++                <Link to="/downloads" className="text-muted-foreground transition-colors hover:text-foreground">
++                  Downloads
+                 </Link>
+               </li>
+               <li>
+@@ -52,22 +53,22 @@ export function SiteFooter() {
+ 
+           <div>
+             <h3 className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+-              Runtime
++              Project
+             </h3>
+             <ul className="mt-4 space-y-2.5 text-sm">
+               <li>
+-                <Link to="/docs" hash="api" className="text-muted-foreground transition-colors hover:text-foreground">
+-                  HTTP API
++                <Link to="/about" className="text-muted-foreground transition-colors hover:text-foreground">
++                  About
+                 </Link>
+               </li>
+               <li>
+-                <Link to="/docs" hash="websocket" className="text-muted-foreground transition-colors hover:text-foreground">
+-                  WebSocket protocol
++                <Link to="/contact" className="text-muted-foreground transition-colors hover:text-foreground">
++                  Contact and community
+                 </Link>
+               </li>
+               <li>
+-                <Link to="/docs" hash="security" className="text-muted-foreground transition-colors hover:text-foreground">
+-                  Security model
++                <Link to="/docs" hash="api" className="text-muted-foreground transition-colors hover:text-foreground">
++                  HTTP API
+                 </Link>
+               </li>
+               <li>
+@@ -83,17 +84,21 @@ export function SiteFooter() {
+               Current build
+             </p>
+             <div className="mt-3 space-y-2.5 text-sm">
++              <div className="flex items-center justify-between gap-3">
++                <span className="text-muted-foreground">Version</span>
++                <Badge variant="outline">v{KERNEXT_VERSION}</Badge>
++              </div>
+               <div className="flex items-center justify-between gap-3">
+                 <span className="text-muted-foreground">CLI</span>
+-                <Badge variant="success">Stable</Badge>
++                <Badge variant="success">Reference</Badge>
+               </div>
+               <div className="flex items-center justify-between gap-3">
+                 <span className="text-muted-foreground">Web</span>
+-                <Badge variant="default">New</Badge>
++                <Badge variant="success">Live</Badge>
+               </div>
+               <div className="flex items-center justify-between gap-3">
+                 <span className="text-muted-foreground">Desktop</span>
+-                <Badge variant="warning">In progress</Badge>
++                <Badge variant="success">Implemented</Badge>
+               </div>
+             </div>
+             <Separator className="my-4" />
+@@ -116,7 +121,7 @@ export function SiteFooter() {
+           </p>
+           <div className="flex flex-wrap items-center gap-4">
+             <span className="font-mono uppercase tracking-[0.18em]">
+-              Open · Powerful · Independent
++              Independent · Native · Engineered
+             </span>
+             <span className="hidden h-3 w-px bg-border sm:block" />
+             <span className="font-mono uppercase tracking-[0.18em]">
+diff --git a/apps/web/src/components/site/header.tsx b/apps/web/src/components/site/header.tsx
+index 91f77a1..4927b13 100644
+--- a/apps/web/src/components/site/header.tsx
++++ b/apps/web/src/components/site/header.tsx
+@@ -7,10 +7,12 @@ import { Button } from '@/components/ui/button';
+ import { cn } from '@/lib/utils';
+ 
+ const NAV_ITEMS = [
+-  { label: 'Platform', to: '/', hash: 'platform' },
+-  { label: 'Architecture', to: '/', hash: 'architecture' },
+-  { label: 'Surfaces', to: '/', hash: 'surfaces' },
++  { label: 'Home', to: '/' },
++  { label: 'Features', to: '/features' },
+   { label: 'Docs', to: '/docs' },
++  { label: 'Downloads', to: '/downloads' },
++  { label: 'About', to: '/about' },
++  { label: 'Contact', to: '/contact' },
+ ] as const;
+ 
+ export function SiteHeader({ compact = false }: { compact?: boolean }) {
+@@ -36,10 +38,9 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
+             <Link
+               key={item.label}
+               to={item.to}
+-              {...('hash' in item ? { hash: item.hash } : {})}
+               className="rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-surface-soft hover:text-foreground"
+               activeProps={{ className: 'text-foreground' }}
+-              activeOptions={{ exact: true, includeHash: true }}
++              activeOptions={{ exact: true }}
+             >
+               {item.label}
+             </Link>
+@@ -76,10 +77,9 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
+               <Link
+                 key={item.label}
+                 to={item.to}
+-                {...('hash' in item ? { hash: item.hash } : {})}
+                 className="rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-surface-soft hover:text-foreground"
+                 activeProps={{ className: 'text-foreground' }}
+-                activeOptions={{ exact: true, includeHash: true }}
++                activeOptions={{ exact: true }}
+               >
+                 {item.label}
+               </Link>
+diff --git a/apps/web/src/components/terminal/terminal-screen.tsx b/apps/web/src/components/terminal/terminal-screen.tsx
+index 5b27bc0..f8c4158 100644
+--- a/apps/web/src/components/terminal/terminal-screen.tsx
++++ b/apps/web/src/components/terminal/terminal-screen.tsx
+@@ -26,6 +26,8 @@ export interface TerminalScreenProps {
+   onData: (data: string) => void;
+   onResize: (rows: number, cols: number) => void;
+   fontSize?: number;
++  fontFamily?: string;
++  cursorStyle?: 'block' | 'bar' | 'underline';
+   autoFocus?: boolean;
+   className?: string;
+ }
+@@ -40,6 +42,8 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
+       onData,
+       onResize,
+       fontSize = 13,
++      fontFamily,
++      cursorStyle = 'block',
+       autoFocus = false,
+       className,
+     },
+@@ -110,7 +114,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
+         observer.disconnect();
+         window.cancelAnimationFrame(frame);
+       };
+-    }, [measure, fontSize]);
++    }, [measure, fontSize, fontFamily]);
+ 
+     useEffect(() => {
+       if (autoFocus) {
+@@ -171,6 +175,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
+             ? buffer.cursor.col
+             : -1
+         }
++        cursorStyle={cursorStyle}
+       />
+     ));
+ 
+@@ -233,6 +238,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
+           {
+             '--terminal-line-height': `${cellHeight}px`,
+             fontSize: `${fontSize}px`,
++            fontFamily: fontFamily ?? undefined,
+           } as CSSProperties
+         }
+         onClick={focus}
+@@ -249,7 +255,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
+             ref={probeRef}
+             aria-hidden="true"
+             className="pointer-events-none invisible absolute whitespace-pre font-mono"
+-            style={{ fontSize: `${fontSize}px` }}
++            style={{ fontSize: `${fontSize}px`, fontFamily: fontFamily ?? undefined }}
+           >
+             {'W'.repeat(20)}
+           </span>
+@@ -291,9 +297,11 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
+ function TerminalRow({
+   cells,
+   cursorCol = -1,
++  cursorStyle = 'block',
+ }: {
+   cells: Cell[];
+   cursorCol?: number;
++  cursorStyle?: 'block' | 'bar' | 'underline';
+ }) {
+   const spans: ReactNode[] = [];
+   let text = '';
+@@ -310,7 +318,15 @@ function TerminalRow({
+     spans.push(
+       <span
+         key={`span-${start}`}
+-        className={cursor ? 'terminal-cursor' : undefined}
++        className={
++          cursor
++            ? cursorStyle === 'bar'
++              ? 'terminal-cursor terminal-cursor-bar'
++              : cursorStyle === 'underline'
++                ? 'terminal-cursor terminal-cursor-underline'
++                : 'terminal-cursor'
++            : undefined
++        }
+         style={style}
+       >
+         {text || ' '}
+diff --git a/apps/web/src/hooks/use-terminal-connection.ts b/apps/web/src/hooks/use-terminal-connection.ts
+index 0ec95ee..8df4290 100644
+--- a/apps/web/src/hooks/use-terminal-connection.ts
++++ b/apps/web/src/hooks/use-terminal-connection.ts
+@@ -7,6 +7,20 @@ import {
+   fetchHealth,
+   wsUrl,
+ } from '@/lib/server';
++import {
++  desktopCreatePtySession,
++  desktopCreateSession,
++  desktopDeleteSession,
++  desktopHealth,
++  sessionSummaryToSessionInfo,
++} from '@/lib/desktop';
++import { isTauri } from '@/lib/tauri';
++import {
++  SOCKET_OPEN,
++  TauriTerminalSocket,
++  TerminalSocket,
++  WebSocketTerminalSocket,
++} from '@/lib/terminal/socket';
+ import type {
+   ClientMessage,
+   HealthResponse,
+@@ -15,6 +29,7 @@ import type {
+ } from '@/lib/protocol';
+ 
+ export type ConnectionMode = 'pty' | 'engine';
++export type ConnectionTransport = 'ws' | 'tauri';
+ export type ConnectionStatus =
+   | 'idle'
+   | 'connecting'
+@@ -30,6 +45,7 @@ export interface TerminalSize {
+ export interface UseTerminalConnectionOptions {
+   engine: TerminalEngine;
+   mode: ConnectionMode;
++  transport?: ConnectionTransport;
+   enabled?: boolean;
+ }
+ 
+@@ -53,15 +69,18 @@ const DEFAULT_PROMPT = 'kernext ~ $ ';
+ const HISTORY_LIMIT = 200;
+ 
+ /**
+- * Owns the WebSocket life cycle for both terminal transports.
++ * Owns the transport life cycle for both terminal surfaces.
+  *
+  * - `pty` relays raw terminal bytes to the real `kernext` process.
+- * - `engine` executes command lines through the session WebSocket and keeps a
+- *   small local line editor so typed text is echoed before the server answers.
++ * - `engine` executes command lines through the session transport and keeps a
++ *   small local line editor so typed text is echoed before the runtime
++ *   answers.
++ * - `transport` selects the Axum WebSocket or the desktop Tauri IPC bridge.
+  */
+ export function useTerminalConnection({
+   engine,
+   mode,
++  transport = isTauri() ? 'tauri' : 'ws',
+   enabled = true,
+ }: UseTerminalConnectionOptions): TerminalConnection {
+   const [status, setStatus] = useState<ConnectionStatus>('idle');
+@@ -70,11 +89,12 @@ export function useTerminalConnection({
+   const [health, setHealth] = useState<HealthResponse | null>(null);
+   const [size, setSize] = useState<TerminalSize>({ rows: 24, cols: 80 });
+ 
+-  const socketRef = useRef<WebSocket | null>(null);
++  const socketRef = useRef<TerminalSocket | null>(null);
+   const sessionIdRef = useRef<number | null>(null);
+   const decoderRef = useRef<TextDecoder | null>(null);
+   const sizeRef = useRef<TerminalSize>(size);
+   const modeRef = useRef<ConnectionMode>(mode);
++  const transportRef = useRef<ConnectionTransport>(transport);
+   const generationRef = useRef(0);
+   const lineRef = useRef('');
+   const promptRef = useRef(DEFAULT_PROMPT);
+@@ -83,15 +103,18 @@ export function useTerminalConnection({
+   const lastOutputRef = useRef('');
+ 
+   modeRef.current = mode;
++  transportRef.current = transport;
+ 
+   const sendClient = useCallback((message: ClientMessage): boolean => {
+     const socket = socketRef.current;
+ 
+-    if (!socket || socket.readyState !== WebSocket.OPEN) {
++    if (!socket || socket.readyState !== SOCKET_OPEN) {
+       return false;
+     }
+ 
+-    socket.send(JSON.stringify(message));
++    Promise.resolve(socket.send(message)).catch(() => {
++      // Transport errors surface through the socket's error handler.
++    });
+     return true;
+   }, []);
+ 
+@@ -99,30 +122,108 @@ export function useTerminalConnection({
+     const socket = socketRef.current;
+     socketRef.current = null;
+ 
+-    if (socket && socket.readyState <= WebSocket.OPEN) {
+-      socket.close(1000, 'client closing');
++    if (socket) {
++      Promise.resolve(socket.close(1000, 'client closing')).catch(() => {
++        // Closing is best effort; the session is removed below.
++      });
+     }
+ 
+     if (deleteRemote && sessionIdRef.current !== null) {
+       const id = sessionIdRef.current;
+       sessionIdRef.current = null;
+-      void deleteSession(id).catch(() => {
+-        // The server may already have stopped the session. Cleanup is best
+-        // effort and must never break the UI.
+-      });
++
++      if (transportRef.current === 'tauri') {
++        void desktopDeleteSession(id).catch(() => {
++          // The runtime may already have stopped the session. Cleanup is best
++          // effort and must never break the UI.
++        });
++      } else {
++        void deleteSession(id).catch(() => {
++          // The server may already have stopped the session. Cleanup is best
++          // effort and must never break the UI.
++        });
++      }
+     }
+   }, []);
+ 
+   const openPty = useCallback(
+-    (nextHealth: HealthResponse) => {
++    async (nextHealth: HealthResponse) => {
+       if (nextHealth.pty_available === false) {
+         throw new Error(
+-          'The server does not expose a PTY endpoint. Build the CLI with `cargo build -p shell-cli` and restart the server.',
++          'The runtime does not expose a PTY endpoint. Build the CLI with `cargo build -p shell-cli` and try again.',
+         );
+       }
+ 
+-      const socket = new WebSocket(wsUrl('/api/v1/pty'));
+-      socket.binaryType = 'arraybuffer';
++      if (transportRef.current === 'tauri') {
++        const summary = await desktopCreatePtySession(
++          sizeRef.current.rows,
++          sizeRef.current.cols,
++        );
++        const created = sessionSummaryToSessionInfo(summary);
++
++        sessionIdRef.current = summary.id;
++        setSession(created);
++        promptRef.current = created.prompt;
++        lineRef.current = '';
++        historyIndexRef.current = historyRef.current.length;
++        lastOutputRef.current = '';
++
++        const socket = new TauriTerminalSocket('pty', summary.id);
++        socketRef.current = socket;
++        decoderRef.current = new TextDecoder('utf-8', { fatal: false });
++
++        socket.onopen = () => {
++          if (socketRef.current !== socket) {
++            return;
++          }
++
++          setStatus('open');
++          setError(null);
++          sendClient({
++            type: 'resize',
++            rows: sizeRef.current.rows,
++            cols: sizeRef.current.cols,
++          });
++        };
++
++        socket.onmessage = (event) => {
++          if (socketRef.current !== socket) {
++            return;
++          }
++
++          if (typeof event.data === 'string') {
++            engine.write(event.data);
++            return;
++          }
++
++          void decodeBinary(decoderRef.current, event.data, engine);
++        };
++
++        socket.onerror = () => {
++          if (socketRef.current !== socket) {
++            return;
++          }
++
++          setError(
++            'The desktop pseudoterminal failed. Check the runtime logs and try again.',
++          );
++          setStatus('error');
++        };
++
++        socket.onclose = () => {
++          if (socketRef.current !== socket) {
++            return;
++          }
++
++          socketRef.current = null;
++          setStatus((previous) => (previous === 'error' ? previous : 'closed'));
++        };
++
++        await socket.open();
++        return;
++      }
++
++      const socket = new WebSocketTerminalSocket(wsUrl('/api/v1/pty'));
+       socketRef.current = socket;
+       decoderRef.current = new TextDecoder('utf-8', { fatal: false });
+ 
+@@ -196,26 +297,46 @@ export function useTerminalConnection({
+         socketRef.current = null;
+         setStatus((previous) => (previous === 'error' ? previous : 'closed'));
+       };
++
++      socket.open();
+     },
+     [engine, sendClient],
+   );
+ 
+   const openEngine = useCallback(
+     async (generation: number) => {
+-      const response = await createSession();
++      let created: SessionInfo;
+ 
+-      if (generation !== generationRef.current) {
+-        if (response.session) {
+-          void deleteSession(response.session.id).catch(() => {});
++      if (transportRef.current === 'tauri') {
++        created = await desktopCreateSession();
++      } else {
++        const response = await createSession();
++
++        if (generation !== generationRef.current) {
++          if (response.session) {
++            void deleteSession(response.session.id).catch(() => {});
++          }
++          return;
+         }
+-        return;
++
++        if (!response.success || !response.session) {
++          throw new Error(
++            response.error ?? 'The runtime did not create a session.',
++          );
++        }
++
++        created = response.session;
+       }
+ 
+-      if (!response.success || !response.session) {
+-        throw new Error(response.error ?? 'The server did not create a session.');
++      if (generation !== generationRef.current) {
++        if (transportRef.current === 'tauri') {
++          void desktopDeleteSession(created.id).catch(() => {});
++        } else {
++          void deleteSession(created.id).catch(() => {});
++        }
++        return;
+       }
+ 
+-      const created = response.session;
+       sessionIdRef.current = created.id;
+       setSession(created);
+       promptRef.current = created.prompt;
+@@ -223,9 +344,12 @@ export function useTerminalConnection({
+       historyIndexRef.current = historyRef.current.length;
+       lastOutputRef.current = '';
+ 
+-      const socket = new WebSocket(
+-        wsUrl(`/api/v1/sessions/${created.id}/ws`),
+-      );
++      const socket =
++        transportRef.current === 'tauri'
++          ? new TauriTerminalSocket('engine', created.id)
++          : new WebSocketTerminalSocket(
++              wsUrl(`/api/v1/sessions/${created.id}/ws`),
++            );
+       socketRef.current = socket;
+ 
+       let finished = false;
+@@ -242,7 +366,12 @@ export function useTerminalConnection({
+         if (sessionIdRef.current !== null) {
+           const id = sessionIdRef.current;
+           sessionIdRef.current = null;
+-          void deleteSession(id).catch(() => {});
++
++          if (transportRef.current === 'tauri') {
++            void desktopDeleteSession(id).catch(() => {});
++          } else {
++            void deleteSession(id).catch(() => {});
++          }
+         }
+ 
+         engine.write(`\r\n\u001b[2m${message}\u001b[0m\r\n`);
+@@ -265,7 +394,10 @@ export function useTerminalConnection({
+             break;
+           }
+           case 'output': {
+-            if (message.stream === 'system' && message.data.includes('\u001b[2J')) {
++            if (
++              message.stream === 'system' &&
++              message.data.includes('\u001b[2J')
++            ) {
+               engine.clear();
+             }
+ 
+@@ -321,6 +453,10 @@ export function useTerminalConnection({
+ 
+         setStatus('open');
+         setError(null);
++
++        if (transportRef.current === 'tauri') {
++          engine.write(created.prompt);
++        }
+       };
+ 
+       socket.onmessage = (event) => {
+@@ -339,7 +475,9 @@ export function useTerminalConnection({
+         }
+ 
+         setError(
+-          'The session WebSocket failed. Check that the KERNEXT server is still running.',
++          transportRef.current === 'tauri'
++            ? 'The desktop engine session failed. Check the runtime logs and try again.'
++            : 'The session WebSocket failed. Check that the KERNEXT server is still running.',
+         );
+         setStatus('error');
+       };
+@@ -355,9 +493,16 @@ export function useTerminalConnection({
+         if (sessionIdRef.current !== null) {
+           const id = sessionIdRef.current;
+           sessionIdRef.current = null;
+-          void deleteSession(id).catch(() => {});
++
++          if (transportRef.current === 'tauri') {
++            void desktopDeleteSession(id).catch(() => {});
++          } else {
++            void deleteSession(id).catch(() => {});
++          }
+         }
+       };
++
++      await socket.open();
+     },
+     [engine],
+   );
+@@ -377,7 +522,10 @@ export function useTerminalConnection({
+ 
+     void (async () => {
+       try {
+-        const nextHealth = await fetchHealth();
++        const nextHealth =
++          transportRef.current === 'tauri'
++            ? await desktopHealth()
++            : await fetchHealth();
+ 
+         if (generation !== generationRef.current) {
+           return;
+@@ -386,7 +534,7 @@ export function useTerminalConnection({
+         setHealth(nextHealth);
+ 
+         if (modeRef.current === 'pty') {
+-          openPty(nextHealth);
++          await openPty(nextHealth);
+         } else {
+           await openEngine(generation);
+         }
+@@ -395,7 +543,11 @@ export function useTerminalConnection({
+           return;
+         }
+ 
+-        setError(describeConnectionError(caught));
++        setError(
++          transportRef.current === 'tauri' && caught instanceof Error
++            ? caught.message
++            : describeConnectionError(caught),
++        );
+         setStatus('error');
+       }
+     })();
+@@ -421,7 +573,7 @@ export function useTerminalConnection({
+       generationRef.current += 1;
+       closeSocket(true);
+     };
+-  }, [enabled, mode, connect, closeSocket]);
++  }, [enabled, mode, transport, connect, closeSocket]);
+ 
+   const submitLine = useCallback(
+     (command: string) => {
+@@ -624,12 +776,19 @@ export function useTerminalConnection({
+ 
+   const refreshHealth = useCallback(async () => {
+     try {
+-      const nextHealth = await fetchHealth();
++      const nextHealth =
++        transportRef.current === 'tauri'
++          ? await desktopHealth()
++          : await fetchHealth();
+       setHealth(nextHealth);
+       setError(null);
+     } catch (caught) {
+       setHealth(null);
+-      setError(describeConnectionError(caught));
++      setError(
++        transportRef.current === 'tauri' && caught instanceof Error
++          ? caught.message
++          : describeConnectionError(caught),
++      );
+     }
+   }, []);
+ 
+@@ -652,7 +811,7 @@ export function useTerminalConnection({
+ 
+ async function decodeBinary(
+   fallback: TextDecoder | null,
+-  data: ArrayBuffer | Blob | string,
++  data: unknown,
+   engine: TerminalEngine,
+ ): Promise<void> {
+   if (typeof data === 'string') {
+@@ -660,7 +819,22 @@ async function decodeBinary(
+     return;
+   }
+ 
+-  const buffer = data instanceof Blob ? await data.arrayBuffer() : data;
++  if (data instanceof Blob) {
++    const buffer = await data.arrayBuffer();
++    decodeBytes(fallback, buffer, engine);
++    return;
++  }
++
++  if (data instanceof ArrayBuffer) {
++    decodeBytes(fallback, data, engine);
++  }
++}
++
++function decodeBytes(
++  fallback: TextDecoder | null,
++  buffer: ArrayBuffer,
++  engine: TerminalEngine,
++): void {
+   const decoder = fallback ?? new TextDecoder('utf-8', { fatal: false });
+   const text = decoder.decode(new Uint8Array(buffer), { stream: true });
+ 
+diff --git a/apps/web/src/routes/docs.tsx b/apps/web/src/routes/docs.tsx
+index 2ca42a5..6634b45 100644
+--- a/apps/web/src/routes/docs.tsx
++++ b/apps/web/src/routes/docs.tsx
+@@ -389,15 +389,15 @@ KERNEXT_BIN=/absolute/path/to/kernext`}
+               {[
+                 ['CLI engine', 'Tested', 'Existing Rust test suite and platform PTY tests.'],
+                 ['Axum server', 'Tested', 'REST and WebSocket integration tests in apps/shell-server/tests.'],
+-                ['Web terminal', 'In verification', 'Build, typecheck, and live connection are the acceptance gate.'],
+-                ['Desktop (Tauri 2)', 'In progress', 'Not shipped. Do not treat the desktop app as available yet.'],
++                ['Web terminal', 'Tested', 'Build, typecheck, unit tests, and consistency suite over the real engine.'],
++                ['Desktop (Tauri 2)', 'Implemented', 'Debug bundle build and unit tests verified on Windows; Linux/macOS builds pending hosts.'],
+               ].map(([surface, status, notes]) => (
+                 <tr key={surface} className="bg-surface/40">
+                   <td className="px-4 py-3 font-medium">{surface}</td>
+                   <td className="px-4 py-3">
+                     <Badge
+                       variant={
+-                        status === 'Tested'
++                        status === 'Tested' || status === 'Implemented'
+                           ? 'success'
+                           : status === 'In progress'
+                             ? 'warning'
+@@ -421,8 +421,8 @@ KERNEXT_BIN=/absolute/path/to/kernext`}
+             Use the PTY transport for full control. The PTY endpoint needs a
+             built <span className="font-mono">kernext</span> binary beside the
+             server executable or a valid{' '}
+-            <span className="font-mono">KERNEXT_BIN</span>. The desktop surface is
+-            still pending.
++            <span className="font-mono">KERNEXT_BIN</span>. The desktop app
++            bundles its own engine and does not need either server.
+           </p>
+         </div>
+       </section>
+diff --git a/apps/web/src/routes/home.tsx b/apps/web/src/routes/home.tsx
+index 374d3a0..a154e6a 100644
+--- a/apps/web/src/routes/home.tsx
++++ b/apps/web/src/routes/home.tsx
+@@ -96,7 +96,7 @@ const SURFACES = [
+     status: 'Implemented',
+     tone: 'success' as const,
+     description:
+-      'The original surface. A Reedline prompt, cinematic startup, native pipelines, background jobs, and 53 built-ins.',
++      'The original surface. A Reedline prompt, cinematic startup, native pipelines, background jobs, and 56 built-ins.',
+     points: ['`kernext` executable', 'Animated startup + config', 'Native process execution'],
+     to: '/docs',
+     action: 'Read the CLI notes',
+@@ -105,7 +105,7 @@ const SURFACES = [
+     icon: Globe2,
+     title: 'KERNEXT Web',
+     status: 'Implemented',
+-    tone: 'default' as const,
++    tone: 'success' as const,
+     description:
+       'A React terminal with its own ANSI renderer, cursor, scrollback, keyboard mapping, and resize handling. No xterm.js.',
+     points: ['PTY and engine transports', 'Custom ANSI screen buffer', 'Local Axum session API'],
+@@ -115,13 +115,13 @@ const SURFACES = [
+   {
+     icon: Monitor,
+     title: 'KERNEXT Desktop',
+-    status: 'In progress',
+-    tone: 'warning' as const,
++    status: 'Implemented',
++    tone: 'success' as const,
+     description:
+-      'A Tauri 2 shell around the same local runtime. The desktop surface is being prepared; do not treat it as shipped.',
+-    points: ['Tauri 2 host planned', 'Same web terminal UI', 'Native process bridge'],
+-    to: '/docs',
+-    action: 'See the status',
++      'A Tauri 2 shell around the same runtime: multi-tab terminal, command and file explorers, sessions, and settings — executing through the embedded engine, never a public server.',
++    points: ['Tauri 2 host with settings', 'Same web terminal UI', 'Local Rust command bridge'],
++    to: '/downloads',
++    action: 'Build the desktop app',
+   },
+ ] as const;
+ 
+@@ -313,7 +313,7 @@ function TerminalLine({ prompt, command }: { prompt: string; command: string })
+ 
+ function ValueStrip() {
+   const values = [
+-    { value: '53', label: 'native built-ins' },
++    { value: '56', label: 'native built-ins' },
+     { value: '1', label: 'shared Rust engine' },
+     { value: '3', label: 'runtime surfaces' },
+     { value: '0', label: 'wrapper shells' },
+@@ -498,9 +498,9 @@ function SurfacesSection() {
+               One engine. Three ways in.
+             </h2>
+             <p className="mt-4 text-sm leading-relaxed text-muted-foreground sm:text-base">
+-              The CLI is the reference surface. The web terminal is live in this
+-              repository. The desktop host is the next surface, not a shipped
+-              claim.
++              The CLI is the reference surface. The web terminal is live in
++              this repository. The desktop host wraps the same engine in a
++              Tauri 2 application with its own explorers and settings.
+             </p>
+           </div>
+           <Button asChild variant="outline" size="sm">
+diff --git a/apps/web/src/styles.css b/apps/web/src/styles.css
+index 52342e1..233ef9a 100644
+--- a/apps/web/src/styles.css
++++ b/apps/web/src/styles.css
+@@ -249,6 +249,18 @@
+     animation: terminal-blink 1.1s steps(1, end) infinite;
+   }
+ 
++  .terminal-cursor-bar {
++    background: transparent !important;
++    border-left: 2px solid var(--term-cursor);
++    color: var(--term-fg) !important;
++  }
++
++  .terminal-cursor-underline {
++    background: transparent !important;
++    border-bottom: 2px solid var(--term-cursor);
++    color: var(--term-fg) !important;
++  }
++
+   .terminal-keyboard {
+     position: absolute;
+     inset: 0;
+diff --git a/apps/web/src/vite-env.d.ts b/apps/web/src/vite-env.d.ts
+index c38f782..78f3e4d 100644
+--- a/apps/web/src/vite-env.d.ts
++++ b/apps/web/src/vite-env.d.ts
+@@ -1,5 +1,8 @@
+ /// <reference types="vite/client" />
+ 
++/** KERNEXT version read from the workspace Cargo.toml at build time. */
++declare const __KERNEXT_VERSION__: string;
++
+ interface ImportMetaEnv {
+   readonly VITE_KERNEXT_SERVER?: string;
+ }
+diff --git a/apps/web/vite.config.ts b/apps/web/vite.config.ts
+index 9a0e086..cb40438 100644
+--- a/apps/web/vite.config.ts
++++ b/apps/web/vite.config.ts
+@@ -1,10 +1,26 @@
+ import { fileURLToPath, URL } from 'node:url';
++import { readFileSync } from 'node:fs';
+ import tailwindcss from '@tailwindcss/vite';
+ import react from '@vitejs/plugin-react';
+ import { defineConfig } from 'vite';
+ 
++// The website and desktop app must report the same version as the Rust
++// engine, so the number is read from the workspace Cargo.toml at build time
++// instead of being duplicated here.
++export function workspaceVersion(): string {
++  const manifest = readFileSync(fileURLToPath(new URL('../../Cargo.toml', import.meta.url)), 'utf8');
++  const match = manifest.match(/^\s*version\s*=\s*"([^"]+)"/m);
++  if (!match) {
++    throw new Error('KERNEXT workspace version could not be read from Cargo.toml');
++  }
++  return match[1]!;
++}
++
+ export default defineConfig({
+   plugins: [react(), tailwindcss()],
++  define: {
++    __KERNEXT_VERSION__: JSON.stringify(workspaceVersion()),
++  },
+   resolve: {
+     alias: {
+       '@': fileURLToPath(new URL('./src', import.meta.url)),
+diff --git a/crates/shell-builtins/src/commands.rs b/crates/shell-builtins/src/commands.rs
+index 0b21b63..4d438a6 100644
+--- a/crates/shell-builtins/src/commands.rs
++++ b/crates/shell-builtins/src/commands.rs
+@@ -7,6 +7,7 @@ use shell_runtime::{JobStatus, Session};
+ use std::env;
+ use std::fs::{self, OpenOptions};
+ use std::io;
++use std::net::ToSocketAddrs;
+ use std::path::{Path, PathBuf};
+ use std::time::{Duration, SystemTime};
+ 
+@@ -201,6 +202,8 @@ pub(crate) fn run(context: &mut CommandContext<'_>, name: &str, args: &[String])
+         "false" => CommandResult::status(false),
+         "whoami" => whoami(),
+         "date" => date(),
++        "host" => host(args),
++        "sysinfo" => sysinfo(context.session),
+         "version" => CommandResult::ok(format!("{PRODUCT_NAME} v{}", context.session.version())),
+         "exit" => exit_builtin(context.session, args),
+         "export" => export_builtin(context.session, args),
+@@ -2686,6 +2689,86 @@ fn date() -> CommandResult {
+     CommandResult::ok(Local::now().format("%Y-%m-%d %H:%M:%S %Z").to_string())
+ }
+ 
++/// Resolves a hostname (or literal IP address) with the operating system's
++/// resolver and prints every address it returns.
++///
++/// This is the native networking utility: it uses `ToSocketAddrs`, so it
++/// follows the host's DNS configuration without any third-party dependency
++/// and works offline for literal addresses and hosts file entries.
++fn host(args: &[String]) -> CommandResult {
++    if args.len() != 1 {
++        return CommandResult::error("usage: host <hostname>");
++    }
++
++    let name = &args[0];
++    if name.is_empty() {
++        return CommandResult::error("host: hostname must not be empty");
++    }
++
++    // `to_socket_addrs` needs a `host:port` pair; the port is irrelevant for
++    // address resolution. A literal `host:port` input is honoured as typed.
++    let target = if name.contains(':') {
++        name.clone()
++    } else {
++        format!("{name}:0")
++    };
++
++    let addresses = match target.to_socket_addrs() {
++        Ok(addresses) => addresses,
++        Err(error) => {
++            return CommandResult::error(format!("host: {name}: {error}"));
++        }
++    };
++
++    let mut lines = Vec::new();
++    let mut seen = Vec::new();
++    for address in addresses {
++        let ip = address.ip();
++        if seen.contains(&ip) {
++            continue;
++        }
++        seen.push(ip);
++        if ip.is_ipv6() {
++            lines.push(format!("{name} has IPv6 address {ip}"));
++        } else {
++            lines.push(format!("{name} has address {ip}"));
++        }
++    }
++
++    if lines.is_empty() {
++        return CommandResult::error(format!("host: {name}: no addresses found"));
++    }
++
++    CommandResult::ok(lines.join("\n"))
++}
++
++/// Prints a system snapshot from process APIs only: no invented data, no
++/// registry calls, and no platform-specific crate.
++fn sysinfo(session: &Session) -> CommandResult {
++    let user = env::var("USER")
++        .or_else(|_| env::var("USERNAME"))
++        .or_else(|_| env::var("LOGNAME"))
++        .unwrap_or_else(|_| "unknown".to_owned());
++
++    let cores = std::thread::available_parallelism()
++        .map(|cores| cores.get().to_string())
++        .unwrap_or_else(|_| "unknown".to_owned());
++
++    let output = format!(
++        "product    {PRODUCT_NAME}\nversion    {}\nplatform   {}\nfamily     {}\narch       {}\ncpu-cores  {}\nuser       {}\npid        {}\ncwd        {}",
++        session.version(),
++        env::consts::OS,
++        env::consts::FAMILY,
++        env::consts::ARCH,
++        cores,
++        user,
++        std::process::id(),
++        session.working_directory().display(),
++    );
++
++    CommandResult::ok(output)
++}
++
+ pub(crate) fn resolve_path(session: &Session, input: &str) -> PathBuf {
+     let path = expand_tilde(session, input);
+ 
+diff --git a/crates/shell-builtins/src/lib.rs b/crates/shell-builtins/src/lib.rs
+index f22ab9f..13d060f 100644
+--- a/crates/shell-builtins/src/lib.rs
++++ b/crates/shell-builtins/src/lib.rs
+@@ -23,7 +23,7 @@ pub use process::{
+     ExternalCommand, ProcessError, ProcessOptions, ProcessReport, ProcessStatus, StdioMode,
+     resolve_executable,
+ };
+-pub use pty::{PtyProcess, PtySize, terminal_size};
++pub use pty::{PtyProcess, PtyResizer, PtySize, terminal_size};
+ pub use registry::{BuiltinCommand, BuiltinRegistry, DEFAULT_BUILTINS, RegistryError};
+ 
+ use shell_core::{lex_spanned, parse};
+diff --git a/crates/shell-builtins/src/pty.rs b/crates/shell-builtins/src/pty.rs
+index 2899d7b..10b57df 100644
+--- a/crates/shell-builtins/src/pty.rs
++++ b/crates/shell-builtins/src/pty.rs
+@@ -47,7 +47,7 @@ mod backend;
+ #[path = "pty/unix.rs"]
+ mod backend;
+ 
+-pub use backend::PtyProcess;
++pub use backend::{PtyProcess, PtyResizer};
+ 
+ /// Default terminal size used when the shell itself has no console.
+ pub const DEFAULT_COLUMNS: u16 = 80;
+@@ -201,9 +201,7 @@ pub fn run_interactive(command: &ExternalCommand) -> Result<ProcessReport, Proce
+ 
+     let _ = monitor.join();
+ 
+-    {
+-        status.map(ProcessReport::from_status)
+-    }
++    status.map(ProcessReport::from_status)
+ }
+ 
+ #[cfg(test)]
+diff --git a/crates/shell-builtins/src/pty/windows.rs b/crates/shell-builtins/src/pty/windows.rs
+index 9f9bdde..7f547e0 100644
+--- a/crates/shell-builtins/src/pty/windows.rs
++++ b/crates/shell-builtins/src/pty/windows.rs
+@@ -16,29 +16,19 @@ use std::os::windows::ffi::OsStrExt;
+ use std::sync::atomic::{AtomicBool, Ordering};
+ 
+ use crate::process::{ExternalCommand, ProcessError, ProcessStatus};
+-use windows_sys::Win32::Foundation::{
+-    CloseHandle, HANDLE, INVALID_HANDLE_VALUE,
+-};
++use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
++use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
++use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+ use windows_sys::Win32::System::Console::{
+-    CreatePseudoConsole, ResizePseudoConsole, ClosePseudoConsole, HPCON,
++    ClosePseudoConsole, CreatePseudoConsole, HPCON, ResizePseudoConsole,
+ };
++use windows_sys::Win32::System::Memory::{GetProcessHeap, HEAP_ZERO_MEMORY, HeapAlloc, HeapFree};
+ use windows_sys::Win32::System::Pipes::CreatePipe;
+ use windows_sys::Win32::System::Threading::{
+-    CreateProcessW, GetExitCodeProcess, WaitForSingleObject, INFINITE, PROCESS_INFORMATION,
+-    STARTUPINFOEXW,
+-    PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
+-    InitializeProcThreadAttributeList,
+-    UpdateProcThreadAttribute,
+-    DeleteProcThreadAttributeList,
+-    LPPROC_THREAD_ATTRIBUTE_LIST,
+-    CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, STARTF_USESTDHANDLES,
+-};
+-use windows_sys::Win32::System::Memory::{
+-    HeapAlloc, HeapFree, GetProcessHeap, HEAP_ZERO_MEMORY,
+-};
+-use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+-use windows_sys::Win32::Foundation::{
+-    SetHandleInformation, HANDLE_FLAG_INHERIT,
++    CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
++    EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList,
++    LPPROC_THREAD_ATTRIBUTE_LIST, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_INFORMATION,
++    STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
+ };
+ 
+ /// A writer to the ConPTY input pipe (child's stdin).
+@@ -71,6 +61,17 @@ impl Writer {
+     }
+ }
+ 
++impl io::Write for Writer {
++    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
++        self.write_all(buf)?;
++        Ok(buf.len())
++    }
++
++    fn flush(&mut self) -> io::Result<()> {
++        Writer::flush(self)
++    }
++}
++
+ impl Drop for Writer {
+     fn drop(&mut self) {
+         unsafe { CloseHandle(self.handle) };
+@@ -119,6 +120,10 @@ pub struct PtyResizer {
+     hpc: HPCON,
+ }
+ 
++// SAFETY: `ResizePseudoConsole` is thread-safe on a live pseudoconsole handle.
++unsafe impl Send for PtyResizer {}
++unsafe impl Sync for PtyResizer {}
++
+ impl PtyResizer {
+     pub fn resize(self, size: crate::pty::PtySize) -> io::Result<()> {
+         let coord = windows_sys::Win32::System::Console::COORD {
+@@ -146,23 +151,28 @@ unsafe impl Send for PtyProcess {}
+ 
+ impl PtyProcess {
+     /// Starts `command` on a new ConPTY pseudoterminal.
+-    pub fn spawn(command: &ExternalCommand, size: crate::pty::PtySize) -> Result<Self, ProcessError> {
++    pub fn spawn(
++        command: &ExternalCommand,
++        size: crate::pty::PtySize,
++    ) -> Result<Self, ProcessError> {
+         let spec = command.launch_spec()?;
+ 
+         // create_pipe() returns (read_handle, write_handle)
+         // Pipe 1 (Input to ConPTY / Child stdin):
+         // ConPTY reads from conpty_input_read; We write to our_input_write
+-        let (conpty_input_read, our_input_write) = create_pipe().map_err(|source| ProcessError::Spawn {
+-            program: command.program().to_owned(),
+-            source,
+-        })?;
++        let (conpty_input_read, our_input_write) =
++            create_pipe().map_err(|source| ProcessError::Spawn {
++                program: command.program().to_owned(),
++                source,
++            })?;
+ 
+         // Pipe 2 (Output from ConPTY / Child stdout/stderr):
+         // ConPTY writes to conpty_output_write; We read from our_output_read
+-        let (our_output_read, conpty_output_write) = create_pipe().map_err(|source| ProcessError::Spawn {
+-            program: command.program().to_owned(),
+-            source,
+-        })?;
++        let (our_output_read, conpty_output_write) =
++            create_pipe().map_err(|source| ProcessError::Spawn {
++                program: command.program().to_owned(),
++                source,
++            })?;
+ 
+         // Create the pseudoconsole
+         let coord = windows_sys::Win32::System::Console::COORD {
+@@ -211,37 +221,30 @@ impl PtyProcess {
+         // Initialize attribute list for pseudoconsole
+         let mut attr_list_size = 0usize;
+         unsafe {
+-            InitializeProcThreadAttributeList(
+-                std::ptr::null_mut(),
+-                1,
+-                0,
+-                &mut attr_list_size,
+-            );
++            InitializeProcThreadAttributeList(std::ptr::null_mut(), 1, 0, &mut attr_list_size);
+         }
+ 
+-        let attr_list_mem = unsafe {
+-            HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, attr_list_size)
+-        } as LPPROC_THREAD_ATTRIBUTE_LIST;
++        let attr_list_mem = unsafe { HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, attr_list_size) }
++            as LPPROC_THREAD_ATTRIBUTE_LIST;
+ 
+         if attr_list_mem.is_null() {
+             unsafe { CloseHandle(our_input_write) };
+             unsafe { CloseHandle(our_output_read) };
+             unsafe { ClosePseudoConsole(hpc) };
+-                        return Err(ProcessError::Spawn {
++            return Err(ProcessError::Spawn {
+                 program: command.program().to_owned(),
+                 source: io::Error::last_os_error(),
+             });
+         }
+ 
+-        if unsafe {
+-            InitializeProcThreadAttributeList(attr_list_mem, 1, 0, &mut attr_list_size)
+-        } == 0
++        if unsafe { InitializeProcThreadAttributeList(attr_list_mem, 1, 0, &mut attr_list_size) }
++            == 0
+         {
+             unsafe { HeapFree(GetProcessHeap(), 0, attr_list_mem as _) };
+             unsafe { CloseHandle(our_input_write) };
+             unsafe { CloseHandle(our_output_read) };
+             unsafe { ClosePseudoConsole(hpc) };
+-                        return Err(ProcessError::Spawn {
++            return Err(ProcessError::Spawn {
+                 program: command.program().to_owned(),
+                 source: io::Error::last_os_error(),
+             });
+@@ -264,7 +267,7 @@ impl PtyProcess {
+             unsafe { CloseHandle(our_input_write) };
+             unsafe { CloseHandle(our_output_read) };
+             unsafe { ClosePseudoConsole(hpc) };
+-                        return Err(ProcessError::Spawn {
++            return Err(ProcessError::Spawn {
+                 program: command.program().to_owned(),
+                 source: io::Error::last_os_error(),
+             });
+@@ -341,20 +344,28 @@ impl PtyProcess {
+         Ok(Self {
+             hpc,
+             pi,
+-            reader: Some(Reader { handle: our_output_read }),
+-            writer: Some(Writer { handle: our_input_write }),
++            reader: Some(Reader {
++                handle: our_output_read,
++            }),
++            writer: Some(Writer {
++                handle: our_input_write,
++            }),
+             status: None,
+         })
+     }
+ 
+     /// Takes the readable end of the terminal output stream.
+-    pub fn take_reader(&mut self) -> Option<Reader> {
+-        self.reader.take()
++    pub fn take_reader(&mut self) -> Option<Box<dyn io::Read + Send>> {
++        self.reader
++            .take()
++            .map(|reader| Box::new(reader) as Box<dyn io::Read + Send>)
+     }
+ 
+     /// Takes the writable end of the terminal input stream.
+-    pub fn take_writer(&mut self) -> Option<Writer> {
+-        self.writer.take()
++    pub fn take_writer(&mut self) -> Option<Box<dyn io::Write + Send>> {
++        self.writer
++            .take()
++            .map(|writer| Box::new(writer) as Box<dyn io::Write + Send>)
+     }
+ 
+     /// Handle for resizing the terminal from another thread.
+@@ -434,10 +445,7 @@ fn create_pipe() -> io::Result<(HANDLE, HANDLE)> {
+         bInheritHandle: 1,
+     };
+ 
+-    if unsafe {
+-        CreatePipe(&mut read_handle, &mut write_handle, &sa, 0)
+-    } == 0
+-    {
++    if unsafe { CreatePipe(&mut read_handle, &mut write_handle, &sa, 0) } == 0 {
+         return Err(io::Error::last_os_error());
+     }
+ 
+@@ -450,7 +458,10 @@ fn quote_arg(arg: &str) -> String {
+         return "\"\"".to_string();
+     }
+ 
+-    if !arg.chars().any(|c| matches!(c, ' ' | '\t' | '\n' | '\u{0b}' | '"')) {
++    if !arg
++        .chars()
++        .any(|c| matches!(c, ' ' | '\t' | '\n' | '\u{0b}' | '"'))
++    {
+         return arg.to_string();
+     }
+ 
+@@ -488,9 +499,7 @@ fn quote_arg(arg: &str) -> String {
+ 
+ /// Builds the environment block for CreateProcessW.
+ /// Returns option_env_block.
+-fn build_environment_block(
+-    command: &ExternalCommand,
+-) -> Result<Option<Vec<u16>>, ProcessError> {
++fn build_environment_block(command: &ExternalCommand) -> Result<Option<Vec<u16>>, ProcessError> {
+     // When environment overrides or clear_env are explicitly set, build a block
+     // Otherwise inherit parent environment (pass None) to avoid DLL init issues
+     if command.clears_environment() || !command.environment_entries().is_empty() {
+@@ -512,9 +521,15 @@ fn build_environment_block(
+         // (Some child processes require it for DLL initialization)
+         if !command.clears_environment() && !env_map.contains_key("SYSTEMROOT") {
+             if let Ok(val) = std::env::var("SystemRoot") {
+-                env_map.insert("SYSTEMROOT".to_string(), (OsString::from("SystemRoot"), OsString::from(val)));
++                env_map.insert(
++                    "SYSTEMROOT".to_string(),
++                    (OsString::from("SystemRoot"), OsString::from(val)),
++                );
+             } else if let Ok(val) = std::env::var("SYSTEMROOT") {
+-                env_map.insert("SYSTEMROOT".to_string(), (OsString::from("SYSTEMROOT"), OsString::from(val)));
++                env_map.insert(
++                    "SYSTEMROOT".to_string(),
++                    (OsString::from("SYSTEMROOT"), OsString::from(val)),
++                );
+             }
+         }
+ 
+@@ -537,7 +552,7 @@ fn build_environment_block(
+ /// Terminal size of the shell's own console.
+ pub fn terminal_size() -> Option<crate::pty::PtySize> {
+     use windows_sys::Win32::System::Console::{
+-        GetConsoleScreenBufferInfo, GetStdHandle, CONSOLE_SCREEN_BUFFER_INFO, STD_OUTPUT_HANDLE,
++        CONSOLE_SCREEN_BUFFER_INFO, GetConsoleScreenBufferInfo, GetStdHandle, STD_OUTPUT_HANDLE,
+     };
+ 
+     let handle = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
+@@ -567,20 +582,20 @@ pub struct CtrlCForwarder {
+ 
+ impl CtrlCForwarder {
+     fn install(process_handle: HANDLE) -> io::Result<Self> {
+-        Ok(Self { _process_handle: process_handle })
++        Ok(Self {
++            _process_handle: process_handle,
++        })
+     }
+ 
+-    pub fn handle_ctrlc(&self) {
+-    }
++    pub fn handle_ctrlc(&self) {}
+ }
+ 
+ impl Drop for CtrlCForwarder {
+-    fn drop(&mut self) {
+-    }
++    fn drop(&mut self) {}
+ }
+ 
+-/// Minimal relay_stdin function - takes Writer by value.
+-pub fn relay_stdin(mut writer: Writer, stop: &AtomicBool) {
++/// Relays stdin into the pseudoterminal until `stop` is set.
++pub fn relay_stdin(mut writer: Box<dyn io::Write + Send>, stop: &AtomicBool) {
+     use std::io::Read;
+     let mut stdin = std::io::stdin();
+     let mut buffer = [0u8; 4096];
+@@ -600,4 +615,4 @@ pub fn relay_stdin(mut writer: Writer, stop: &AtomicBool) {
+             Err(_) => break,
+         }
+     }
+-}
+\ No newline at end of file
++}
+diff --git a/crates/shell-builtins/src/registry.rs b/crates/shell-builtins/src/registry.rs
+index 6a7501e..2a91248 100644
+--- a/crates/shell-builtins/src/registry.rs
++++ b/crates/shell-builtins/src/registry.rs
+@@ -32,7 +32,7 @@ impl BuiltinCommand {
+ }
+ 
+ /// Commands available in the native command engine.
+-pub const DEFAULT_BUILTINS: [BuiltinCommand; 53] = [
++pub const DEFAULT_BUILTINS: [BuiltinCommand; 56] = [
+     BuiltinCommand::new("help", "Show this help message"),
+     BuiltinCommand::new("pwd", "Print the current working directory"),
+     BuiltinCommand::new("cd", "Change the working directory"),
+@@ -74,12 +74,15 @@ pub const DEFAULT_BUILTINS: [BuiltinCommand; 53] = [
+     BuiltinCommand::new("bg", "Report a background job's state"),
+     BuiltinCommand::new("run", "Run a KERNEXT script file"),
+     BuiltinCommand::new("test", "Evaluate a conditional expression"),
++    BuiltinCommand::new("[", "Evaluate a conditional expression (test)"),
+     BuiltinCommand::new("expr", "Evaluate an arithmetic expression"),
+     BuiltinCommand::new("sleep", "Pause for a number of seconds"),
+     BuiltinCommand::new("true", "Return a successful status"),
+     BuiltinCommand::new("false", "Return a failing status"),
+     BuiltinCommand::new("whoami", "Show the current user name"),
+     BuiltinCommand::new("date", "Show the current date and time"),
++    BuiltinCommand::new("host", "Resolve a hostname to its addresses"),
++    BuiltinCommand::new("sysinfo", "Show system and runtime information"),
+     BuiltinCommand::new("version", "Show the shell version"),
+     BuiltinCommand::new("exit", "Exit the shell"),
+     BuiltinCommand::new("export", "Mark variables for export to child processes"),
+diff --git a/crates/shell-builtins/tests/builtins.rs b/crates/shell-builtins/tests/builtins.rs
+index 09405f5..b855e18 100644
+--- a/crates/shell-builtins/tests/builtins.rs
++++ b/crates/shell-builtins/tests/builtins.rs
+@@ -356,6 +356,72 @@ fn whoami_date_and_version_produce_output() {
+     assert!(harness.output("version").starts_with("KERNEXT v"));
+ }
+ 
++#[test]
++fn host_resolves_a_literal_address_without_a_network() {
++    let mut harness = Harness::new();
++
++    let output = harness.output("host 127.0.0.1");
++
++    assert!(
++        output.contains("127.0.0.1 has address 127.0.0.1"),
++        "{output}"
++    );
++}
++
++#[test]
++fn host_resolves_localhost_through_the_hosts_file() {
++    let mut harness = Harness::new();
++
++    let outcome = harness.run("host localhost");
++
++    assert!(
++        outcome.success(),
++        "localhost should resolve: {:?}",
++        outcome.output()
++    );
++    assert!(
++        harness
++            .output("host localhost")
++            .contains("localhost has address"),
++        "expected at least one address line"
++    );
++}
++
++#[test]
++fn host_reports_usage_and_unresolvable_names() {
++    let mut harness = Harness::new();
++
++    let missing_operand = harness.run("host");
++    assert!(!missing_operand.success());
++    assert_eq!(missing_operand.output(), Some("usage: host <hostname>"));
++
++    // A syntactically invalid hostname fails without touching the network,
++    // which keeps this test deterministic on every platform.
++    let invalid = harness.run("host \"not a host name\"");
++    assert!(!invalid.success());
++    assert!(
++        invalid.output().unwrap_or_default().starts_with("host:"),
++        "expected an error message, got {:?}",
++        invalid.output()
++    );
++}
++
++#[test]
++fn sysinfo_reports_runtime_platform_and_directory() {
++    let mut harness = Harness::new();
++
++    let output = harness.output("sysinfo");
++
++    assert!(output.contains("product    KERNEXT"), "{output}");
++    assert!(output.contains("version    "), "{output}");
++    assert!(output.contains("arch       "), "{output}");
++    assert!(output.contains("cpu-cores  "), "{output}");
++    assert!(
++        output.contains(&format!("cwd        {}", harness.path().display())),
++        "{output}"
++    );
++}
++
+ #[test]
+ fn clear_requests_a_screen_clear() {
+     let mut harness = Harness::new();
+@@ -483,6 +549,22 @@ fn test_and_expr_evaluate_conditionals_and_arithmetic() {
+     assert_eq!(harness.output("expr 10 - 4"), "6");
+ }
+ 
++#[test]
++fn bracket_alias_evaluates_test_expressions() {
++    let mut harness = Harness::new();
++
++    assert_eq!(harness.output("[ 3 -gt 2 ] && echo larger"), "larger\n");
++
++    let failed = harness.run("[ 3 -lt 2 ]");
++    assert!(!failed.success());
++
++    // A failed condition is visible through $?, like `test` itself.
++    assert_eq!(harness.output("echo $?"), "1\n");
++
++    let unclosed = harness.output("[ 3 -gt 2");
++    assert!(unclosed.contains("missing closing"), "{unclosed}");
++}
++
+ #[test]
+ fn path_helpers_and_which_resolve_native_names() {
+     let mut harness = Harness::new();
+diff --git a/crates/shell-builtins/tests/pty_windows.rs b/crates/shell-builtins/tests/pty_windows.rs
+index 71dcc52..d0a6184 100644
+--- a/crates/shell-builtins/tests/pty_windows.rs
++++ b/crates/shell-builtins/tests/pty_windows.rs
+@@ -10,9 +10,7 @@ use shell_builtins::{ExternalCommand, PtyProcess, PtySize};
+ use std::io::Read;
+ use std::thread;
+ 
+-fn spawn_and_collect(
+-    command: &ExternalCommand,
+-) -> (Option<i32>, String) {
++fn spawn_and_collect(command: &ExternalCommand) -> (Option<i32>, String) {
+     let mut process =
+         PtyProcess::spawn(command, PtySize::DEFAULT).expect("pseudoterminal should start");
+ 
+@@ -42,8 +40,13 @@ fn cmd_exit_code_survives_the_pseudoterminal() {
+ 
+ #[test]
+ fn powershell_exit_code_survives_the_pseudoterminal() {
+-    let command = ExternalCommand::new("powershell")
+-        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "exit 42"]);
++    let command = ExternalCommand::new("powershell").args([
++        "-NoLogo",
++        "-NoProfile",
++        "-NonInteractive",
++        "-Command",
++        "exit 42",
++    ]);
+ 
+     let (code, output) = spawn_and_collect(&command);
+ 
+diff --git a/docs/ARCHITECTURE.md b/docs/ARCHITECTURE.md
+index c104ec5..f2a8fa2 100644
+--- a/docs/ARCHITECTURE.md
++++ b/docs/ARCHITECTURE.md
+@@ -1,8 +1,10 @@
+ # KERNEXT Architecture
+ 
+-This document describes the implemented CLI architecture and the intended
+-reuse boundary for future KERNEXT Web and Desktop surfaces. Web and Desktop are
+-**plans only**; no code for them exists in this repository.
++This document describes the implemented CLI architecture and how the Web and
++Desktop surfaces reuse the same engine. All three products exist in this
++repository: the CLI (`apps/shell-cli`), the web server and front end
++(`apps/shell-server`, `apps/web`), and the Tauri desktop application
++(`apps/desktop`).
+ 
+ ## Current CLI data flow
+ 
+@@ -20,16 +22,20 @@ input
+ The application never splits input with `split_whitespace`. The dispatcher uses
+ `lex_spanned` plus `parse` for every command line.
+ 
+-## Crates
++## Crates and apps
+ 
+-| Crate | Responsibility | Terminal dependency |
++| Crate / app | Responsibility | Terminal dependency |
+ | --- | --- | --- |
+ | `shell-core` | Branding constants, `ShellError`, lexer, parser, AST, spans | None |
+ | `shell-config` | Typed `Config`, validation, TOML load/save, default paths | None |
+ | `shell-runtime` | `Session`, `Platform`, working directory, variables, lifecycle | None |
+ | `shell-builtins` | Registry, evaluator, native commands, pipelines, process executor | stdio only |
+ | `shell-line-editor` | Reedline integration, prompt, history, terminal clearing | Reedline/crossterm |
+-| `shell-cli` | Clap arguments, KERNEXT startup, REPL orchestration | Terminal |
++| `shell-api` | Serializable session/terminal API contracts | None |
++| `shell-cli` | Clap arguments, KERNEXT startup, REPL orchestration, embedded worker | Terminal |
++| `shell-server` | Local Axum server: HTTP sessions, execution, engine and PTY WebSockets | None |
++| `apps/web` | React + Vite + Tailwind front end shared by web and desktop | None |
++| `apps/desktop` | Tauri 2 application reusing `apps/web` with a local Rust runtime | WebView2 |
+ 
+ Dependency direction:
+ 
+@@ -39,6 +45,16 @@ shell-cli ──> shell-builtins ──> shell-runtime ──> shell-config ─
+     │                                └──────────> shell-core
+     ├──────────> shell-line-editor ──> reedline / crossterm
+     └──────────> shell-core
++
++shell-api ──> shell-builtins ──> shell-runtime ──> shell-core
++
++shell-server ──> shell-api
++             └──> shell-builtins / shell-runtime (through AppState)
++
++shell-desktop ─> tauri, tauri-plugin-opener
++              ─> shell-server (AppState::local engine sessions)
++              ─> shell-cli (worker::run_embedded for PTY sessions)
++              ─> shell-api, shell-builtins, shell-runtime, shell-core, shell-config
+ ```
+ 
+ ## Reusable core boundary
+@@ -53,9 +69,12 @@ The engine is designed so a non-terminal front end can reuse it:
+   separate so redirections can target them individually.
+ - `shell-runtime::Session` is cloneable, which lets pipeline stages run against
+   an isolated copy while filesystem side effects persist.
++- `shell-api` defines the serializable request/response contracts used by both
++  the web server and the desktop runtime, so both surfaces speak the same
++  session vocabulary.
+ 
+-A future front end should call this boundary rather than reimplementing shell
+-semantics. The CLI remains the reference implementation.
++The Web server and the Desktop application both call this boundary rather than
++reimplementing shell semantics. The CLI remains the reference implementation.
+ 
+ ### What is stable
+ 
+@@ -72,8 +91,8 @@ semantics. The CLI remains the reference implementation.
+ - Screen clearing (`shell-line-editor::clear_terminal`).
+ - Process-wide stdin/stdout/stderr behavior in `shell-builtins::process`.
+ 
+-A Web or Desktop surface should supply its own renderer and its own I/O
+-transport while reusing parsing, evaluation, and session state.
++The Web and Desktop surfaces supply their own renderers and I/O transports
++while reusing parsing, evaluation, and session state.
+ 
+ ## Execution semantics
+ 
+@@ -182,35 +201,59 @@ The canonical checkout is on a VFAT mount with `showexec`. `.cargo/config.toml`
+ sets `build.target-dir = "/home/trishit/.cache/terminal-target"` so build
+ artifacts land on ext4. Do not create a repo-local `target/` directory.
+ 
+-## Future: KERNEXT Web (planned)
+-
+-Proposed shape, not implemented:
++## KERNEXT Web (implemented)
+ 
+ ```text
+-browser UI
+-  -> WebSocket/HTTP transport
+-  -> KERNEXT engine service
+-       -> shell-core parser
+-       -> shell-builtins evaluator
+-       -> sandboxed execution backend
+-  -> streamed stdout/stderr/outcomes
++browser UI (apps/web, React + Vite + Tailwind + shadcn/ui)
++  -> WebSocket /api/v1/sessions/{id}/ws   (engine sessions: JSON messages)
++  -> WebSocket /api/v1/pty                 (raw PTY bytes over a websocket)
++  -> shell-server (Axum)
++       -> AppState engine sessions  (shell-builtins Dispatcher)
++       -> PTY endpoint             (ConPTY on Windows, openpty on Unix)
++            -> spawns the `kernext` CLI binary on a pseudoterminal
+ ```
+ 
+-Open questions: execution isolation, filesystem model, authentication, and how
+-interactive line editing maps to the browser. A graphical splash and mountain
+-wallpaper belong here, not in the CLI.
+-
+-## Future: KERNEXT Desktop (planned)
+-
+-Proposed shape, not implemented:
++- Engine sessions execute each submitted command line through the same
++  dispatcher the CLI uses and stream `ServerMessage` JSON (output, status,
++  prompt, cwd).
++- The PTY endpoint launches the real `kernext` executable on a pseudoterminal
++  and relays raw bytes, giving the browser full-screen interactive programs,
++  resize, and Ctrl+C.
++- `pty_binary()` resolution order: `KERNEXT_BIN`, a sibling of the server
++  executable, then `PATH`.
++- Routes: `/api/v1/health`, `/api/v1/sessions` (GET/POST),
++  `/api/v1/sessions/{id}` (DELETE/GET), `/api/v1/sessions/{id}/execute`,
++  `/api/v1/sessions/{id}/ws`, `/api/v1/pty`.
++- The front end is transport-aware: the same React terminal components run
++  against either the WebSocket transport or the desktop Tauri IPC transport.
++
++## KERNEXT Desktop (implemented)
+ 
+ ```text
+-native window / terminal surface
+-  -> shared line-editor abstraction
+-  -> shell-core parser
+-  -> shell-builtins evaluator
+-  -> local process executor
++Tauri 2 window (apps/desktop/src-tauri, binary kernext-desktop)
++  -> embedded apps/web front end (frontendDist ../../web/dist, route /desktop)
++  -> tauri invoke IPC
++  -> shell-desktop commands (local Rust runtime only — never the web server)
++       -> engine sessions    (AppState::local, shared with shell-server)
++       -> PTY sessions       (this same exe with KERNEXT_DESKTOP_WORKER=1
++                              running shell_cli::worker::run_embedded)
++       -> filesystem, command catalog, settings
+ ```
+ 
+-The desktop surface should reuse the same engine boundary as the CLI and Web,
+-with a platform-native renderer. No desktop code exists today.
++- 20 Tauri commands: `desktop_health`, `desktop_dashboard`,
++  `desktop_create_session`, `desktop_execute_session`,
++  `desktop_delete_session`, `desktop_list_sessions`,
++  `desktop_create_pty_session`, `desktop_pty_write`, `desktop_pty_resize`,
++  `desktop_pty_interrupt`, `desktop_pty_close`, `desktop_fs_list`,
++  `desktop_fs_create_directory`, `desktop_fs_rename`, `desktop_fs_delete`,
++  `desktop_fs_open`, `desktop_fs_session_directory`,
++  `desktop_command_catalog`, `desktop_settings_get`,
++  `desktop_settings_save`.
++- PTY sessions spawn the desktop executable itself with
++  `KERNEXT_DESKTOP_WORKER=1`; there is no sidecar binary to ship.
++- Engine sessions reuse `shell_server::AppState::local()` so the desktop and
++  the server share the same session model.
++- The window uses `decorations: false` plus `data-tauri-drag-region` for a
++  custom title bar; the frontend is served from the embedded web bundle.
++- See [`DESKTOP.md`](DESKTOP.md) for settings, configuration, and the
++  Windows MinGW manifest handling in `build.rs`.
+diff --git a/installers/install-linux.sh b/installers/install-linux.sh
+index 0992abe..867637e 100644
+--- a/installers/install-linux.sh
++++ b/installers/install-linux.sh
+@@ -8,7 +8,19 @@ VERSION="${KERNEXT_VERSION:-0.1.0}"
+ REPO_URL="https://github.com/Trishit6/terminal"
+ INSTALL_DIR="/usr/local/bin"
+ BINARY_NAME="kernext"
+-ARCHIVE_NAME="kernext-x86_64-unknown-linux-gnu.tar.gz"
++
++# Pick the matching release archive. Only x86_64 Linux archives are
++# published; musl-based distributions get the static binary.
++ARCHITECTURE="$(uname -m)"
++if [[ "${ARCHITECTURE}" != "x86_64" && "${ARCHITECTURE}" != "amd64" ]]; then
++    printf '[FAIL] No Linux release archive exists for %s yet; build from source instead.\n' "${ARCHITECTURE}" >&2
++    exit 1
++fi
++if [[ -f /lib/ld-musl-x86_64.so.1 ]]; then
++    ARCHIVE_NAME="kernext-x86_64-unknown-linux-musl.tar.gz"
++else
++    ARCHIVE_NAME="kernext-x86_64-unknown-linux-gnu.tar.gz"
++fi
+ ARCHIVE_URL="${REPO_URL}/releases/download/v${VERSION}/${ARCHIVE_NAME}"
+ 
+ # Animation is presentation only. It is disabled automatically for pipes,
+diff --git a/installers/install-macos.sh b/installers/install-macos.sh
+index 016df5f..38de657 100644
+--- a/installers/install-macos.sh
++++ b/installers/install-macos.sh
+@@ -8,7 +8,17 @@ VERSION="${KERNEXT_VERSION:-0.1.0}"
+ REPO_URL="https://github.com/Trishit6/terminal"
+ INSTALL_DIR="/usr/local/bin"
+ BINARY_NAME="kernext"
+-ARCHIVE_NAME="kernext-x86_64-apple-darwin.tar.gz"
++
++# Pick the matching release archive. Apple Silicon hosts run x86_64
++# binaries through Rosetta as a fallback, but prefer the native slice.
++case "$(uname -m)" in
++    arm64)
++        ARCHIVE_NAME="kernext-aarch64-apple-darwin.tar.gz"
++        ;;
++    *)
++        ARCHIVE_NAME="kernext-x86_64-apple-darwin.tar.gz"
++        ;;
++esac
+ ARCHIVE_URL="${REPO_URL}/releases/download/v${VERSION}/${ARCHIVE_NAME}"
+ 
+ # Animation is presentation only. It is disabled automatically for pipes,
+diff --git a/knowledge.md b/knowledge.md
+index f70ab51..83daaab 100644
+--- a/knowledge.md
++++ b/knowledge.md
+@@ -135,11 +135,11 @@ into the shell is rejected by design.
+ ## Current feature set
+ 
+ - The registry (`crates/shell-builtins/src/registry.rs`) defines
+-  `DEFAULT_BUILTINS: [BuiltinCommand; 53]` — including `tree`, `find`, `stat`,
++  `DEFAULT_BUILTINS: [BuiltinCommand; 56]` — including `tree`, `find`, `stat`,
+   `head`, `tail`, `wc`, `grep`, `sort`, `uniq`, `which`, `basename`, `dirname`,
+   `realpath`, `jobs`, `wait`, `kill`, `fg`, `bg`, `run` (script file), `test`,
+-  `[`, `expr`, `sleep`, `true`, `false`, and the scripting helpers `print`,
+-  `input`, `len`, `type`, `str`, `int`, `float`, `bool`.
++  `[`, `expr`, `sleep`, `true`, `false`, `host`, `sysinfo`, and the scripting
++  helpers `print`, `input`, `len`, `type`, `str`, `int`, `float`, `bool`.
+ - Background `&` is **real**: external commands are spawned and tracked via
+   `Child` handles, other expressions run on a detached thread with a cloned
+   session, and `crates/shell-runtime/src/jobs.rs` provides `JobTable`
+@@ -182,10 +182,11 @@ build scripts and test binaries cannot be executed.
+ 
+ Add tests next to the behavior: unit tests in `src/`, integration tests in
+ `crates/shell-builtins/tests/`, `crates/shell-core/tests/`,
+-`apps/shell-cli/tests/`. The full suite is 414 tests on Windows, 20 of which
++`apps/shell-cli/tests/`. The full suite is 469 tests on Windows (467
++unit/integration plus 2 `shell-core` doc-tests), 20 of which
+ live in `crates/shell-builtins/tests/windows_scripts.rs` and only build on
+-Windows. The Unix baseline was 399 before those were added (Unix covers
+-signal/abort termination instead).
++Windows. The Unix baseline was 399 before the Windows-only suites were added
++(Unix covers signal/abort termination instead).
+ 
+ - Filesystem tests use isolated temp dirs plus `Session::set_working_directory`;
+   they never mutate the process cwd.
+diff --git a/package.json b/package.json
+index 03eb954..ef0fed0 100644
+--- a/package.json
++++ b/package.json
+@@ -9,7 +9,11 @@
+     "web:build": "pnpm --filter @kernext/web build",
+     "web:preview": "pnpm --filter @kernext/web preview",
+     "web:typecheck": "pnpm --filter @kernext/web typecheck",
+-    "desktop:dev": "pnpm --filter @kernext/desktop tauri dev",
+-    "desktop:build": "pnpm --filter @kernext/desktop tauri build"
++    "web:test": "pnpm --filter @kernext/web test",
++    "desktop:dev": "pnpm --filter @kernext/desktop dev",
++    "desktop:build": "pnpm --filter @kernext/desktop build",
++    "typecheck": "pnpm web:typecheck",
++    "build": "pnpm web:build",
++    "test": "pnpm web:test"
+   }
+ }

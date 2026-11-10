@@ -147,15 +147,23 @@ impl ShellSession {
     }
 
     /// Applies request-scoped working-directory and environment overrides.
+    ///
+    /// Only the entries the request actually supplies are recorded. In
+    /// particular, a request without a `working_directory` override must not
+    /// restore anything, or a `cd` executed by the command would be silently
+    /// reverted — the CLI and the engine WebSocket keep it, so the HTTP path
+    /// has to as well.
     pub fn begin_overrides(
         &mut self,
         request: &ExecuteCommandRequest,
     ) -> Result<SessionOverrides, ApiError> {
+        let mut directory_overridden = false;
         let old_directory = self.session.working_directory().to_path_buf();
 
         if let Some(directory) = &request.working_directory {
             self.session
                 .set_working_directory(resolve_directory(directory)?);
+            directory_overridden = true;
         }
 
         let exported: HashMap<String, bool> = self
@@ -178,6 +186,7 @@ impl ShellSession {
         }
 
         Ok(SessionOverrides {
+            directory_overridden,
             old_directory,
             environment,
         })
@@ -185,8 +194,9 @@ impl ShellSession {
 
     /// Restores the state saved by [`ShellSession::begin_overrides`].
     pub fn end_overrides(&mut self, overrides: SessionOverrides) {
-        self.session
-            .set_working_directory(overrides.old_directory);
+        if overrides.directory_overridden {
+            self.session.set_working_directory(overrides.old_directory);
+        }
 
         for (name, previous, was_exported) in overrides.environment {
             match previous {
@@ -200,6 +210,7 @@ impl ShellSession {
 /// State captured before request-scoped overrides are applied.
 #[derive(Debug)]
 pub struct SessionOverrides {
+    directory_overridden: bool,
     old_directory: PathBuf,
     environment: Vec<(String, Option<String>, bool)>,
 }
@@ -244,9 +255,16 @@ fn validate_variable_name(name: &str) -> Result<(), ApiError> {
 
 fn is_sensitive_name(name: &str) -> bool {
     let upper = name.to_ascii_uppercase();
-    ["TOKEN", "SECRET", "PASSWORD", "PASSWD", "PRIVATE_KEY", "API_KEY"]
-        .iter()
-        .any(|needle| upper.contains(needle))
+    [
+        "TOKEN",
+        "SECRET",
+        "PASSWORD",
+        "PASSWD",
+        "PRIVATE_KEY",
+        "API_KEY",
+    ]
+    .iter()
+    .any(|needle| upper.contains(needle))
 }
 
 /// Maps a REPL action onto the API vocabulary.
@@ -299,6 +317,20 @@ impl AppState {
     #[must_use]
     pub fn token(&self) -> Option<&str> {
         self.token.as_deref()
+    }
+
+    /// Builds a local-only state with no authentication token.
+    ///
+    /// The desktop application embeds the session registry directly and never
+    /// exposes it over HTTP, so it does not read `KERNEXT_SERVER_TOKEN`.
+    #[must_use]
+    pub fn local() -> Self {
+        Self {
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            next_id: Arc::new(AtomicUsize::new(1)),
+            token: None,
+            max_sessions: 16,
+        }
     }
 
     /// Number of live sessions.
@@ -423,11 +455,7 @@ mod tests {
         let original = session.info().working_directory;
         let request = ExecuteCommandRequest {
             command: "pwd".to_owned(),
-            working_directory: Some(
-                std::env::temp_dir()
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
+            working_directory: Some(std::env::temp_dir().to_string_lossy().into_owned()),
             environment: Some(HashMap::from([(
                 "KERNEXT_TEST_OVERRIDE".to_owned(),
                 "present".to_owned(),
@@ -452,6 +480,53 @@ mod tests {
     }
 
     #[test]
+    fn cd_persists_when_no_directory_override_is_supplied() {
+        let mut session = new_session();
+        let original = session.info().working_directory;
+        let request = ExecuteCommandRequest {
+            command: "cd ..".to_owned(),
+            ..ExecuteCommandRequest::default()
+        };
+
+        let overrides = session
+            .begin_overrides(&request)
+            .expect("plain requests should not fail");
+        let response = session.execute(&request.command);
+        session.end_overrides(overrides);
+
+        assert!(response.success, "{response:?}");
+        let moved = session.info().working_directory;
+        assert_ne!(
+            moved, original,
+            "cd executed by the command must persist, like the CLI"
+        );
+        assert_eq!(
+            response.session.working_directory, moved,
+            "the response snapshot must report the directory after the command"
+        );
+
+        // And a request-scoped override still wins for one command only.
+        let request = ExecuteCommandRequest {
+            command: "pwd".to_owned(),
+            working_directory: Some(std::env::temp_dir().to_string_lossy().into_owned()),
+            ..ExecuteCommandRequest::default()
+        };
+        let overrides = session
+            .begin_overrides(&request)
+            .expect("override should apply");
+        let response = session.execute(&request.command);
+        session.end_overrides(overrides);
+
+        assert!(response.success, "{response:?}");
+        assert!(
+            response.output.contains("Temp") || response.output.contains("tmp"),
+            "{}",
+            response.output
+        );
+        assert_eq!(session.info().working_directory, moved);
+    }
+
+    #[test]
     fn unknown_working_directories_are_rejected() {
         let mut session = new_session();
         let request = ExecuteCommandRequest {
@@ -463,4 +538,3 @@ mod tests {
         assert!(session.begin_overrides(&request).is_err());
     }
 }
-

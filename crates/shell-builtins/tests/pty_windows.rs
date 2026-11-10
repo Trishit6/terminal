@@ -10,9 +10,7 @@ use shell_builtins::{ExternalCommand, PtyProcess, PtySize};
 use std::io::Read;
 use std::thread;
 
-fn spawn_and_collect(
-    command: &ExternalCommand,
-) -> (Option<i32>, String) {
+fn spawn_and_collect(command: &ExternalCommand) -> (Option<i32>, String) {
     let mut process =
         PtyProcess::spawn(command, PtySize::DEFAULT).expect("pseudoterminal should start");
 
@@ -42,8 +40,13 @@ fn cmd_exit_code_survives_the_pseudoterminal() {
 
 #[test]
 fn powershell_exit_code_survives_the_pseudoterminal() {
-    let command = ExternalCommand::new("powershell")
-        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "exit 42"]);
+    let command = ExternalCommand::new("powershell").args([
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "exit 42",
+    ]);
 
     let (code, output) = spawn_and_collect(&command);
 

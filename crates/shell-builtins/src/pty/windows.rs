@@ -16,29 +16,19 @@ use std::os::windows::ffi::OsStrExt;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::process::{ExternalCommand, ProcessError, ProcessStatus};
-use windows_sys::Win32::Foundation::{
-    CloseHandle, HANDLE, INVALID_HANDLE_VALUE,
-};
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
+use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
 use windows_sys::Win32::System::Console::{
-    CreatePseudoConsole, ResizePseudoConsole, ClosePseudoConsole, HPCON,
+    ClosePseudoConsole, CreatePseudoConsole, HPCON, ResizePseudoConsole,
 };
+use windows_sys::Win32::System::Memory::{GetProcessHeap, HEAP_ZERO_MEMORY, HeapAlloc, HeapFree};
 use windows_sys::Win32::System::Pipes::CreatePipe;
 use windows_sys::Win32::System::Threading::{
-    CreateProcessW, GetExitCodeProcess, WaitForSingleObject, INFINITE, PROCESS_INFORMATION,
-    STARTUPINFOEXW,
-    PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
-    InitializeProcThreadAttributeList,
-    UpdateProcThreadAttribute,
-    DeleteProcThreadAttributeList,
-    LPPROC_THREAD_ATTRIBUTE_LIST,
-    CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT, STARTF_USESTDHANDLES,
-};
-use windows_sys::Win32::System::Memory::{
-    HeapAlloc, HeapFree, GetProcessHeap, HEAP_ZERO_MEMORY,
-};
-use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
-use windows_sys::Win32::Foundation::{
-    SetHandleInformation, HANDLE_FLAG_INHERIT,
+    CREATE_UNICODE_ENVIRONMENT, CreateProcessW, DeleteProcThreadAttributeList,
+    EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList,
+    LPPROC_THREAD_ATTRIBUTE_LIST, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE, PROCESS_INFORMATION,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
 };
 
 /// A writer to the ConPTY input pipe (child's stdin).
@@ -68,6 +58,17 @@ impl Writer {
 
     pub fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+impl io::Write for Writer {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.write_all(buf)?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Writer::flush(self)
     }
 }
 
@@ -119,6 +120,10 @@ pub struct PtyResizer {
     hpc: HPCON,
 }
 
+// SAFETY: `ResizePseudoConsole` is thread-safe on a live pseudoconsole handle.
+unsafe impl Send for PtyResizer {}
+unsafe impl Sync for PtyResizer {}
+
 impl PtyResizer {
     pub fn resize(self, size: crate::pty::PtySize) -> io::Result<()> {
         let coord = windows_sys::Win32::System::Console::COORD {
@@ -146,23 +151,28 @@ unsafe impl Send for PtyProcess {}
 
 impl PtyProcess {
     /// Starts `command` on a new ConPTY pseudoterminal.
-    pub fn spawn(command: &ExternalCommand, size: crate::pty::PtySize) -> Result<Self, ProcessError> {
+    pub fn spawn(
+        command: &ExternalCommand,
+        size: crate::pty::PtySize,
+    ) -> Result<Self, ProcessError> {
         let spec = command.launch_spec()?;
 
         // create_pipe() returns (read_handle, write_handle)
         // Pipe 1 (Input to ConPTY / Child stdin):
         // ConPTY reads from conpty_input_read; We write to our_input_write
-        let (conpty_input_read, our_input_write) = create_pipe().map_err(|source| ProcessError::Spawn {
-            program: command.program().to_owned(),
-            source,
-        })?;
+        let (conpty_input_read, our_input_write) =
+            create_pipe().map_err(|source| ProcessError::Spawn {
+                program: command.program().to_owned(),
+                source,
+            })?;
 
         // Pipe 2 (Output from ConPTY / Child stdout/stderr):
         // ConPTY writes to conpty_output_write; We read from our_output_read
-        let (our_output_read, conpty_output_write) = create_pipe().map_err(|source| ProcessError::Spawn {
-            program: command.program().to_owned(),
-            source,
-        })?;
+        let (our_output_read, conpty_output_write) =
+            create_pipe().map_err(|source| ProcessError::Spawn {
+                program: command.program().to_owned(),
+                source,
+            })?;
 
         // Create the pseudoconsole
         let coord = windows_sys::Win32::System::Console::COORD {
@@ -211,37 +221,30 @@ impl PtyProcess {
         // Initialize attribute list for pseudoconsole
         let mut attr_list_size = 0usize;
         unsafe {
-            InitializeProcThreadAttributeList(
-                std::ptr::null_mut(),
-                1,
-                0,
-                &mut attr_list_size,
-            );
+            InitializeProcThreadAttributeList(std::ptr::null_mut(), 1, 0, &mut attr_list_size);
         }
 
-        let attr_list_mem = unsafe {
-            HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, attr_list_size)
-        } as LPPROC_THREAD_ATTRIBUTE_LIST;
+        let attr_list_mem = unsafe { HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, attr_list_size) }
+            as LPPROC_THREAD_ATTRIBUTE_LIST;
 
         if attr_list_mem.is_null() {
             unsafe { CloseHandle(our_input_write) };
             unsafe { CloseHandle(our_output_read) };
             unsafe { ClosePseudoConsole(hpc) };
-                        return Err(ProcessError::Spawn {
+            return Err(ProcessError::Spawn {
                 program: command.program().to_owned(),
                 source: io::Error::last_os_error(),
             });
         }
 
-        if unsafe {
-            InitializeProcThreadAttributeList(attr_list_mem, 1, 0, &mut attr_list_size)
-        } == 0
+        if unsafe { InitializeProcThreadAttributeList(attr_list_mem, 1, 0, &mut attr_list_size) }
+            == 0
         {
             unsafe { HeapFree(GetProcessHeap(), 0, attr_list_mem as _) };
             unsafe { CloseHandle(our_input_write) };
             unsafe { CloseHandle(our_output_read) };
             unsafe { ClosePseudoConsole(hpc) };
-                        return Err(ProcessError::Spawn {
+            return Err(ProcessError::Spawn {
                 program: command.program().to_owned(),
                 source: io::Error::last_os_error(),
             });
@@ -264,7 +267,7 @@ impl PtyProcess {
             unsafe { CloseHandle(our_input_write) };
             unsafe { CloseHandle(our_output_read) };
             unsafe { ClosePseudoConsole(hpc) };
-                        return Err(ProcessError::Spawn {
+            return Err(ProcessError::Spawn {
                 program: command.program().to_owned(),
                 source: io::Error::last_os_error(),
             });
@@ -341,20 +344,28 @@ impl PtyProcess {
         Ok(Self {
             hpc,
             pi,
-            reader: Some(Reader { handle: our_output_read }),
-            writer: Some(Writer { handle: our_input_write }),
+            reader: Some(Reader {
+                handle: our_output_read,
+            }),
+            writer: Some(Writer {
+                handle: our_input_write,
+            }),
             status: None,
         })
     }
 
     /// Takes the readable end of the terminal output stream.
-    pub fn take_reader(&mut self) -> Option<Reader> {
-        self.reader.take()
+    pub fn take_reader(&mut self) -> Option<Box<dyn io::Read + Send>> {
+        self.reader
+            .take()
+            .map(|reader| Box::new(reader) as Box<dyn io::Read + Send>)
     }
 
     /// Takes the writable end of the terminal input stream.
-    pub fn take_writer(&mut self) -> Option<Writer> {
-        self.writer.take()
+    pub fn take_writer(&mut self) -> Option<Box<dyn io::Write + Send>> {
+        self.writer
+            .take()
+            .map(|writer| Box::new(writer) as Box<dyn io::Write + Send>)
     }
 
     /// Handle for resizing the terminal from another thread.
@@ -434,10 +445,7 @@ fn create_pipe() -> io::Result<(HANDLE, HANDLE)> {
         bInheritHandle: 1,
     };
 
-    if unsafe {
-        CreatePipe(&mut read_handle, &mut write_handle, &sa, 0)
-    } == 0
-    {
+    if unsafe { CreatePipe(&mut read_handle, &mut write_handle, &sa, 0) } == 0 {
         return Err(io::Error::last_os_error());
     }
 
@@ -450,7 +458,10 @@ fn quote_arg(arg: &str) -> String {
         return "\"\"".to_string();
     }
 
-    if !arg.chars().any(|c| matches!(c, ' ' | '\t' | '\n' | '\u{0b}' | '"')) {
+    if !arg
+        .chars()
+        .any(|c| matches!(c, ' ' | '\t' | '\n' | '\u{0b}' | '"'))
+    {
         return arg.to_string();
     }
 
@@ -488,9 +499,7 @@ fn quote_arg(arg: &str) -> String {
 
 /// Builds the environment block for CreateProcessW.
 /// Returns option_env_block.
-fn build_environment_block(
-    command: &ExternalCommand,
-) -> Result<Option<Vec<u16>>, ProcessError> {
+fn build_environment_block(command: &ExternalCommand) -> Result<Option<Vec<u16>>, ProcessError> {
     // When environment overrides or clear_env are explicitly set, build a block
     // Otherwise inherit parent environment (pass None) to avoid DLL init issues
     if command.clears_environment() || !command.environment_entries().is_empty() {
@@ -512,9 +521,15 @@ fn build_environment_block(
         // (Some child processes require it for DLL initialization)
         if !command.clears_environment() && !env_map.contains_key("SYSTEMROOT") {
             if let Ok(val) = std::env::var("SystemRoot") {
-                env_map.insert("SYSTEMROOT".to_string(), (OsString::from("SystemRoot"), OsString::from(val)));
+                env_map.insert(
+                    "SYSTEMROOT".to_string(),
+                    (OsString::from("SystemRoot"), OsString::from(val)),
+                );
             } else if let Ok(val) = std::env::var("SYSTEMROOT") {
-                env_map.insert("SYSTEMROOT".to_string(), (OsString::from("SYSTEMROOT"), OsString::from(val)));
+                env_map.insert(
+                    "SYSTEMROOT".to_string(),
+                    (OsString::from("SYSTEMROOT"), OsString::from(val)),
+                );
             }
         }
 
@@ -537,7 +552,7 @@ fn build_environment_block(
 /// Terminal size of the shell's own console.
 pub fn terminal_size() -> Option<crate::pty::PtySize> {
     use windows_sys::Win32::System::Console::{
-        GetConsoleScreenBufferInfo, GetStdHandle, CONSOLE_SCREEN_BUFFER_INFO, STD_OUTPUT_HANDLE,
+        CONSOLE_SCREEN_BUFFER_INFO, GetConsoleScreenBufferInfo, GetStdHandle, STD_OUTPUT_HANDLE,
     };
 
     let handle = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) };
@@ -567,20 +582,20 @@ pub struct CtrlCForwarder {
 
 impl CtrlCForwarder {
     fn install(process_handle: HANDLE) -> io::Result<Self> {
-        Ok(Self { _process_handle: process_handle })
+        Ok(Self {
+            _process_handle: process_handle,
+        })
     }
 
-    pub fn handle_ctrlc(&self) {
-    }
+    pub fn handle_ctrlc(&self) {}
 }
 
 impl Drop for CtrlCForwarder {
-    fn drop(&mut self) {
-    }
+    fn drop(&mut self) {}
 }
 
-/// Minimal relay_stdin function - takes Writer by value.
-pub fn relay_stdin(mut writer: Writer, stop: &AtomicBool) {
+/// Relays stdin into the pseudoterminal until `stop` is set.
+pub fn relay_stdin(mut writer: Box<dyn io::Write + Send>, stop: &AtomicBool) {
     use std::io::Read;
     let mut stdin = std::io::stdin();
     let mut buffer = [0u8; 4096];

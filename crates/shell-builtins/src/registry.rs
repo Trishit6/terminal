@@ -32,7 +32,7 @@ impl BuiltinCommand {
 }
 
 /// Commands available in the native command engine.
-pub const DEFAULT_BUILTINS: [BuiltinCommand; 53] = [
+pub const DEFAULT_BUILTINS: [BuiltinCommand; 56] = [
     BuiltinCommand::new("help", "Show this help message"),
     BuiltinCommand::new("pwd", "Print the current working directory"),
     BuiltinCommand::new("cd", "Change the working directory"),
@@ -74,12 +74,15 @@ pub const DEFAULT_BUILTINS: [BuiltinCommand; 53] = [
     BuiltinCommand::new("bg", "Report a background job's state"),
     BuiltinCommand::new("run", "Run a KERNEXT script file"),
     BuiltinCommand::new("test", "Evaluate a conditional expression"),
+    BuiltinCommand::new("[", "Evaluate a conditional expression (test)"),
     BuiltinCommand::new("expr", "Evaluate an arithmetic expression"),
     BuiltinCommand::new("sleep", "Pause for a number of seconds"),
     BuiltinCommand::new("true", "Return a successful status"),
     BuiltinCommand::new("false", "Return a failing status"),
     BuiltinCommand::new("whoami", "Show the current user name"),
     BuiltinCommand::new("date", "Show the current date and time"),
+    BuiltinCommand::new("host", "Resolve a hostname to its addresses"),
+    BuiltinCommand::new("sysinfo", "Show system and runtime information"),
     BuiltinCommand::new("version", "Show the shell version"),
     BuiltinCommand::new("exit", "Exit the shell"),
     BuiltinCommand::new("export", "Mark variables for export to child processes"),

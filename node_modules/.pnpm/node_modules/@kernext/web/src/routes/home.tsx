@@ -96,7 +96,7 @@ const SURFACES = [
     status: 'Implemented',
     tone: 'success' as const,
     description:
-      'The original surface. A Reedline prompt, cinematic startup, native pipelines, background jobs, and 53 built-ins.',
+      'The original surface. A Reedline prompt, cinematic startup, native pipelines, background jobs, and 56 built-ins.',
     points: ['`kernext` executable', 'Animated startup + config', 'Native process execution'],
     to: '/docs',
     action: 'Read the CLI notes',
@@ -105,7 +105,7 @@ const SURFACES = [
     icon: Globe2,
     title: 'KERNEXT Web',
     status: 'Implemented',
-    tone: 'default' as const,
+    tone: 'success' as const,
     description:
       'A React terminal with its own ANSI renderer, cursor, scrollback, keyboard mapping, and resize handling. No xterm.js.',
     points: ['PTY and engine transports', 'Custom ANSI screen buffer', 'Local Axum session API'],
@@ -115,13 +115,13 @@ const SURFACES = [
   {
     icon: Monitor,
     title: 'KERNEXT Desktop',
-    status: 'In progress',
-    tone: 'warning' as const,
+    status: 'Implemented',
+    tone: 'success' as const,
     description:
-      'A Tauri 2 shell around the same local runtime. The desktop surface is being prepared; do not treat it as shipped.',
-    points: ['Tauri 2 host planned', 'Same web terminal UI', 'Native process bridge'],
-    to: '/docs',
-    action: 'See the status',
+      'A Tauri 2 shell around the same runtime: multi-tab terminal, command and file explorers, sessions, and settings — executing through the embedded engine, never a public server.',
+    points: ['Tauri 2 host with settings', 'Same web terminal UI', 'Local Rust command bridge'],
+    to: '/downloads',
+    action: 'Build the desktop app',
   },
 ] as const;
 
@@ -169,7 +169,7 @@ function Hero() {
       <div className="absolute inset-x-0 top-0 -z-10 h-[560px] shell-grid opacity-60" />
       <div className="pointer-events-none absolute left-1/2 top-0 -z-10 h-[480px] w-[860px] -translate-x-1/2 rounded-full bg-primary/10 blur-[120px]" />
 
-      <div className="mx-auto grid w-full max-w-[1500px] items-center gap-14 px-4 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:px-8">
+      <div className="mx-auto grid w-full max-w-site items-center gap-14 px-4 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:px-8">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
@@ -313,7 +313,7 @@ function TerminalLine({ prompt, command }: { prompt: string; command: string }) 
 
 function ValueStrip() {
   const values = [
-    { value: '53', label: 'native built-ins' },
+    { value: '56', label: 'native built-ins' },
     { value: '1', label: 'shared Rust engine' },
     { value: '3', label: 'runtime surfaces' },
     { value: '0', label: 'wrapper shells' },
@@ -321,7 +321,7 @@ function ValueStrip() {
 
   return (
     <section className="border-y border-border bg-surface/30">
-      <div className="mx-auto grid w-full max-w-[1500px] grid-cols-2 divide-x divide-border px-4 sm:px-6 lg:grid-cols-4 lg:px-8">
+      <div className="mx-auto grid w-full max-w-site grid-cols-2 divide-x divide-border px-4 sm:px-6 lg:grid-cols-4 lg:px-8">
         {values.map((item) => (
           <div key={item.label} className="px-4 py-6 text-center sm:py-8">
             <div className="font-mono text-3xl font-semibold tracking-[-0.04em] text-foreground">
@@ -340,7 +340,7 @@ function ValueStrip() {
 function PlatformSection() {
   return (
     <section id="platform" className="relative py-20 sm:py-28">
-      <div className="mx-auto w-full max-w-[1500px] px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-site px-4 sm:px-6 lg:px-8">
         <motion.div {...fadeUp} className="max-w-3xl">
           <Badge variant="outline">Platform</Badge>
           <h2 className="mt-4 text-balance text-3xl font-semibold tracking-[-0.03em] sm:text-4xl lg:text-5xl">
@@ -392,7 +392,7 @@ function ArchitectureSection() {
   return (
     <section id="architecture" className="relative overflow-hidden border-y border-border bg-surface/25 py-20 sm:py-28">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(34,211,238,0.08),transparent_35%),radial-gradient(circle_at_80%_60%,rgba(139,92,246,0.08),transparent_35%)]" />
-      <div className="relative mx-auto grid w-full max-w-[1500px] gap-12 px-4 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:px-8">
+      <div className="relative mx-auto grid w-full max-w-site gap-12 px-4 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:px-8">
         <motion.div {...fadeUp}>
           <Badge variant="outline">Architecture</Badge>
           <h2 className="mt-4 text-balance text-3xl font-semibold tracking-[-0.03em] sm:text-4xl">
@@ -490,7 +490,7 @@ server { type: "result", action, session }`}</code>
 function SurfacesSection() {
   return (
     <section id="surfaces" className="py-20 sm:py-28">
-      <div className="mx-auto w-full max-w-[1500px] px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-site px-4 sm:px-6 lg:px-8">
         <motion.div {...fadeUp} className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div className="max-w-2xl">
             <Badge variant="outline">Surfaces</Badge>
@@ -498,9 +498,9 @@ function SurfacesSection() {
               One engine. Three ways in.
             </h2>
             <p className="mt-4 text-sm leading-relaxed text-muted-foreground sm:text-base">
-              The CLI is the reference surface. The web terminal is live in this
-              repository. The desktop host is the next surface, not a shipped
-              claim.
+              The CLI is the reference surface. The web terminal is live in
+              this repository. The desktop host wraps the same engine in a
+              Tauri 2 application with its own explorers and settings.
             </p>
           </div>
           <Button asChild variant="outline" size="sm">
@@ -570,7 +570,7 @@ function RuntimeSection() {
 
   return (
     <section className="border-y border-border bg-surface/25 py-20 sm:py-24">
-      <div className="mx-auto grid w-full max-w-[1500px] gap-10 px-4 sm:px-6 lg:grid-cols-[1fr_1.1fr] lg:items-center lg:px-8">
+      <div className="mx-auto grid w-full max-w-site gap-10 px-4 sm:px-6 lg:grid-cols-[1fr_1.1fr] lg:items-center lg:px-8">
         <motion.div {...fadeUp}>
           <Badge variant="outline">Runtime</Badge>
           <h2 className="mt-4 text-balance text-3xl font-semibold tracking-[-0.03em] sm:text-4xl">
@@ -617,7 +617,7 @@ function RuntimeSection() {
 function CallToAction() {
   return (
     <section className="py-20 sm:py-24">
-      <div className="mx-auto w-full max-w-[1500px] px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-site px-4 sm:px-6 lg:px-8">
         <motion.div
           initial={{ opacity: 0, y: 24 }}
           whileInView={{ opacity: 1, y: 0 }}

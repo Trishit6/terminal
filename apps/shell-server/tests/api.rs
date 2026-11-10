@@ -80,10 +80,7 @@ async fn session_lifecycle_executes_real_commands() {
     let executed: ExecuteCommandResponse =
         serde_json::from_slice(&body).expect("execute response should be JSON");
     assert!(executed.success, "{executed:?}");
-    assert!(
-        executed.output.contains("kernext-server"),
-        "{executed:?}"
-    );
+    assert!(executed.output.contains("kernext-server"), "{executed:?}");
 
     let (status, body) = send(
         &app,

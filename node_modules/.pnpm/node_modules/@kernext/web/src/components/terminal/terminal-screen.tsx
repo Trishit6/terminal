@@ -26,6 +26,8 @@ export interface TerminalScreenProps {
   onData: (data: string) => void;
   onResize: (rows: number, cols: number) => void;
   fontSize?: number;
+  fontFamily?: string;
+  cursorStyle?: 'block' | 'bar' | 'underline';
   autoFocus?: boolean;
   className?: string;
 }
@@ -40,6 +42,8 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
       onData,
       onResize,
       fontSize = 13,
+      fontFamily,
+      cursorStyle = 'block',
       autoFocus = false,
       className,
     },
@@ -110,7 +114,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
         observer.disconnect();
         window.cancelAnimationFrame(frame);
       };
-    }, [measure, fontSize]);
+    }, [measure, fontSize, fontFamily]);
 
     useEffect(() => {
       if (autoFocus) {
@@ -171,6 +175,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
             ? buffer.cursor.col
             : -1
         }
+        cursorStyle={cursorStyle}
       />
     ));
 
@@ -233,6 +238,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
           {
             '--terminal-line-height': `${cellHeight}px`,
             fontSize: `${fontSize}px`,
+            fontFamily: fontFamily ?? undefined,
           } as CSSProperties
         }
         onClick={focus}
@@ -249,7 +255,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
             ref={probeRef}
             aria-hidden="true"
             className="pointer-events-none invisible absolute whitespace-pre font-mono"
-            style={{ fontSize: `${fontSize}px` }}
+            style={{ fontSize: `${fontSize}px`, fontFamily: fontFamily ?? undefined }}
           >
             {'W'.repeat(20)}
           </span>
@@ -291,9 +297,11 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
 function TerminalRow({
   cells,
   cursorCol = -1,
+  cursorStyle = 'block',
 }: {
   cells: Cell[];
   cursorCol?: number;
+  cursorStyle?: 'block' | 'bar' | 'underline';
 }) {
   const spans: ReactNode[] = [];
   let text = '';
@@ -310,7 +318,15 @@ function TerminalRow({
     spans.push(
       <span
         key={`span-${start}`}
-        className={cursor ? 'terminal-cursor' : undefined}
+        className={
+          cursor
+            ? cursorStyle === 'bar'
+              ? 'terminal-cursor terminal-cursor-bar'
+              : cursorStyle === 'underline'
+                ? 'terminal-cursor terminal-cursor-underline'
+                : 'terminal-cursor'
+            : undefined
+        }
         style={style}
       >
         {text || ' '}

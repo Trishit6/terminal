@@ -51,21 +51,13 @@ impl ApiError {
     /// `500 Internal Server Error`.
     #[must_use]
     pub fn internal(message: impl Into<String>) -> Self {
-        Self::new(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "internal_error",
-            message,
-        )
+        Self::new(StatusCode::INTERNAL_SERVER_ERROR, "internal_error", message)
     }
 
     /// `503 Service Unavailable`.
     #[must_use]
     pub fn unavailable(message: impl Into<String>) -> Self {
-        Self::new(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "unavailable",
-            message,
-        )
+        Self::new(StatusCode::SERVICE_UNAVAILABLE, "unavailable", message)
     }
 
     /// Stable machine-readable code.

@@ -389,15 +389,15 @@ KERNEXT_BIN=/absolute/path/to/kernext`}
               {[
                 ['CLI engine', 'Tested', 'Existing Rust test suite and platform PTY tests.'],
                 ['Axum server', 'Tested', 'REST and WebSocket integration tests in apps/shell-server/tests.'],
-                ['Web terminal', 'In verification', 'Build, typecheck, and live connection are the acceptance gate.'],
-                ['Desktop (Tauri 2)', 'In progress', 'Not shipped. Do not treat the desktop app as available yet.'],
+                ['Web terminal', 'Tested', 'Build, typecheck, unit tests, and consistency suite over the real engine.'],
+                ['Desktop (Tauri 2)', 'Implemented', 'Debug bundle build and unit tests verified on Windows; Linux/macOS builds pending hosts.'],
               ].map(([surface, status, notes]) => (
                 <tr key={surface} className="bg-surface/40">
                   <td className="px-4 py-3 font-medium">{surface}</td>
                   <td className="px-4 py-3">
                     <Badge
                       variant={
-                        status === 'Tested'
+                        status === 'Tested' || status === 'Implemented'
                           ? 'success'
                           : status === 'In progress'
                             ? 'warning'
@@ -421,8 +421,8 @@ KERNEXT_BIN=/absolute/path/to/kernext`}
             Use the PTY transport for full control. The PTY endpoint needs a
             built <span className="font-mono">kernext</span> binary beside the
             server executable or a valid{' '}
-            <span className="font-mono">KERNEXT_BIN</span>. The desktop surface is
-            still pending.
+            <span className="font-mono">KERNEXT_BIN</span>. The desktop app
+            bundles its own engine and does not need either server.
           </p>
         </div>
       </section>

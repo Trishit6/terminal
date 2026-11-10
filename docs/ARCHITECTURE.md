@@ -1,8 +1,10 @@
 # KERNEXT Architecture
 
-This document describes the implemented CLI architecture and the intended
-reuse boundary for future KERNEXT Web and Desktop surfaces. Web and Desktop are
-**plans only**; no code for them exists in this repository.
+This document describes the implemented CLI architecture and how the Web and
+Desktop surfaces reuse the same engine. All three products exist in this
+repository: the CLI (`apps/shell-cli`), the web server and front end
+(`apps/shell-server`, `apps/web`), and the Tauri desktop application
+(`apps/desktop`).
 
 ## Current CLI data flow
 
@@ -20,16 +22,20 @@ input
 The application never splits input with `split_whitespace`. The dispatcher uses
 `lex_spanned` plus `parse` for every command line.
 
-## Crates
+## Crates and apps
 
-| Crate | Responsibility | Terminal dependency |
+| Crate / app | Responsibility | Terminal dependency |
 | --- | --- | --- |
 | `shell-core` | Branding constants, `ShellError`, lexer, parser, AST, spans | None |
 | `shell-config` | Typed `Config`, validation, TOML load/save, default paths | None |
 | `shell-runtime` | `Session`, `Platform`, working directory, variables, lifecycle | None |
 | `shell-builtins` | Registry, evaluator, native commands, pipelines, process executor | stdio only |
 | `shell-line-editor` | Reedline integration, prompt, history, terminal clearing | Reedline/crossterm |
-| `shell-cli` | Clap arguments, KERNEXT startup, REPL orchestration | Terminal |
+| `shell-api` | Serializable session/terminal API contracts | None |
+| `shell-cli` | Clap arguments, KERNEXT startup, REPL orchestration, embedded worker | Terminal |
+| `shell-server` | Local Axum server: HTTP sessions, execution, engine and PTY WebSockets | None |
+| `apps/web` | React + Vite + Tailwind front end shared by web and desktop | None |
+| `apps/desktop` | Tauri 2 application reusing `apps/web` with a local Rust runtime | WebView2 |
 
 Dependency direction:
 
@@ -39,6 +45,16 @@ shell-cli ──> shell-builtins ──> shell-runtime ──> shell-config ─�
     │                                └──────────> shell-core
     ├──────────> shell-line-editor ──> reedline / crossterm
     └──────────> shell-core
+
+shell-api ──> shell-builtins ──> shell-runtime ──> shell-core
+
+shell-server ──> shell-api
+             └──> shell-builtins / shell-runtime (through AppState)
+
+shell-desktop ─> tauri, tauri-plugin-opener
+              ─> shell-server (AppState::local engine sessions)
+              ─> shell-cli (worker::run_embedded for PTY sessions)
+              ─> shell-api, shell-builtins, shell-runtime, shell-core, shell-config
 ```
 
 ## Reusable core boundary
@@ -53,9 +69,12 @@ The engine is designed so a non-terminal front end can reuse it:
   separate so redirections can target them individually.
 - `shell-runtime::Session` is cloneable, which lets pipeline stages run against
   an isolated copy while filesystem side effects persist.
+- `shell-api` defines the serializable request/response contracts used by both
+  the web server and the desktop runtime, so both surfaces speak the same
+  session vocabulary.
 
-A future front end should call this boundary rather than reimplementing shell
-semantics. The CLI remains the reference implementation.
+The Web server and the Desktop application both call this boundary rather than
+reimplementing shell semantics. The CLI remains the reference implementation.
 
 ### What is stable
 
@@ -72,8 +91,8 @@ semantics. The CLI remains the reference implementation.
 - Screen clearing (`shell-line-editor::clear_terminal`).
 - Process-wide stdin/stdout/stderr behavior in `shell-builtins::process`.
 
-A Web or Desktop surface should supply its own renderer and its own I/O
-transport while reusing parsing, evaluation, and session state.
+The Web and Desktop surfaces supply their own renderers and I/O transports
+while reusing parsing, evaluation, and session state.
 
 ## Execution semantics
 
@@ -182,35 +201,59 @@ The canonical checkout is on a VFAT mount with `showexec`. `.cargo/config.toml`
 sets `build.target-dir = "/home/trishit/.cache/terminal-target"` so build
 artifacts land on ext4. Do not create a repo-local `target/` directory.
 
-## Future: KERNEXT Web (planned)
-
-Proposed shape, not implemented:
+## KERNEXT Web (implemented)
 
 ```text
-browser UI
-  -> WebSocket/HTTP transport
-  -> KERNEXT engine service
-       -> shell-core parser
-       -> shell-builtins evaluator
-       -> sandboxed execution backend
-  -> streamed stdout/stderr/outcomes
+browser UI (apps/web, React + Vite + Tailwind + shadcn/ui)
+  -> WebSocket /api/v1/sessions/{id}/ws   (engine sessions: JSON messages)
+  -> WebSocket /api/v1/pty                 (raw PTY bytes over a websocket)
+  -> shell-server (Axum)
+       -> AppState engine sessions  (shell-builtins Dispatcher)
+       -> PTY endpoint             (ConPTY on Windows, openpty on Unix)
+            -> spawns the `kernext` CLI binary on a pseudoterminal
 ```
 
-Open questions: execution isolation, filesystem model, authentication, and how
-interactive line editing maps to the browser. A graphical splash and mountain
-wallpaper belong here, not in the CLI.
+- Engine sessions execute each submitted command line through the same
+  dispatcher the CLI uses and stream `ServerMessage` JSON (output, status,
+  prompt, cwd).
+- The PTY endpoint launches the real `kernext` executable on a pseudoterminal
+  and relays raw bytes, giving the browser full-screen interactive programs,
+  resize, and Ctrl+C.
+- `pty_binary()` resolution order: `KERNEXT_BIN`, a sibling of the server
+  executable, then `PATH`.
+- Routes: `/api/v1/health`, `/api/v1/sessions` (GET/POST),
+  `/api/v1/sessions/{id}` (DELETE/GET), `/api/v1/sessions/{id}/execute`,
+  `/api/v1/sessions/{id}/ws`, `/api/v1/pty`.
+- The front end is transport-aware: the same React terminal components run
+  against either the WebSocket transport or the desktop Tauri IPC transport.
 
-## Future: KERNEXT Desktop (planned)
-
-Proposed shape, not implemented:
+## KERNEXT Desktop (implemented)
 
 ```text
-native window / terminal surface
-  -> shared line-editor abstraction
-  -> shell-core parser
-  -> shell-builtins evaluator
-  -> local process executor
+Tauri 2 window (apps/desktop/src-tauri, binary kernext-desktop)
+  -> embedded apps/web front end (frontendDist ../../web/dist, route /desktop)
+  -> tauri invoke IPC
+  -> shell-desktop commands (local Rust runtime only — never the web server)
+       -> engine sessions    (AppState::local, shared with shell-server)
+       -> PTY sessions       (this same exe with KERNEXT_DESKTOP_WORKER=1
+                              running shell_cli::worker::run_embedded)
+       -> filesystem, command catalog, settings
 ```
 
-The desktop surface should reuse the same engine boundary as the CLI and Web,
-with a platform-native renderer. No desktop code exists today.
+- 20 Tauri commands: `desktop_health`, `desktop_dashboard`,
+  `desktop_create_session`, `desktop_execute_session`,
+  `desktop_delete_session`, `desktop_list_sessions`,
+  `desktop_create_pty_session`, `desktop_pty_write`, `desktop_pty_resize`,
+  `desktop_pty_interrupt`, `desktop_pty_close`, `desktop_fs_list`,
+  `desktop_fs_create_directory`, `desktop_fs_rename`, `desktop_fs_delete`,
+  `desktop_fs_open`, `desktop_fs_session_directory`,
+  `desktop_command_catalog`, `desktop_settings_get`,
+  `desktop_settings_save`.
+- PTY sessions spawn the desktop executable itself with
+  `KERNEXT_DESKTOP_WORKER=1`; there is no sidecar binary to ship.
+- Engine sessions reuse `shell_server::AppState::local()` so the desktop and
+  the server share the same session model.
+- The window uses `decorations: false` plus `data-tauri-drag-region` for a
+  custom title bar; the frontend is served from the embedded web bundle.
+- See [`DESKTOP.md`](DESKTOP.md) for settings, configuration, and the
+  Windows MinGW manifest handling in `build.rs`.

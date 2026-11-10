@@ -8,6 +8,15 @@ It runs inside an existing terminal and contains its own lexer, parser, AST,
 command dispatcher, built-in commands, and external process executor. It is not
 a wrapper around Bash, PowerShell, or CMD.
 
+The same Rust engine now powers three surfaces that share one codebase:
+
+- **KERNEXT CLI** — the reference terminal shell (`kernext`).
+- **KERNEXT Web** — a React + Vite front end served by a local Axum server with
+  engine-backed sessions and real pseudoterminal (ConPTY/openpty) streaming.
+- **KERNEXT Desktop** — a native Tauri 2 application reusing the web front end
+  while executing everything through a local Rust runtime, never a browser
+  simulation.
+
 > **Status:** The KERNEXT CLI is implemented. It parses input with its own lexer
 > and parser, runs native built-ins directly, launches non-built-in commands as
 > external processes through `std::process::Command`, connects pipeline stages
@@ -15,10 +24,15 @@ a wrapper around Bash, PowerShell, or CMD.
 > evaluates `&&`, `||`, and `;`. Native variable assignment, expansion,
 > environment management, loops, conditionals, functions, `return`, `break`, and
 > `continue` are implemented, and configuration is loaded at startup.
-> Background `&` now starts real detached work tracked by a job table, and
-> `jobs`, `wait`, `kill`, `fg`, and `bg` operate on shell job numbers. Signal
-> handling and process-group ownership are still incomplete. See
-> [Not implemented yet](#not-implemented-yet).
+> Background `&` starts real detached work tracked by a job table, and `jobs`,
+> `wait`, `kill`, `fg`, and `bg` operate on shell job numbers.
+>
+> The Web server and Desktop application are implemented on Windows and verified
+> through their automated suites; interactive GUI verification on Linux and
+> macOS hosts is still pending. Signal handling and process-group ownership in
+> the CLI remain incomplete. See
+> [Not implemented yet](#not-implemented-yet) and
+> [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md).
 
 ## Brand
 
@@ -35,9 +49,9 @@ The internal Rust crates and package names (`shell-cli`, `shell-core`,
 `shell-builtins`, and so on) remain unchanged so the engine stays stable and
 reusable. Only the user-facing product name and executable are KERNEXT.
 
-The CLI is intentionally text-only. A graphical splash, mountain wallpaper, and
-richer visual surfaces belong to the planned Web and Desktop products, not to
-this terminal binary.
+The CLI is intentionally text-only. The graphical splash, mountain wallpaper,
+and richer visual surfaces belong to the Web and Desktop products, which now
+exist under `apps/web` and `apps/desktop`.
 
 ## Overview
 
@@ -50,7 +64,7 @@ The shell provides:
 - Home/End and Page Up/Page Down navigation on Linux, macOS, and Windows,
 - a custom lexer/tokenizer with quote metadata and source spans,
 - a custom recursive-descent parser and AST,
-- 53 native built-in commands,
+- 56 native built-in commands,
 - direct external process execution using the system `PATH`,
 - pipelines connected by real operating-system pipes,
 - input, output, append, and error redirections (`<`, `>`, `>>`, `2>`, `2>>`),
@@ -86,6 +100,8 @@ platform-specific code isolated:
 - Rust 1.85 or newer (Rust 2024 edition).
 - A working platform linker (a C toolchain on Linux/macOS, MSVC Build Tools or
   MinGW-w64 on Windows).
+- Node.js and pnpm 11+ for the Web front end and Desktop shell
+  (`package.json` pins `pnpm@11.25.0` via `packageManager`).
 - A real terminal for the interactive shell. Piping input into KERNEXT reports
   that standard input is not a terminal.
 
@@ -98,6 +114,36 @@ cargo run -p shell-cli
 
 The binary is `kernext` (`kernext.exe` on Windows). `--help` and `--version`
 are handled by Clap without starting a session.
+
+### KERNEXT Web
+
+```sh
+pnpm install --frozen-lockfile
+pnpm web:dev          # vite dev server on http://127.0.0.1:5173
+cargo run -p shell-server   # local API server (default http://127.0.0.1:7878)
+```
+
+The browser terminal talks to the server over
+`/api/v1/sessions/{id}/ws` (engine sessions) and `/api/v1/pty`
+(real pseudoterminal). The web front end builds with:
+
+```sh
+pnpm web:typecheck
+pnpm web:build
+```
+
+### KERNEXT Desktop
+
+```sh
+pnpm desktop:dev      # tauri dev: vite + debug desktop window
+pnpm desktop:build    # tauri build: production bundle
+```
+
+The desktop application embeds the same React front end and executes commands
+through the local Tauri runtime only — it never calls the public web server and
+never simulates the shell in JavaScript. See
+[`docs/DESKTOP.md`](docs/DESKTOP.md) for configuration, architecture, and the
+Windows MinGW manifest handling.
 
 ### Startup flags
 
@@ -127,10 +173,14 @@ automatically for piped output, `NO_COLOR`, and `TERM=dumb`. Set
 `KERNEXT_VERSION` (or pass `-Version` on Windows) to install a different
 release.
 
-The release workflow currently publishes Linux GNU and musl archives. The macOS
-and Windows installers expect matching archives, which must be produced by a
-host with the corresponding toolchain until those CI jobs are added.
-
+The `.github/workflows/release.yaml` workflow builds CLI archives for Linux
+(GNU and musl), Windows, and macOS (Apple Silicon and Intel), plus desktop
+bundles per platform, and attaches a SHA-256 checksum for every artifact. It
+creates only a **draft** GitHub Release, is triggered manually through
+`workflow_dispatch`, and never publishes or tags on its own. macOS and Windows
+installers expect matching archives; until a release is actually published,
+download from <https://github.com/Trishit6/terminal/releases> or
+[build from source](#build-and-run).
 ### VFAT / `showexec` mount note
 
 This project lives on a VFAT filesystem mounted with `showexec`.
@@ -292,6 +342,9 @@ input
 terminal/
 ├── Cargo.toml
 ├── Cargo.lock
+├── package.json               # pnpm workspace scripts (web:*, desktop:*)
+├── pnpm-workspace.yaml
+├── pnpm-lock.yaml
 ├── README.md
 ├── AGENTS.md
 ├── RELEASE_NOTES.md
@@ -307,7 +360,10 @@ terminal/
 │   ├── shell-config/       # Typed configuration and TOML persistence
 │   └── shell-line-editor/  # Reedline integration, prompt, history, clear
 └── apps/
-    └── shell-cli/          # Binary entry point, startup, REPL orchestration
+    ├── shell-cli/          # CLI binary entry point, startup, REPL
+    ├── shell-server/       # Local Axum API server (HTTP + WebSocket)
+    ├── web/                # React + Vite front end (web + desktop UI)
+    └── desktop/            # Tauri 2 desktop application (src-tauri)
 ```
 
 | Crate | Responsibility |
@@ -318,6 +374,9 @@ terminal/
 | `shell-config` | Typed `Config`, validation, TOML load/save, default path |
 | `shell-line-editor` | Reedline wrapper, prompt rendering, history, terminal clearing |
 | `shell-cli` | Clap arguments, KERNEXT startup, REPL loop, error reporting |
+| `shell-api` | Serializable session/terminal API contracts shared by server and desktop |
+| `shell-server` | Local Axum server: sessions, execution, engine and PTY WebSockets |
+| `shell-desktop` | Tauri 2 runtime: local engine, PTY, filesystem, settings commands |
 
 Dependency direction:
 
@@ -327,12 +386,31 @@ shell-cli ──> shell-builtins ──> shell-runtime ──> shell-config ─�
     │                                └──────────> shell-core
     ├──────────> shell-line-editor ──> reedline / crossterm
     └──────────> shell-core
+
+shell-server ──> shell-api ──> shell-builtins ──> shell-runtime ──> shell-core
+shell-desktop ─> shell-server (engine sessions) + shell-cli (embedded worker)
 ```
 
 The reusable core boundary is `shell-core` + `shell-runtime` +
-`shell-builtins`. Future Web and Desktop surfaces are intended to call the same
-lexer, parser, evaluator, and outcome types rather than reimplementing shell
-semantics. No Web or Desktop code exists yet.
+`shell-builtins`. The Web and Desktop surfaces call the same lexer, parser,
+evaluator, and outcome types rather than reimplementing shell semantics.
+
+### Web and Desktop execution flow
+
+```text
+browser / desktop window
+  -> React front end (apps/web)
+  -> WebSocket (web) OR Tauri invoke IPC (desktop)
+  -> shell-server (web) OR shell-desktop commands (desktop)
+  -> shell-builtins evaluator + pipeline        (engine sessions)
+  -> OR a real PTY (ConPTY / openpty)           (pty sessions)
+```
+
+Desktop commands execute through the local Rust runtime only. The desktop
+application never routes commands through the public web server and never
+simulates the shell in JavaScript. PTY sessions on the desktop spawn this same
+executable with `KERNEXT_DESKTOP_WORKER=1` to run the embedded CLI worker, so
+an interactive terminal is available without shipping a sidecar binary.
 
 ## Command execution
 
@@ -393,6 +471,8 @@ Built-in commands:
 | `true` / `false` | Returns a fixed exit status. |
 | `whoami` | Shows the current user name. |
 | `date` | Shows the local date and time. |
+| `host` | Resolves a hostname to its addresses. |
+| `sysinfo` | Shows system and runtime information. |
 | `version` | Prints `KERNEXT v<version>`. |
 | `exit` | Prints a farewell and shuts down. |
 | `export` | Marks variables for export to child processes. |
@@ -676,6 +756,8 @@ Special variables:
   and `return`/`break`/`continue`.
 - Native scripting helpers: `run script.rsh`, `print`, `input`, `len`, `type`,
   `str`, `int`, `float`, `bool`, `test`, and `expr`.
+- Host and system introspection: `host` (DNS resolution) and `sysinfo`
+  (platform, architecture, CPU count, process ID, directories, user).
 - Background jobs with a job table and `jobs`, `wait`, `kill`, `fg`, `bg`.
 - Persistent history with file-backed storage and credential filtering.
 - Tab completion for built-ins, executables, paths, and variables.
@@ -712,10 +794,10 @@ Special variables:
   pipeline stage.
 - Built-in `cd` updates the session directory, not the process-wide directory.
 - Flag/option completion.
-- macOS and Windows release builds in CI. The installers are present; Linux is
-  the only target produced by the current workflow.
-- KERNEXT Web and KERNEXT Desktop. Both are future products and have no code in
-  this repository.
+- Linux and macOS hosts for the Web and Desktop applications. Both are
+  implemented and tested on Windows; their GUIs still need interactive
+  verification on the other platforms, and macOS bundling requires a macOS
+  host.
 
 ## Configuration
 
@@ -779,21 +861,53 @@ cargo check --workspace --all-targets
 cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
+pnpm install --frozen-lockfile
+pnpm typecheck
+pnpm test
+pnpm build
 ```
+
+The `pnpm` scripts are defined at the workspace root: `web:dev`, `web:build`,
+`web:preview`, `web:typecheck`, `web:test` (Vitest logic tests for the terminal
+engine), `desktop:dev`, `desktop:build`, plus the short aliases `typecheck`,
+`build`, and `test`.
 
 Focused test commands:
 
 ```sh
 cargo test -p shell-builtins --test external
+cargo test -p shell-builtins --test external_tools
 cargo test -p shell-builtins --test builtins
 cargo test -p shell-builtins --test pipeline
 cargo test -p shell-core --test parser
 cargo test -p shell-cli --test repl
+cargo test -p shell-server
+cargo test -p shell-desktop
 ```
 
 External-process and pipeline tests use the test binary itself as a portable
 helper, so they do not depend on `python`, `git`, `sort`, `grep`, or any other
-particular program being installed.
+particular program being installed. `external_tools.rs` additionally verifies
+the common developer tools (`git`, `cargo`, `rustc`, `node`, `pnpm`, `python`,
+`curl`, `code`, `opencode`) through the full engine and skips any that are not
+installed on the host.
+
+CI (`.github/workflows/ci.yml`) runs fmt, clippy, and tests on Windows x64,
+Linux x64, and macOS (Apple Silicon and Intel), a web job (typecheck, Vitest,
+production build), and a desktop bundling job across the same operating systems.
+
+### Further documentation
+
+- [`docs/COMMANDS.md`](docs/COMMANDS.md) — every built-in command with usage.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — workspace and data flow.
+- [`docs/DESKTOP.md`](docs/DESKTOP.md) — desktop build, packaging, and MinGW
+  manifest handling.
+- [`docs/SECURITY.md`](docs/SECURITY.md) — web terminal security model.
+- [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — deploying the web server.
+- [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — common problems.
+- [`docs/BRANDING.md`](docs/BRANDING.md) — logo, palette, and voice.
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) — how to contribute.
+- [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) — per-surface status.
 
 ## Implementation status
 
@@ -819,6 +933,21 @@ particular program being installed.
   implemented.
 - **KERNEXT CLI phase:** Brand identity, startup presentation, `clear`/Ctrl+L,
   and configuration loading.
+- **Web phase 1–4:** Local Axum server (`shell-server`) with session and
+  execution endpoints, engine WebSocket, real ConPTY/openpty WebSocket relay,
+  and the React + Tailwind + shadcn/ui web front end with a cinematic
+  startup animation, marketing site, docs page, and interactive terminal.
+- **Desktop phase 5:** Tauri 2 application (`shell-desktop`) reusing the web
+  front end, with local engine sessions, real PTY sessions running the
+  embedded CLI worker, multi-tab terminal, dashboard, command explorer, file
+  explorer, settings, and about screens, plus a custom title bar and sidebar.
+- **Product integration (Phase 6):** complete public website (home, features,
+  documentation, downloads, about, contact, 404) with a build-time version
+  badge; `host`/`sysinfo` built-ins and a registered `[` alias; a
+  cross-interface consistency suite; external-tool compatibility tests;
+  full documentation set (commands, security, deployment, troubleshooting,
+  contributing); cross-platform CI matrices and a draft-only release workflow
+  with per-artifact checksums; fixed the broken root `desktop:*` pnpm scripts.
 
 ## Roadmap
 
@@ -827,18 +956,28 @@ particular program being installed.
 - Complete real background jobs and job control.
 - Add script sourcing, function-call redirections, globbing, script comments,
   and richer diagnostics.
-- Verify macOS and Windows release builds.
+- Run the configured CI/release workflows on GitHub to verify macOS, Windows,
+  and Intel macOS builds for real (they have not been executed yet).
 
-### KERNEXT Web — planned, not implemented
+### KERNEXT Web — implemented
 
-A browser-based KERNEXT surface sharing the same parser and evaluator, with a
-graphical splash and a mountain-wallpaper visual identity. No web code exists
-yet, and none is started in this phase.
+The browser surface runs on `apps/shell-server` + `apps/web`: engine-backed
+sessions over a WebSocket, a real pseudoterminal relay (ConPTY on Windows,
+`openpty` on Unix), the cinematic splash and mountain-wallpaper visual
+identity, and the full public website — marketing home page, features,
+documentation, downloads, about, and contact pages. The server is a local
+companion by design: loopback bind, optional bearer token, origin allowlist,
+session caps, and idle cleanup, all documented in
+[`docs/SECURITY.md`](docs/SECURITY.md) with a deployment guide in
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md).
 
-### KERNEXT Desktop — planned, not implemented
+### KERNEXT Desktop — implemented
 
-A native desktop application built on the same core engine. The terminal CLI
-remains text-only. No desktop code exists yet.
+The native desktop application runs on Tauri 2 (`apps/desktop`) and reuses the
+web front end. It offers a multi-tab interactive terminal (engine or PTY
+modes), dashboard, command explorer, file explorer, sessions, settings, and
+about screens. Remaining work: interactive verification on Linux and macOS,
+macOS bundling on a macOS host, and desktop release automation.
 
 ## License
 

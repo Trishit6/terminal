@@ -7,6 +7,20 @@ import {
   fetchHealth,
   wsUrl,
 } from '@/lib/server';
+import {
+  desktopCreatePtySession,
+  desktopCreateSession,
+  desktopDeleteSession,
+  desktopHealth,
+  sessionSummaryToSessionInfo,
+} from '@/lib/desktop';
+import { isTauri } from '@/lib/tauri';
+import {
+  SOCKET_OPEN,
+  TauriTerminalSocket,
+  TerminalSocket,
+  WebSocketTerminalSocket,
+} from '@/lib/terminal/socket';
 import type {
   ClientMessage,
   HealthResponse,
@@ -15,6 +29,7 @@ import type {
 } from '@/lib/protocol';
 
 export type ConnectionMode = 'pty' | 'engine';
+export type ConnectionTransport = 'ws' | 'tauri';
 export type ConnectionStatus =
   | 'idle'
   | 'connecting'
@@ -30,6 +45,7 @@ export interface TerminalSize {
 export interface UseTerminalConnectionOptions {
   engine: TerminalEngine;
   mode: ConnectionMode;
+  transport?: ConnectionTransport;
   enabled?: boolean;
 }
 
@@ -53,15 +69,18 @@ const DEFAULT_PROMPT = 'kernext ~ $ ';
 const HISTORY_LIMIT = 200;
 
 /**
- * Owns the WebSocket life cycle for both terminal transports.
+ * Owns the transport life cycle for both terminal surfaces.
  *
  * - `pty` relays raw terminal bytes to the real `kernext` process.
- * - `engine` executes command lines through the session WebSocket and keeps a
- *   small local line editor so typed text is echoed before the server answers.
+ * - `engine` executes command lines through the session transport and keeps a
+ *   small local line editor so typed text is echoed before the runtime
+ *   answers.
+ * - `transport` selects the Axum WebSocket or the desktop Tauri IPC bridge.
  */
 export function useTerminalConnection({
   engine,
   mode,
+  transport = isTauri() ? 'tauri' : 'ws',
   enabled = true,
 }: UseTerminalConnectionOptions): TerminalConnection {
   const [status, setStatus] = useState<ConnectionStatus>('idle');
@@ -70,11 +89,12 @@ export function useTerminalConnection({
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [size, setSize] = useState<TerminalSize>({ rows: 24, cols: 80 });
 
-  const socketRef = useRef<WebSocket | null>(null);
+  const socketRef = useRef<TerminalSocket | null>(null);
   const sessionIdRef = useRef<number | null>(null);
   const decoderRef = useRef<TextDecoder | null>(null);
   const sizeRef = useRef<TerminalSize>(size);
   const modeRef = useRef<ConnectionMode>(mode);
+  const transportRef = useRef<ConnectionTransport>(transport);
   const generationRef = useRef(0);
   const lineRef = useRef('');
   const promptRef = useRef(DEFAULT_PROMPT);
@@ -83,15 +103,18 @@ export function useTerminalConnection({
   const lastOutputRef = useRef('');
 
   modeRef.current = mode;
+  transportRef.current = transport;
 
   const sendClient = useCallback((message: ClientMessage): boolean => {
     const socket = socketRef.current;
 
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
+    if (!socket || socket.readyState !== SOCKET_OPEN) {
       return false;
     }
 
-    socket.send(JSON.stringify(message));
+    Promise.resolve(socket.send(message)).catch(() => {
+      // Transport errors surface through the socket's error handler.
+    });
     return true;
   }, []);
 
@@ -99,30 +122,108 @@ export function useTerminalConnection({
     const socket = socketRef.current;
     socketRef.current = null;
 
-    if (socket && socket.readyState <= WebSocket.OPEN) {
-      socket.close(1000, 'client closing');
+    if (socket) {
+      Promise.resolve(socket.close(1000, 'client closing')).catch(() => {
+        // Closing is best effort; the session is removed below.
+      });
     }
 
     if (deleteRemote && sessionIdRef.current !== null) {
       const id = sessionIdRef.current;
       sessionIdRef.current = null;
-      void deleteSession(id).catch(() => {
-        // The server may already have stopped the session. Cleanup is best
-        // effort and must never break the UI.
-      });
+
+      if (transportRef.current === 'tauri') {
+        void desktopDeleteSession(id).catch(() => {
+          // The runtime may already have stopped the session. Cleanup is best
+          // effort and must never break the UI.
+        });
+      } else {
+        void deleteSession(id).catch(() => {
+          // The server may already have stopped the session. Cleanup is best
+          // effort and must never break the UI.
+        });
+      }
     }
   }, []);
 
   const openPty = useCallback(
-    (nextHealth: HealthResponse) => {
+    async (nextHealth: HealthResponse) => {
       if (nextHealth.pty_available === false) {
         throw new Error(
-          'The server does not expose a PTY endpoint. Build the CLI with `cargo build -p shell-cli` and restart the server.',
+          'The runtime does not expose a PTY endpoint. Build the CLI with `cargo build -p shell-cli` and try again.',
         );
       }
 
-      const socket = new WebSocket(wsUrl('/api/v1/pty'));
-      socket.binaryType = 'arraybuffer';
+      if (transportRef.current === 'tauri') {
+        const summary = await desktopCreatePtySession(
+          sizeRef.current.rows,
+          sizeRef.current.cols,
+        );
+        const created = sessionSummaryToSessionInfo(summary);
+
+        sessionIdRef.current = summary.id;
+        setSession(created);
+        promptRef.current = created.prompt;
+        lineRef.current = '';
+        historyIndexRef.current = historyRef.current.length;
+        lastOutputRef.current = '';
+
+        const socket = new TauriTerminalSocket('pty', summary.id);
+        socketRef.current = socket;
+        decoderRef.current = new TextDecoder('utf-8', { fatal: false });
+
+        socket.onopen = () => {
+          if (socketRef.current !== socket) {
+            return;
+          }
+
+          setStatus('open');
+          setError(null);
+          sendClient({
+            type: 'resize',
+            rows: sizeRef.current.rows,
+            cols: sizeRef.current.cols,
+          });
+        };
+
+        socket.onmessage = (event) => {
+          if (socketRef.current !== socket) {
+            return;
+          }
+
+          if (typeof event.data === 'string') {
+            engine.write(event.data);
+            return;
+          }
+
+          void decodeBinary(decoderRef.current, event.data, engine);
+        };
+
+        socket.onerror = () => {
+          if (socketRef.current !== socket) {
+            return;
+          }
+
+          setError(
+            'The desktop pseudoterminal failed. Check the runtime logs and try again.',
+          );
+          setStatus('error');
+        };
+
+        socket.onclose = () => {
+          if (socketRef.current !== socket) {
+            return;
+          }
+
+          socketRef.current = null;
+          setStatus((previous) => (previous === 'error' ? previous : 'closed'));
+        };
+
+        await socket.open();
+        return;
+      }
+
+      const socket = new WebSocketTerminalSocket(wsUrl('/api/v1/pty'));
       socketRef.current = socket;
       decoderRef.current = new TextDecoder('utf-8', { fatal: false });
 
@@ -196,26 +297,46 @@ export function useTerminalConnection({
         socketRef.current = null;
         setStatus((previous) => (previous === 'error' ? previous : 'closed'));
       };
+
+      socket.open();
     },
     [engine, sendClient],
   );
 
   const openEngine = useCallback(
     async (generation: number) => {
-      const response = await createSession();
+      let created: SessionInfo;
+
+      if (transportRef.current === 'tauri') {
+        created = await desktopCreateSession();
+      } else {
+        const response = await createSession();
+
+        if (generation !== generationRef.current) {
+          if (response.session) {
+            void deleteSession(response.session.id).catch(() => {});
+          }
+          return;
+        }
+
+        if (!response.success || !response.session) {
+          throw new Error(
+            response.error ?? 'The runtime did not create a session.',
+          );
+        }
+
+        created = response.session;
+      }
 
       if (generation !== generationRef.current) {
-        if (response.session) {
-          void deleteSession(response.session.id).catch(() => {});
+        if (transportRef.current === 'tauri') {
+          void desktopDeleteSession(created.id).catch(() => {});
+        } else {
+          void deleteSession(created.id).catch(() => {});
         }
         return;
       }
 
-      if (!response.success || !response.session) {
-        throw new Error(response.error ?? 'The server did not create a session.');
-      }
-
-      const created = response.session;
       sessionIdRef.current = created.id;
       setSession(created);
       promptRef.current = created.prompt;
@@ -223,9 +344,12 @@ export function useTerminalConnection({
       historyIndexRef.current = historyRef.current.length;
       lastOutputRef.current = '';
 
-      const socket = new WebSocket(
-        wsUrl(`/api/v1/sessions/${created.id}/ws`),
-      );
+      const socket =
+        transportRef.current === 'tauri'
+          ? new TauriTerminalSocket('engine', created.id)
+          : new WebSocketTerminalSocket(
+              wsUrl(`/api/v1/sessions/${created.id}/ws`),
+            );
       socketRef.current = socket;
 
       let finished = false;
@@ -242,7 +366,12 @@ export function useTerminalConnection({
         if (sessionIdRef.current !== null) {
           const id = sessionIdRef.current;
           sessionIdRef.current = null;
-          void deleteSession(id).catch(() => {});
+
+          if (transportRef.current === 'tauri') {
+            void desktopDeleteSession(id).catch(() => {});
+          } else {
+            void deleteSession(id).catch(() => {});
+          }
         }
 
         engine.write(`\r\n\u001b[2m${message}\u001b[0m\r\n`);
@@ -265,7 +394,10 @@ export function useTerminalConnection({
             break;
           }
           case 'output': {
-            if (message.stream === 'system' && message.data.includes('\u001b[2J')) {
+            if (
+              message.stream === 'system' &&
+              message.data.includes('\u001b[2J')
+            ) {
               engine.clear();
             }
 
@@ -321,6 +453,10 @@ export function useTerminalConnection({
 
         setStatus('open');
         setError(null);
+
+        if (transportRef.current === 'tauri') {
+          engine.write(created.prompt);
+        }
       };
 
       socket.onmessage = (event) => {
@@ -339,7 +475,9 @@ export function useTerminalConnection({
         }
 
         setError(
-          'The session WebSocket failed. Check that the KERNEXT server is still running.',
+          transportRef.current === 'tauri'
+            ? 'The desktop engine session failed. Check the runtime logs and try again.'
+            : 'The session WebSocket failed. Check that the KERNEXT server is still running.',
         );
         setStatus('error');
       };
@@ -355,9 +493,16 @@ export function useTerminalConnection({
         if (sessionIdRef.current !== null) {
           const id = sessionIdRef.current;
           sessionIdRef.current = null;
-          void deleteSession(id).catch(() => {});
+
+          if (transportRef.current === 'tauri') {
+            void desktopDeleteSession(id).catch(() => {});
+          } else {
+            void deleteSession(id).catch(() => {});
+          }
         }
       };
+
+      await socket.open();
     },
     [engine],
   );
@@ -377,7 +522,10 @@ export function useTerminalConnection({
 
     void (async () => {
       try {
-        const nextHealth = await fetchHealth();
+        const nextHealth =
+          transportRef.current === 'tauri'
+            ? await desktopHealth()
+            : await fetchHealth();
 
         if (generation !== generationRef.current) {
           return;
@@ -386,7 +534,7 @@ export function useTerminalConnection({
         setHealth(nextHealth);
 
         if (modeRef.current === 'pty') {
-          openPty(nextHealth);
+          await openPty(nextHealth);
         } else {
           await openEngine(generation);
         }
@@ -395,7 +543,11 @@ export function useTerminalConnection({
           return;
         }
 
-        setError(describeConnectionError(caught));
+        setError(
+          transportRef.current === 'tauri' && caught instanceof Error
+            ? caught.message
+            : describeConnectionError(caught),
+        );
         setStatus('error');
       }
     })();
@@ -421,7 +573,7 @@ export function useTerminalConnection({
       generationRef.current += 1;
       closeSocket(true);
     };
-  }, [enabled, mode, connect, closeSocket]);
+  }, [enabled, mode, transport, connect, closeSocket]);
 
   const submitLine = useCallback(
     (command: string) => {
@@ -624,12 +776,19 @@ export function useTerminalConnection({
 
   const refreshHealth = useCallback(async () => {
     try {
-      const nextHealth = await fetchHealth();
+      const nextHealth =
+        transportRef.current === 'tauri'
+          ? await desktopHealth()
+          : await fetchHealth();
       setHealth(nextHealth);
       setError(null);
     } catch (caught) {
       setHealth(null);
-      setError(describeConnectionError(caught));
+      setError(
+        transportRef.current === 'tauri' && caught instanceof Error
+          ? caught.message
+          : describeConnectionError(caught),
+      );
     }
   }, []);
 
@@ -652,7 +811,7 @@ export function useTerminalConnection({
 
 async function decodeBinary(
   fallback: TextDecoder | null,
-  data: ArrayBuffer | Blob | string,
+  data: unknown,
   engine: TerminalEngine,
 ): Promise<void> {
   if (typeof data === 'string') {
@@ -660,7 +819,22 @@ async function decodeBinary(
     return;
   }
 
-  const buffer = data instanceof Blob ? await data.arrayBuffer() : data;
+  if (data instanceof Blob) {
+    const buffer = await data.arrayBuffer();
+    decodeBytes(fallback, buffer, engine);
+    return;
+  }
+
+  if (data instanceof ArrayBuffer) {
+    decodeBytes(fallback, data, engine);
+  }
+}
+
+function decodeBytes(
+  fallback: TextDecoder | null,
+  buffer: ArrayBuffer,
+  engine: TerminalEngine,
+): void {
   const decoder = fallback ?? new TextDecoder('utf-8', { fatal: false });
   const text = decoder.decode(new Uint8Array(buffer), { stream: true });
 

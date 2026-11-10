@@ -1,0 +1,34 @@
+[package]
+name = "shell-desktop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "KERNEXT Tauri 2 desktop application"
+default-run = "kernext-desktop"
+
+[lib]
+name = "shell_desktop"
+path = "src/lib.rs"
+
+[[bin]]
+name = "kernext-desktop"
+path = "src/main.rs"
+
+[dependencies]
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+shell-api.workspace = true
+shell-builtins.workspace = true
+shell-cli = { path = "../../shell-cli" }
+shell-config.workspace = true
+shell-core.workspace = true
+shell-runtime.workspace = true
+shell-server = { path = "../../shell-server" }
+tauri.workspace = true
+tauri-plugin-opener.workspace = true
+tokio.workspace = true
+toml.workspace = true
+
+[build-dependencies]
+tauri-build.workspace = true

@@ -8,7 +8,17 @@ VERSION="${KERNEXT_VERSION:-0.1.0}"
 REPO_URL="https://github.com/Trishit6/terminal"
 INSTALL_DIR="/usr/local/bin"
 BINARY_NAME="kernext"
-ARCHIVE_NAME="kernext-x86_64-apple-darwin.tar.gz"
+
+# Pick the matching release archive. Apple Silicon hosts run x86_64
+# binaries through Rosetta as a fallback, but prefer the native slice.
+case "$(uname -m)" in
+    arm64)
+        ARCHIVE_NAME="kernext-aarch64-apple-darwin.tar.gz"
+        ;;
+    *)
+        ARCHIVE_NAME="kernext-x86_64-apple-darwin.tar.gz"
+        ;;
+esac
 ARCHIVE_URL="${REPO_URL}/releases/download/v${VERSION}/${ARCHIVE_NAME}"
 
 # Animation is presentation only. It is disabled automatically for pipes,

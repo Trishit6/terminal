@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2024"
 description = "KERNEXT Axum backend and WebSocket terminal bridge"
 
+# The user-facing executable is `kernext-server`, matching the `kernext` CLI
+# and `kernext-desktop` naming; the crate name stays `shell-server`.
+[[bin]]
+name = "kernext-server"
+path = "src/main.rs"
+
 [dependencies]
 axum = { workspace = true }
 futures-util = { workspace = true }

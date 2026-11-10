@@ -7,10 +7,12 @@ import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 const NAV_ITEMS = [
-  { label: 'Platform', to: '/', hash: 'platform' },
-  { label: 'Architecture', to: '/', hash: 'architecture' },
-  { label: 'Surfaces', to: '/', hash: 'surfaces' },
+  { label: 'Home', to: '/' },
+  { label: 'Features', to: '/features' },
   { label: 'Docs', to: '/docs' },
+  { label: 'Downloads', to: '/downloads' },
+  { label: 'About', to: '/about' },
+  { label: 'Contact', to: '/contact' },
 ] as const;
 
 export function SiteHeader({ compact = false }: { compact?: boolean }) {
@@ -28,7 +30,7 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
         compact ? 'supports-[backdrop-filter]:bg-background/65' : '',
       )}
     >
-      <div className="mx-auto flex h-16 w-full max-w-[1500px] items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+      <div className="mx-auto flex h-16 w-full max-w-site items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
         <Logo />
 
         <nav className="hidden items-center gap-1 lg:flex" aria-label="Primary">
@@ -36,10 +38,9 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
             <Link
               key={item.label}
               to={item.to}
-              {...('hash' in item ? { hash: item.hash } : {})}
               className="rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-surface-soft hover:text-foreground"
               activeProps={{ className: 'text-foreground' }}
-              activeOptions={{ exact: true, includeHash: true }}
+              activeOptions={{ exact: true }}
             >
               {item.label}
             </Link>
@@ -76,10 +77,9 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
               <Link
                 key={item.label}
                 to={item.to}
-                {...('hash' in item ? { hash: item.hash } : {})}
                 className="rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-surface-soft hover:text-foreground"
                 activeProps={{ className: 'text-foreground' }}
-                activeOptions={{ exact: true, includeHash: true }}
+                activeOptions={{ exact: true }}
               >
                 {item.label}
               </Link>

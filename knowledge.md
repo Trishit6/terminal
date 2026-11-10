@@ -135,11 +135,11 @@ into the shell is rejected by design.
 ## Current feature set
 
 - The registry (`crates/shell-builtins/src/registry.rs`) defines
-  `DEFAULT_BUILTINS: [BuiltinCommand; 53]` — including `tree`, `find`, `stat`,
+  `DEFAULT_BUILTINS: [BuiltinCommand; 56]` — including `tree`, `find`, `stat`,
   `head`, `tail`, `wc`, `grep`, `sort`, `uniq`, `which`, `basename`, `dirname`,
   `realpath`, `jobs`, `wait`, `kill`, `fg`, `bg`, `run` (script file), `test`,
-  `[`, `expr`, `sleep`, `true`, `false`, and the scripting helpers `print`,
-  `input`, `len`, `type`, `str`, `int`, `float`, `bool`.
+  `[`, `expr`, `sleep`, `true`, `false`, `host`, `sysinfo`, and the scripting
+  helpers `print`, `input`, `len`, `type`, `str`, `int`, `float`, `bool`.
 - Background `&` is **real**: external commands are spawned and tracked via
   `Child` handles, other expressions run on a detached thread with a cloned
   session, and `crates/shell-runtime/src/jobs.rs` provides `JobTable`
@@ -182,10 +182,11 @@ build scripts and test binaries cannot be executed.
 
 Add tests next to the behavior: unit tests in `src/`, integration tests in
 `crates/shell-builtins/tests/`, `crates/shell-core/tests/`,
-`apps/shell-cli/tests/`. The full suite is 414 tests on Windows, 20 of which
+`apps/shell-cli/tests/`. The full suite is 469 tests on Windows (467
+unit/integration plus 2 `shell-core` doc-tests), 20 of which
 live in `crates/shell-builtins/tests/windows_scripts.rs` and only build on
-Windows. The Unix baseline was 399 before those were added (Unix covers
-signal/abort termination instead).
+Windows. The Unix baseline was 399 before the Windows-only suites were added
+(Unix covers signal/abort termination instead).
 
 - Filesystem tests use isolated temp dirs plus `Session::set_working_directory`;
   they never mutate the process cwd.

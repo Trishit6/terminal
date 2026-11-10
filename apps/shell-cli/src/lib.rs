@@ -6,3 +6,4 @@
 pub mod cli;
 pub mod repl;
 pub mod startup;
+pub mod worker;

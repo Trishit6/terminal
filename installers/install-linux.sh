@@ -8,7 +8,19 @@ VERSION="${KERNEXT_VERSION:-0.1.0}"
 REPO_URL="https://github.com/Trishit6/terminal"
 INSTALL_DIR="/usr/local/bin"
 BINARY_NAME="kernext"
-ARCHIVE_NAME="kernext-x86_64-unknown-linux-gnu.tar.gz"
+
+# Pick the matching release archive. Only x86_64 Linux archives are
+# published; musl-based distributions get the static binary.
+ARCHITECTURE="$(uname -m)"
+if [[ "${ARCHITECTURE}" != "x86_64" && "${ARCHITECTURE}" != "amd64" ]]; then
+    printf '[FAIL] No Linux release archive exists for %s yet; build from source instead.\n' "${ARCHITECTURE}" >&2
+    exit 1
+fi
+if [[ -f /lib/ld-musl-x86_64.so.1 ]]; then
+    ARCHIVE_NAME="kernext-x86_64-unknown-linux-musl.tar.gz"
+else
+    ARCHIVE_NAME="kernext-x86_64-unknown-linux-gnu.tar.gz"
+fi
 ARCHIVE_URL="${REPO_URL}/releases/download/v${VERSION}/${ARCHIVE_NAME}"
 
 # Animation is presentation only. It is disabled automatically for pipes,

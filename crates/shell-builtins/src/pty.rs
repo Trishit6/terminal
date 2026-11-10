@@ -47,7 +47,7 @@ mod backend;
 #[path = "pty/unix.rs"]
 mod backend;
 
-pub use backend::PtyProcess;
+pub use backend::{PtyProcess, PtyResizer};
 
 /// Default terminal size used when the shell itself has no console.
 pub const DEFAULT_COLUMNS: u16 = 80;
@@ -201,9 +201,7 @@ pub fn run_interactive(command: &ExternalCommand) -> Result<ProcessReport, Proce
 
     let _ = monitor.join();
 
-    {
-        status.map(ProcessReport::from_status)
-    }
+    status.map(ProcessReport::from_status)
 }
 
 #[cfg(test)]

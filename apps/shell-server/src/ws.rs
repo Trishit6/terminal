@@ -27,7 +27,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 #[derive(Debug, Default, Deserialize)]
-struct WsAuth {
+pub struct WsAuth {
     token: Option<String>,
 }
 
@@ -228,12 +228,9 @@ async fn handle_session_socket(socket: WebSocket, session: Arc<Mutex<ShellSessio
                 }
             }
             ClientMessage::Input { .. } => {
-                if send_error(
-                    &mut sink,
-                    "raw input is only supported by /api/v1/pty",
-                )
-                .await
-                .is_err()
+                if send_error(&mut sink, "raw input is only supported by /api/v1/pty")
+                    .await
+                    .is_err()
                 {
                     break;
                 }
@@ -277,7 +274,8 @@ async fn handle_pty_socket(socket: WebSocket, binary: PathBuf) {
         }
     };
 
-    let (Some(mut reader), Some(mut writer)) = (process.take_reader(), process.take_writer()) else {
+    let (Some(mut reader), Some(mut writer)) = (process.take_reader(), process.take_writer())
+    else {
         let _ = out_tx
             .send(text_message(&ServerMessage::Error {
                 message: "the pseudoterminal did not expose its streams".to_owned(),
@@ -441,13 +439,15 @@ pub fn pty_binary() -> Option<PathBuf> {
         }
     }
 
-    if let Ok(executable) = std::env::current_exe() {
-        if let Some(directory) = executable.parent() {
-            for name in ["kernext.exe", "kernext"] {
-                let candidate = directory.join(name);
-                if candidate.is_file() {
-                    return Some(candidate);
-                }
+    let sibling = std::env::current_exe()
+        .ok()
+        .and_then(|executable| executable.parent().map(|directory| directory.to_path_buf()));
+
+    if let Some(directory) = sibling {
+        for name in ["kernext.exe", "kernext"] {
+            let candidate = directory.join(name);
+            if candidate.is_file() {
+                return Some(candidate);
             }
         }
     }

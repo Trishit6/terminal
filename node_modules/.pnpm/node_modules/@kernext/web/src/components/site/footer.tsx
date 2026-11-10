@@ -3,11 +3,12 @@ import { ArrowUpRight, TerminalSquare } from 'lucide-react';
 import { Logo } from '@/components/site/logo';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { KERNEXT_VERSION } from '@/lib/version';
 
 export function SiteFooter() {
   return (
     <footer className="border-t border-border bg-surface/40">
-      <div className="mx-auto w-full max-w-[1500px] px-4 py-12 sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-site px-4 py-12 sm:px-6 lg:px-8">
         <div className="grid gap-10 lg:grid-cols-[1.5fr_1fr_1fr_1.2fr]">
           <div className="space-y-4">
             <Logo />
@@ -33,13 +34,13 @@ export function SiteFooter() {
                 </Link>
               </li>
               <li>
-                <Link to="/" hash="platform" className="text-muted-foreground transition-colors hover:text-foreground">
-                  Platform
+                <Link to="/features" className="text-muted-foreground transition-colors hover:text-foreground">
+                  Features
                 </Link>
               </li>
               <li>
-                <Link to="/" hash="surfaces" className="text-muted-foreground transition-colors hover:text-foreground">
-                  Surfaces
+                <Link to="/downloads" className="text-muted-foreground transition-colors hover:text-foreground">
+                  Downloads
                 </Link>
               </li>
               <li>
@@ -52,22 +53,22 @@ export function SiteFooter() {
 
           <div>
             <h3 className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              Runtime
+              Project
             </h3>
             <ul className="mt-4 space-y-2.5 text-sm">
               <li>
+                <Link to="/about" className="text-muted-foreground transition-colors hover:text-foreground">
+                  About
+                </Link>
+              </li>
+              <li>
+                <Link to="/contact" className="text-muted-foreground transition-colors hover:text-foreground">
+                  Contact and community
+                </Link>
+              </li>
+              <li>
                 <Link to="/docs" hash="api" className="text-muted-foreground transition-colors hover:text-foreground">
                   HTTP API
-                </Link>
-              </li>
-              <li>
-                <Link to="/docs" hash="websocket" className="text-muted-foreground transition-colors hover:text-foreground">
-                  WebSocket protocol
-                </Link>
-              </li>
-              <li>
-                <Link to="/docs" hash="security" className="text-muted-foreground transition-colors hover:text-foreground">
-                  Security model
                 </Link>
               </li>
               <li>
@@ -84,16 +85,20 @@ export function SiteFooter() {
             </p>
             <div className="mt-3 space-y-2.5 text-sm">
               <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">Version</span>
+                <Badge variant="outline">v{KERNEXT_VERSION}</Badge>
+              </div>
+              <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground">CLI</span>
-                <Badge variant="success">Stable</Badge>
+                <Badge variant="success">Reference</Badge>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground">Web</span>
-                <Badge variant="default">New</Badge>
+                <Badge variant="success">Live</Badge>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted-foreground">Desktop</span>
-                <Badge variant="warning">In progress</Badge>
+                <Badge variant="success">Implemented</Badge>
               </div>
             </div>
             <Separator className="my-4" />
@@ -116,7 +121,7 @@ export function SiteFooter() {
           </p>
           <div className="flex flex-wrap items-center gap-4">
             <span className="font-mono uppercase tracking-[0.18em]">
-              Open · Powerful · Independent
+              Independent · Native · Engineered
             </span>
             <span className="hidden h-3 w-px bg-border sm:block" />
             <span className="font-mono uppercase tracking-[0.18em]">

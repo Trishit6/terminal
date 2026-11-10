@@ -357,6 +357,72 @@ fn whoami_date_and_version_produce_output() {
 }
 
 #[test]
+fn host_resolves_a_literal_address_without_a_network() {
+    let mut harness = Harness::new();
+
+    let output = harness.output("host 127.0.0.1");
+
+    assert!(
+        output.contains("127.0.0.1 has address 127.0.0.1"),
+        "{output}"
+    );
+}
+
+#[test]
+fn host_resolves_localhost_through_the_hosts_file() {
+    let mut harness = Harness::new();
+
+    let outcome = harness.run("host localhost");
+
+    assert!(
+        outcome.success(),
+        "localhost should resolve: {:?}",
+        outcome.output()
+    );
+    assert!(
+        harness
+            .output("host localhost")
+            .contains("localhost has address"),
+        "expected at least one address line"
+    );
+}
+
+#[test]
+fn host_reports_usage_and_unresolvable_names() {
+    let mut harness = Harness::new();
+
+    let missing_operand = harness.run("host");
+    assert!(!missing_operand.success());
+    assert_eq!(missing_operand.output(), Some("usage: host <hostname>"));
+
+    // A syntactically invalid hostname fails without touching the network,
+    // which keeps this test deterministic on every platform.
+    let invalid = harness.run("host \"not a host name\"");
+    assert!(!invalid.success());
+    assert!(
+        invalid.output().unwrap_or_default().starts_with("host:"),
+        "expected an error message, got {:?}",
+        invalid.output()
+    );
+}
+
+#[test]
+fn sysinfo_reports_runtime_platform_and_directory() {
+    let mut harness = Harness::new();
+
+    let output = harness.output("sysinfo");
+
+    assert!(output.contains("product    KERNEXT"), "{output}");
+    assert!(output.contains("version    "), "{output}");
+    assert!(output.contains("arch       "), "{output}");
+    assert!(output.contains("cpu-cores  "), "{output}");
+    assert!(
+        output.contains(&format!("cwd        {}", harness.path().display())),
+        "{output}"
+    );
+}
+
+#[test]
 fn clear_requests_a_screen_clear() {
     let mut harness = Harness::new();
 
@@ -481,6 +547,22 @@ fn test_and_expr_evaluate_conditionals_and_arithmetic() {
     );
     assert_eq!(harness.output("expr 2 + 3 * 4"), "14");
     assert_eq!(harness.output("expr 10 - 4"), "6");
+}
+
+#[test]
+fn bracket_alias_evaluates_test_expressions() {
+    let mut harness = Harness::new();
+
+    assert_eq!(harness.output("[ 3 -gt 2 ] && echo larger"), "larger\n");
+
+    let failed = harness.run("[ 3 -lt 2 ]");
+    assert!(!failed.success());
+
+    // A failed condition is visible through $?, like `test` itself.
+    assert_eq!(harness.output("echo $?"), "1\n");
+
+    let unclosed = harness.output("[ 3 -gt 2");
+    assert!(unclosed.contains("missing closing"), "{unclosed}");
 }
 
 #[test]

@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g., v0.2.0)'
+        description: 'Release version (e.g., v0.2.0); must match the workspace Cargo.toml version'
         required: true
         type: string
       tag:
@@ -12,123 +12,460 @@ on:
         required: false
         type: string
 
+permissions:
+  contents: read
+
+# CARGO_TERM_COLOR is static and safe at this level. CARGO_TARGET_DIR
+# cannot live here: the `runner` context is only available in step-level
+# keys, so every step that invokes cargo declares it explicitly (to the same
+# path the cache actions use). The override also matters because the tracked
+# .cargo/config.toml pins a workstation-specific target directory that does
+# not exist on hosted runners.
 env:
-  CARGO_TARGET_DIR: /home/runner/.cache/terminal-target
+  CARGO_TERM_COLOR: always
 
 jobs:
   check:
-    name: Check formatting, clippy, tests
+    name: Check formatting, clippy, tests, and web
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-      - name: Cache cargo target
-        uses: actions/cache@v4
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+      - name: Install Node
+        uses: actions/setup-node@v7
         with:
-          path: /home/runner/.cache/terminal-target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          node-version: 24
+          cache: pnpm
+      - name: Cache cargo target
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/cargo-target
+          key: ${{ runner.os }}-release-check-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-release-check-
+      - name: Verify release version matches the workspace version
+        id: version
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+        run: |
+          REQUESTED="${{ github.event.inputs.version }}"
+          REQUESTED="${REQUESTED#v}"
+          WORKSPACE="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "shell-core") | .version')"
+          if [ -z "$WORKSPACE" ] || [ "$REQUESTED" != "$WORKSPACE" ]; then
+            echo "::error::Requested release version '${{ github.event.inputs.version }}' does not match the workspace version '${WORKSPACE}'. Bump the version in Cargo.toml first so the shell, website, and desktop all report it."
+            exit 1
+          fi
+          echo "version=$WORKSPACE" >> "$GITHUB_OUTPUT"
       - name: Format check
         run: cargo fmt --all -- --check
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
       - name: Tests
         run: cargo test --workspace
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Web typecheck
+        run: pnpm typecheck
+      - name: Web tests
+        run: pnpm test
+      - name: Web build
+        run: pnpm build
 
-  build-linux-musl:
-    name: Build Linux musl (x86_64)
+  cli-windows:
+    name: CLI Windows (x86_64, GNU)
+    runs-on: windows-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # The Windows installers ship the GNU build, which is also the
+          # toolchain the project's Windows test suite runs on. The
+          # windows-gnu target is self-contained and links without an
+          # external MinGW installation.
+          targets: x86_64-pc-windows-gnu
+      - name: Cache cargo target
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/cargo-target
+          key: ${{ runner.os }}-release-cli-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-release-cli-
+      - name: Build release binaries
+        run: cargo build --release --target x86_64-pc-windows-gnu -p shell-cli -p shell-server
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-windows-x86_64
+          path: |
+            ${{ runner.temp }}/cargo-target/x86_64-pc-windows-gnu/release/kernext.exe
+            ${{ runner.temp }}/cargo-target/x86_64-pc-windows-gnu/release/kernext-server.exe
+          if-no-files-found: error
+          retention-days: 30
+
+  cli-linux-gnu:
+    name: CLI Linux GNU (x86_64)
     runs-on: ubuntu-latest
     needs: check
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo target
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/cargo-target
+          key: ${{ runner.os }}-release-cli-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-release-cli-
+      - name: Build release binaries
+        run: cargo build --release -p shell-cli -p shell-server
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-linux-x86_64-gnu
+          path: |
+            ${{ runner.temp }}/cargo-target/release/kernext
+            ${{ runner.temp }}/cargo-target/release/kernext-server
+          if-no-files-found: error
+          retention-days: 30
+
+  cli-linux-musl:
+    name: CLI Linux musl (x86_64)
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-musl
       - name: Cache cargo target
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
-          path: /home/runner/.cache/terminal-target
-          key: ${{ runner.os }}-cargo-musl-${{ hashFiles('**/Cargo.lock') }}
+          path: ${{ runner.temp }}/cargo-target
+          key: ${{ runner.os }}-release-musl-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-musl-
-      - name: Build musl
-        run: cargo build --workspace --release --target x86_64-unknown-linux-musl
+            ${{ runner.os }}-release-musl-
+      - name: Build release binaries
+        run: cargo build --release --target x86_64-unknown-linux-musl -p shell-cli -p shell-server
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: kernext-x86_64-unknown-linux-musl
-          path: /home/runner/.cache/terminal-target/x86_64-unknown-linux-musl/release/kernext
+          name: cli-linux-x86_64-musl
+          path: |
+            ${{ runner.temp }}/cargo-target/x86_64-unknown-linux-musl/release/kernext
+            ${{ runner.temp }}/cargo-target/x86_64-unknown-linux-musl/release/kernext-server
+          if-no-files-found: error
           retention-days: 30
 
-  build-linux-gnu:
-    name: Build Linux GNU (x86_64)
-    runs-on: ubuntu-latest
+  cli-macos-arm64:
+    name: CLI macOS (Apple Silicon)
+    runs-on: macos-latest
     needs: check
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo target
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
-          path: /home/runner/.cache/terminal-target
-          key: ${{ runner.os }}-cargo-gnu-${{ hashFiles('**/Cargo.lock') }}
+          path: ${{ runner.temp }}/cargo-target
+          key: ${{ runner.os }}-release-cli-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-gnu-
-      - name: Build GNU
-        run: cargo build --workspace --release
+            ${{ runner.os }}-release-cli-
+      - name: Build release binaries
+        run: cargo build --release -p shell-cli -p shell-server
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
-          name: kernext-x86_64-unknown-linux-gnu
-          path: /home/runner/.cache/terminal-target/release/kernext
+          name: cli-macos-aarch64
+          path: |
+            ${{ runner.temp }}/cargo-target/release/kernext
+            ${{ runner.temp }}/cargo-target/release/kernext-server
+          if-no-files-found: error
           retention-days: 30
 
-  create-release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    needs: [build-linux-musl, build-linux-gnu]
-    if: github.event.inputs.version != ''
+  cli-macos-intel:
+    name: CLI macOS (Intel)
+    runs-on: macos-15-intel
+    needs: check
     steps:
-      - uses: actions/checkout@v4
-      - name: Download Linux GNU artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo target
+        uses: actions/cache@v6
         with:
-          name: kernext-x86_64-unknown-linux-gnu
-          path: artifacts/linux-gnu
-      - name: Download Linux musl artifact
-        uses: actions/download-artifact@v4
+          path: ${{ runner.temp }}/cargo-target
+          key: ${{ runner.os }}-release-cli-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-release-cli-
+      - name: Build release binaries
+        run: cargo build --release -p shell-cli -p shell-server
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
         with:
-          name: kernext-x86_64-unknown-linux-musl
-          path: artifacts/linux-musl
-      - name: Create release archives
+          name: cli-macos-x86_64
+          path: |
+            ${{ runner.temp }}/cargo-target/release/kernext
+            ${{ runner.temp }}/cargo-target/release/kernext-server
+          if-no-files-found: error
+          retention-days: 30
+
+  desktop-windows:
+    name: Desktop bundle Windows
+    runs-on: windows-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo target
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/cargo-target
+          key: ${{ runner.os }}-release-desktop-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-release-desktop-
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build desktop bundle
+        run: pnpm desktop:build
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-bundle-windows
+          path: ${{ runner.temp }}/cargo-target/release/bundle
+          if-no-files-found: error
+          retention-days: 30
+
+  desktop-linux:
+    name: Desktop bundle Linux
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo target
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/cargo-target
+          key: ${{ runner.os }}-release-desktop-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-release-desktop-
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build desktop bundle
+        run: pnpm desktop:build
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-bundle-linux
+          path: ${{ runner.temp }}/cargo-target/release/bundle
+          if-no-files-found: error
+          retention-days: 30
+
+  desktop-macos-arm64:
+    name: Desktop bundle macOS (Apple Silicon)
+    runs-on: macos-latest
+    needs: check
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo target
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/cargo-target
+          key: ${{ runner.os }}-release-desktop-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-release-desktop-
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build desktop bundle
+        run: pnpm desktop:build
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-bundle-macos-aarch64
+          path: ${{ runner.temp }}/cargo-target/release/bundle
+          if-no-files-found: error
+          retention-days: 30
+
+  desktop-macos-intel:
+    name: Desktop bundle macOS (Intel)
+    runs-on: macos-15-intel
+    needs: check
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo target
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/cargo-target
+          key: ${{ runner.os }}-release-desktop-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-release-desktop-
+      - name: Install web dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Build desktop bundle
+        run: pnpm desktop:build
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-bundle-macos-x86_64
+          path: ${{ runner.temp }}/cargo-target/release/bundle
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: Package and create draft release
+    runs-on: ubuntu-latest
+    needs:
+      # `check` must be listed directly: the needs context only exposes
+      # jobs named in this list, and the draft release title uses
+      # needs.check.outputs.version below.
+      - check
+      - cli-windows
+      - cli-linux-gnu
+      - cli-linux-musl
+      - cli-macos-arm64
+      - cli-macos-intel
+      - desktop-windows
+      - desktop-linux
+      - desktop-macos-arm64
+      - desktop-macos-intel
+    if: github.event.inputs.version != ''
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Download CLI artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          pattern: cli-*
+      - name: Download desktop artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: artifacts
+          pattern: desktop-*
+      - name: Create archives and checksums
         run: |
           mkdir -p release
-          cd artifacts/linux-gnu
-          tar -czf ../../release/kernext-x86_64-unknown-linux-gnu.tar.gz kernext
-          cd ../../release
-          sha256sum kernext-x86_64-unknown-linux-gnu.tar.gz > kernext-x86_64-unknown-linux-gnu.tar.gz.sha256
-          cd ../artifacts/linux-musl
-          tar -czf ../../release/kernext-x86_64-unknown-linux-musl.tar.gz kernext
-          cd ../../release
-          sha256sum kernext-x86_64-unknown-linux-musl.tar.gz > kernext-x86_64-unknown-linux-musl.tar.gz.sha256
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
-        if: github.event.inputs.version != ''
-        with:
-          tag_name: ${{ github.event.inputs.tag || github.event.inputs.version }}
-          name: KERNEXT ${{ github.event.inputs.version }}
-          files: |
-            release/kernext-x86_64-unknown-linux-gnu.tar.gz
-            release/kernext-x86_64-unknown-linux-gnu.tar.gz.sha256
-            release/kernext-x86_64-unknown-linux-musl.tar.gz
-            release/kernext-x86_64-unknown-linux-musl.tar.gz.sha256
-          draft: true
-          generate_release_notes: true
+
+          # CLI archives, one per platform.
+          tar -czf release/kernext-x86_64-unknown-linux-gnu.tar.gz \
+            -C artifacts/cli-linux-x86_64-gnu kernext kernext-server
+          tar -czf release/kernext-x86_64-unknown-linux-musl.tar.gz \
+            -C artifacts/cli-linux-x86_64-musl kernext kernext-server
+          tar -czf release/kernext-aarch64-apple-darwin.tar.gz \
+            -C artifacts/cli-macos-aarch64 kernext kernext-server
+          tar -czf release/kernext-x86_64-apple-darwin.tar.gz \
+            -C artifacts/cli-macos-x86_64 kernext kernext-server
+          zip -j release/kernext-x86_64-pc-windows-gnu.zip \
+            artifacts/cli-windows-x86_64/kernext.exe \
+            artifacts/cli-windows-x86_64/kernext-server.exe
+
+          # Desktop bundles, renamed with a clear platform prefix.
+          for platform in linux windows macos-aarch64 macos-x86_64; do
+            for f in $(find "artifacts/desktop-bundle-${platform}" -type f); do
+              cp "$f" "release/kernext-desktop-${platform}-$(basename "$f")"
+            done
+          done
+
+          if [ -z "$(find release -maxdepth 1 -type f ! -name '*.sha256')" ]; then
+            echo "::error::No release files were assembled."
+            exit 1
+          fi
+
+          # SHA-256 checksum for every artifact.
+          find release -maxdepth 1 -type f ! -name '*.sha256' -print0 |
+            while IFS= read -r -d '' f; do
+              (cd release && sha256sum "$(basename "$f")" > "$(basename "$f").sha256")
+            done
+      - name: Create draft GitHub Release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.event.inputs.version }}"
+          gh release create "$TAG" release/* \
+            --draft \
+            --title "KERNEXT v${VERSION}" \
+            --generate-notes

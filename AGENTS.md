@@ -2,9 +2,12 @@
 
 ## Project
 
-KERNEXT is a custom Rust CLI shell. The CLI phase is implemented, including
-branding, startup presentation, genuine `clear`/Ctrl+L, and config loading.
-Do not start KERNEXT Web or Desktop work unless explicitly asked.
+KERNEXT is a custom Rust CLI shell with three implemented surfaces that share
+one engine: the CLI (`apps/shell-cli`), the local web server and React front
+end (`apps/shell-server`, `apps/web`), and the Tauri 2 desktop application
+(`apps/desktop`). The CLI phase is implemented, including branding, startup
+presentation, genuine `clear`/Ctrl+L, and config loading. Do not start new
+KERNEXT Web or Desktop feature work unless explicitly asked.
 
 Official identity:
 
@@ -25,15 +28,21 @@ Pipelines and redirections are implemented natively; keep them that way.
 Workspace members:
 
 - `apps/shell-cli` — binary package `shell-cli`; executable name is `kernext`
+- `apps/shell-server` — local Axum server (HTTP sessions, engine and PTY
+  WebSockets)
+- `apps/web` — React + Vite + Tailwind front end shared by web and desktop
+- `apps/desktop` — Tauri 2 desktop application (crate `shell-desktop`,
+  binary `kernext-desktop`); `apps/desktop/src-tauri` is the crate root
 - `crates/shell-core` — branding constants, lexer, parser, AST, spans, shared errors
 - `crates/shell-builtins` — native command registry, AST evaluator, built-ins,
   pipeline engine, external process executor, variable expansion, background syntax
 - `crates/shell-runtime` — `Session` (cwd, config, lifecycle, platform, variables, functions)
 - `crates/shell-line-editor` — Reedline integration behind `LineReader`, clear helpers
 - `crates/shell-config` — TOML configuration model
-- `crates/shell-api` — serializable session/terminal API contracts (not yet wired to a server)
+- `crates/shell-api` — serializable session/terminal API contracts shared by
+  the web server and the desktop runtime
 - `installers/` — Linux, macOS, Windows installation scripts
-- `docs/` — branding and architecture documentation
+- `docs/` — branding, architecture, desktop, and status documentation
 
 Execution flow is:
 
@@ -230,6 +239,27 @@ without explicit permission.
 A source tree on vfat can still be inspected, edited, diffed, formatted, and
 used by `cargo metadata --no-deps`.
 
+## Desktop build notes (Windows GNU)
+
+- `apps/desktop/src-tauri/build.rs` must keep shadowing the MinGW
+  `default-manifest.o` on `*-pc-windows-gnu` targets. Some MinGW-w64
+  distributions link a default manifest without the Common Controls v6
+  dependency; GNU ld keeps it over Tauri's manifest and the binary dies at
+  startup with `STATUS_ENTRYPOINT_NOT_FOUND` (`TaskDialogIndirect` missing
+  from comctl32 v5). The build script compiles a replacement manifest object
+  with `windres` and prepends its directory through
+  `cargo:rustc-link-arg=-B<out-dir>\` so the GCC endfile spec picks it. Do not
+  remove this or "simplify" it back to plain `tauri_build::build()` on GNU.
+- On GNU targets the script uses
+  `WindowsAttributes::new_without_app_manifest()`; MSVC and non-Windows
+  targets keep Tauri's default manifest. See `docs/DESKTOP.md`.
+- `tauri.conf.json` `frontendDist` is `../../web/dist` — Tauri resolves it
+  relative to `src-tauri`, not the package root.
+- Keep the Rust `tauri` crate and the npm `@tauri-apps/api` on the same
+  major/minor version, or `tauri build` aborts with a version-mismatch error.
+- Desktop commands execute through the local Rust runtime only — never the
+  public web server, never a JavaScript simulation of the shell.
+
 ## Commands
 
 Run from the workspace root of the buildable checkout.
@@ -244,20 +274,51 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p shell-cli
 ```
 
+Front end and desktop (pnpm only; `package.json` pins `pnpm@11.25.0`):
+
+```bash
+pnpm install --frozen-lockfile
+pnpm typecheck          # web typecheck (alias of web:typecheck)
+pnpm test               # web Vitest suite (alias of web:test)
+pnpm build              # web production build (alias of web:build)
+pnpm web:dev            # vite dev server (http://127.0.0.1:5173)
+pnpm desktop:dev        # tauri dev (web + desktop window)
+pnpm desktop:build      # tauri build (production bundle)
+cargo run -p shell-server   # local web API server
+```
+
+The root `desktop:*` scripts delegate to the `dev`/`build` scripts inside
+`apps/desktop/package.json`. `pnpm --filter <pkg> <bin>` does not work — it
+only runs package scripts — so do not change them back to
+`pnpm --filter @kernext/desktop tauri …`.
+
 Focused tests:
 
 ```bash
 cargo test -p shell-builtins --test external
+cargo test -p shell-builtins --test external_tools
 cargo test -p shell-builtins --test builtins
 cargo test -p shell-builtins --test builtins paths_containing_spaces
 cargo test -p shell-builtins --test pipeline
 cargo test -p shell-core --test parser
 cargo test -p shell-cli --test repl
+cargo test -p shell-server
+cargo test -p shell-desktop
 ```
 
 External-process and pipeline tests use the test binary itself as a portable
 helper; they do not require `python`, `git`, `sort`, `grep`, or any other
-particular program.
+particular program. `external_tools.rs` checks common developer tools
+(`git`, `cargo`, `rustc`, `node`, `pnpm`, `python`, `curl`, `code`,
+`opencode`) through the full engine and skips any that are not installed.
+
+CI lives in `.github/workflows/ci.yml` (fmt, clippy, web job, test matrix
+across Windows x64, Linux x64, macOS Apple Silicon + Intel, and a desktop
+bundling matrix). Releases live in `.github/workflows/release.yaml`
+(`workflow_dispatch` only, draft-only; CLI archives + desktop bundles +
+SHA-256 checksums per artifact). Do not trigger the release workflow without
+explicit authorization, and do not claim a workflow passed unless its run
+completed.
 
 The interactive shell requires a real TTY. Piping input directly into
 `cargo run` is rejected because KERNEXT is interactive. Use a terminal, or
@@ -293,7 +354,7 @@ The interactive shell requires a real TTY. Piping input directly into
 - Assignment evaluation: `crates/shell-builtins/src/eval.rs` (`run_assignment`).
 - Built-ins: `crates/shell-builtins/src/commands.rs` (`export_builtin`,
   `unset_builtin`, `env_builtin`, `set_builtin`).
-- Registry: `crates/shell-builtins/src/registry.rs` (53 commands).
+- Registry: `crates/shell-builtins/src/registry.rs` (56 commands).
 - Lexer tokens: `Token::Equals`, `Token::SpecialVariable`,
   `SpecialVariable::{LastStatus, ProcessId}`.
 - AST: `Expression::Assignment`, `WordPart::Special`, variable-name helpers in
@@ -384,11 +445,12 @@ The interactive shell requires a real TTY. Piping input directly into
 - Registry and command metadata: `crates/shell-builtins/src/registry.rs`.
 - Implementations: `crates/shell-builtins/src/commands.rs`.
 - AST evaluator: `crates/shell-builtins/src/eval.rs`.
-- 53 commands: help, pwd, cd, ls, tree, find, stat, mkdir, touch, cat, head,
+- 56 commands: help, pwd, cd, ls, tree, find, stat, mkdir, touch, cat, head,
   tail, wc, grep, sort, uniq, echo, print, input, len, type, str, int, float,
   bool, cp, mv, rm, which, basename, dirname, realpath, clear, history, jobs,
   wait, kill, fg, bg, run, test, `[`, expr, sleep, true, false, whoami, date,
-  version, exit, export, unset, env, set.
+  host, sysinfo, version, exit, export, unset, env, set. `[` is the bracket
+  alias of `test` and requires a closing `]`.
 - `print`/`input`/`len`/`type`/`str`/`int`/`float`/`bool` are the native
   scripting helpers. Value commands print a bare value (no trailing newline,
   like `expr`/`wc`); `print` behaves like `echo`. `input <variable>` reads one
@@ -417,8 +479,8 @@ The interactive shell requires a real TTY. Piping input directly into
 - Filesystem tests use isolated temp dirs and call
   `Session::set_working_directory`; never mutate the process cwd in tests.
 - Add focused tests next to the behavior: unit tests in `src/`, integration
-  tests in `crates/shell-builtins/tests/`, `crates/shell-core/tests/`, and
-  `apps/shell-cli/tests/`.
+  tests in `crates/shell-builtins/tests/`, `crates/shell-core/tests/`,
+  `apps/shell-cli/tests/`, and `apps/shell-server/tests/`.
 - External-process tests live in `crates/shell-builtins/tests/external.rs` and
   use the test binary itself as a helper via `CUSTOM_SHELL_TEST_HELPER`. Do not
   replace them with tests that require a particular external program.
@@ -430,11 +492,13 @@ The interactive shell requires a real TTY. Piping input directly into
 - Startup tests live in `apps/shell-cli/src/startup.rs`; clear/Ctrl+L tests live
   in `apps/shell-cli/tests/repl.rs` and
   `crates/shell-line-editor/src/editor.rs`.
-- The full suite currently has 414 tests on Windows, including 20 in
-  `crates/shell-builtins/tests/windows_scripts.rs`. The Unix baseline was 399
-  before those Windows-only tests were added (Unix runs signal/abort tests
-  instead of the Windows launcher tests); do not weaken or delete tests to make
-  a build pass.
+- The full suite currently has 469 tests on Windows (467 unit/integration plus
+  2 `shell-core` doc-tests), including 20 in
+  `crates/shell-builtins/tests/windows_scripts.rs`, 2 in `external_tools.rs`,
+  16 in `shell-desktop`, and 17 in `shell-server` (unit, `api`, `consistency`,
+  and `ws` integration suites). Unix runs
+  signal/abort tests instead of the Windows launcher and ConPTY suites; do not
+  weaken or delete tests to make a build pass.
 
 ## Git and uncommitted work
 
@@ -449,6 +513,12 @@ repo.
 
 ## Documentation
 
-Keep `README.md`, `AGENTS.md`, `RELEASE_NOTES.md`, `docs/BRANDING.md`, and
-`docs/ARCHITECTURE.md` in sync with behavior. Trust the source and tests if docs
-disagree. Clearly label Web and Desktop as future plans, never as implemented.
+Keep `README.md`, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`,
+`RELEASE_NOTES.md`, `docs/BRANDING.md`, `docs/ARCHITECTURE.md`,
+`docs/COMMANDS.md`, `docs/DESKTOP.md`, `docs/SECURITY.md`,
+`docs/DEPLOYMENT.md`, `docs/TROUBLESHOOTING.md`, and
+`docs/PROJECT_STATUS.md` in sync with behavior. Trust the source and tests if
+docs disagree. Web and Desktop are implemented surfaces now; describe their
+actual behavior and their verification state rather than calling them future
+plans. The built-in count in prose must always match
+`crates/shell-builtins/src/registry.rs` (`DEFAULT_BUILTINS`).

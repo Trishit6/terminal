@@ -32,7 +32,7 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
 - **Custom lexer/parser**: independent Rust implementation with Unicode support,
   quote metadata, and source spans.
 - **AST evaluation**: recursive-descent parser with structured expressions.
-- **53 native built-ins**, covering filesystem/text operations, environment and
+- **56 native built-ins**, covering filesystem/text operations, environment and
   scripting helpers, job control, and shell lifecycle commands. See `help` or
   the registry for the complete list.
 - **External process execution**: direct `std::process::Command` execution
@@ -68,18 +68,22 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
   source.
 
 ### Platform support
-- **Linux (GNU)**: canonical target; release automation builds it.
-- **Linux (musl)**: build target configured in CI.
-- **macOS**: source-compatible; requires a macOS host and SDK to build.
-- **Windows**: source-compatible and exercised by the test suite; requires a
-  Windows toolchain to build.
+- **Linux (GNU and musl)**: canonical target; release automation builds both.
+- **macOS (Apple Silicon and Intel)**: source-compatible; the release workflow
+  builds both architectures on GitHub runners. Interactive macOS verification is
+  still open.
+- **Windows x64**: source-compatible and exercised by the test suite; the
+  release workflow builds MSVC artifacts on GitHub runners and the GNU build
+  is verified on the development host.
 
 ### Security
 - No command injection through a shell wrapper.
 - No `eval` or dynamic code execution.
 - Arguments are passed as separate `Command::arg` values.
 - No `sh -c`, `bash -c`, or `cmd /C` is used.
-- Windows resolution skips `.bat` and `.cmd` so no implicit shell runs.
+- Windows `.cmd`/`.bat` scripts launch through the system command interpreter
+  (`%COMSPEC%`) with a dedicated, pre-escaped command line; arguments containing
+  `"`, `%`, CR, LF, or NUL are refused rather than rewritten.
 - The parent process environment is not modified.
 - Child processes receive inherited plus exported variables, minus hidden names.
 - Path handling resolves relative names against the session working directory.
@@ -105,9 +109,9 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
 - No comments in scripts.
 - No flag/option completion.
 - Grouped expressions are not supported as pipeline stages.
-- Release automation currently builds Linux targets only. The macOS and Windows
-  installers are provided, but their archives must be produced by a matching
-  host toolchain until those CI jobs are added.
+- Release workflows are configured for every platform but have not yet been
+  executed on GitHub; they produce draft releases only and never publish on
+  their own.
 
 ---
 
@@ -120,13 +124,49 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
 - Globbing, pattern matching, and script comments.
 - Richer diagnostics and completion for command flags.
 
-### KERNEXT Web — planned, not implemented
-- Browser-based terminal experience sharing the same Rust parser, evaluator,
-  and session engine.
-- A graphical splash and mountain-wallpaper identity for the web surface.
-- No web code exists in this repository yet.
+### KERNEXT Web — implemented
+- Local Axum server (`apps/shell-server`) with engine sessions and a real
+  pseudoterminal relay (ConPTY on Windows, `openpty` on Unix).
+- Loopback bind by default, optional bearer token, fixed browser-origin
+  allowlist, session caps, and idle cleanup — see `docs/SECURITY.md`.
+- React front end (`apps/web`) with the graphical splash and
+  mountain-wallpaper identity, the full public website (home, features,
+  documentation, downloads, about, contact), and an interactive browser
+  terminal. The site's version badge comes from the workspace version at build
+  time.
 
-### KERNEXT Desktop — planned, not implemented
-- Native desktop shell surface built on the same execution engine.
-- The current CLI intentionally remains text-only.
-- No desktop code exists in this repository yet.
+### KERNEXT Desktop — implemented
+- Native desktop application (`apps/desktop`) built on Tauri 2, reusing the
+  web front end with a local Rust runtime: multi-tab terminal (engine or PTY),
+  dashboard, command explorer, file explorer, sessions, settings, and about
+  screens.
+- Desktop commands execute through the local Rust runtime only — never the
+  public web server, never a JavaScript shell simulation.
+- Windows release bundles (MSI and NSIS installers) build successfully through
+  `pnpm desktop:build`; the release binary passes a launch smoke test.
+- Verified on Windows; interactive Linux/macOS verification and macOS
+  bundling remain open. See `docs/PROJECT_STATUS.md`.
+
+### Product integration (Phase 6)
+- **New built-ins**: `host` (system-resolver DNS lookup) and `sysinfo`
+  (platform/runtime report), plus the previously missing `[` registry entry
+  so the documented bracket alias of `test` actually dispatches as a built-in
+  on every platform.
+- **Cross-interface consistency suite**: HTTP sessions and the CLI engine are
+  checked for identical help, version, `pwd`/`cd`, `ls`, `mkdir`, `echo`,
+  pipeline, redirection, and environment behavior; HTTP sessions now persist
+  directory changes the same way the CLI does.
+- **External-tool compatibility tests**: `git`, `cargo`, `rustc`, `node`,
+  `pnpm`, `python`, `curl`, `code`, and `opencode` run through the full engine
+  (absent tools are skipped, never assumed).
+- **CI**: lint, web, test, and desktop-bundle matrices across Windows x64,
+  Linux x64, and macOS (Apple Silicon + Intel) on Node 24 action versions.
+- **Releases**: manual, draft-only workflow covering CLI archives (GNU, musl,
+  Windows, macOS both architectures, each including `kernext-server`), desktop
+  bundles, and SHA-256 checksums for every artifact.
+- **Documentation**: command reference (`docs/COMMANDS.md`), security model
+  (`docs/SECURITY.md`), deployment guide (`docs/DEPLOYMENT.md`),
+  troubleshooting (`docs/TROUBLESHOOTING.md`), and contribution guide
+  (`CONTRIBUTING.md`).
+- **Fixed**: the root `pnpm desktop:dev` / `pnpm desktop:build` scripts, which
+  previously failed with "None of the selected packages has a 'tauri' script".

@@ -33,9 +33,9 @@ pub struct Cli {
 }
 
 /// Wrapper to provide completion context from Session.
-struct SessionCompletionContext {
-    session: RwLock<Session>,
-    builtins: Vec<String>,
+pub(crate) struct SessionCompletionContext {
+    pub(crate) session: RwLock<Session>,
+    pub(crate) builtins: Vec<String>,
 }
 
 impl CompletionContext for SessionCompletionContext {

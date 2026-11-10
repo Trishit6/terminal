@@ -9,7 +9,11 @@
     "web:build": "pnpm --filter @kernext/web build",
     "web:preview": "pnpm --filter @kernext/web preview",
     "web:typecheck": "pnpm --filter @kernext/web typecheck",
-    "desktop:dev": "pnpm --filter @kernext/desktop tauri dev",
-    "desktop:build": "pnpm --filter @kernext/desktop tauri build"
+    "web:test": "pnpm --filter @kernext/web test",
+    "desktop:dev": "pnpm --filter @kernext/desktop dev",
+    "desktop:build": "pnpm --filter @kernext/desktop build",
+    "typecheck": "pnpm web:typecheck",
+    "build": "pnpm web:build",
+    "test": "pnpm web:test"
   }
 }

@@ -71,6 +71,8 @@
     Menlo, Consolas, "Liberation Mono", monospace;
   --radius-4xl: 2rem;
   --radius-5xl: 2.75rem;
+  /* Site-wide max content width shared by the marketing and desktop shells. */
+  --container-site: 1500px;
 }
 
 @layer base {
@@ -247,6 +249,18 @@
     background: var(--term-cursor) !important;
     color: var(--term-bg) !important;
     animation: terminal-blink 1.1s steps(1, end) infinite;
+  }
+
+  .terminal-cursor-bar {
+    background: transparent !important;
+    border-left: 2px solid var(--term-cursor);
+    color: var(--term-fg) !important;
+  }
+
+  .terminal-cursor-underline {
+    background: transparent !important;
+    border-bottom: 2px solid var(--term-cursor);
+    color: var(--term-fg) !important;
   }
 
   .terminal-keyboard {
