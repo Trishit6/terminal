@@ -12,11 +12,13 @@ how to build, where the pieces live, and the non-obvious constraints.
 ## Branding
 
 - Product: **KERNEXT**. Tagline: **The Next Core of Computing.**
+  Brand statement: **Independent. Native. Engineered.**
   Values: **OPEN • POWERFUL • INDEPENDENT**. Support phrase: **Build. Execute. Innovate.**
 - Prompt: `kernext ~ $ `. Executable: `kernext` (desktop: `kernext-desktop`).
 - Internal crate/package names stay `shell-*`. Never rename them to match the brand.
 - Branding constants live in `crates/shell-core/src/lib.rs` (`SHELL_NAME`,
-  `PRODUCT_NAME`, `TAGLINE`, `VALUES`, `MOTTO`, `VERSION`). `SHELL_NAME = "kernext"`.
+  `PRODUCT_NAME`, `TAGLINE`, `BRAND_STATEMENT`, `VALUES`, `MOTTO`, `VERSION`).
+  `SHELL_NAME = "kernext"`.
 - The CLI is text-only. The graphical splash and mountain wallpaper belong to
   the Web and Desktop surfaces in `apps/web` / `apps/desktop`.
 
@@ -28,20 +30,23 @@ scripts and test binaries. `.cargo/config.toml` routes all build artifacts to
 CARGO_TARGET_DIR` manually, and never create a repo-local `target/`.
 
 ```bash
-cargo check --workspace --all-targets
-cargo build --workspace
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-cargo fmt --all -- --check
-cargo run -p shell-cli
+kernext check          # cargo check --workspace --all-targets
+kernext build          # cargo build --workspace
+kernext test           # cargo test --workspace
+kernext lint           # cargo clippy --workspace --all-targets -- -D warnings
+kernext fmt --check    # cargo fmt --all -- --check
+kernext run            # cargo run -p shell-cli
+kernext doctor
+kernext version
+kernext help
 
-pnpm install --frozen-lockfile
-pnpm typecheck
-pnpm test
-pnpm build
-pnpm web:dev
-pnpm desktop:dev
-pnpm desktop:build
+npm ci
+npm run typecheck
+npm test
+npm run build
+npm run web:dev
+npm run desktop:dev
+npm run desktop:build
 cargo run -p shell-server
 ```
 
@@ -122,10 +127,16 @@ Workspace members:
   simulation. `apps/desktop/src-tauri/build.rs` must keep shadowing the MinGW
   `default-manifest.o` on `*-pc-windows-gnu` (see `docs/DESKTOP.md`); removing
   it makes the binary die at startup with `STATUS_ENTRYPOINT_NOT_FOUND`.
-- **Root pnpm scripts delegate.** `desktop:dev`/`desktop:build` call the
-  `dev`/`build` scripts in `apps/desktop/package.json`. `pnpm --filter <pkg>
-<bin>` only runs package scripts, so `--filter @kernext/desktop tauri …`
-  fails; do not reintroduce it.
+- **Front end uses npm.** Workspaces are declared in the root `package.json`;
+  the lockfile is `package-lock.json`; CI runs `npm ci`. Never reintroduce
+  pnpm, yarn, or bun, and never add a second lockfile.
+- **Root desktop scripts delegate.** `desktop:dev`/`desktop:build` call the
+  `dev`/`build` scripts in `apps/desktop/package.json` with
+  `npm run … -w @kernext/desktop`; Tauri's hooks use
+  `npm --prefix ../web run …`.
+- **`kernext` project commands wrap Cargo.** `apps/shell-cli/src/dev.rs`;
+  they never build a shell command string and always propagate the child exit
+  code.
 
 ## Git discipline
 

@@ -34,18 +34,20 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
 
 The CI workflow installs exactly this set.
 
-### `pnpm` says "None of the selected packages has a tauri script"
+### npm says "Missing script: tauri"
 
-Older workspace scripts called `pnpm --filter @kernext/desktop tauri …`, which
-runs *package scripts*, not binaries. The scripts are now
-`pnpm desktop:dev` and `pnpm desktop:build`, which delegate to the package's
-own `dev`/`build` scripts. Update any notes you kept.
+The front-end workspace is npm-based. Run the desktop app through the package
+scripts — `npm run desktop:dev` and `npm run desktop:build` from the repository
+root, or `npm run dev` / `npm run build` from `apps/desktop`. Tauri is a
+*bin*ary, not a package script, so `npm run tauri …` cannot work.
 
-### Node/pnpm version problems
+### Node/npm version problems
 
-The workspace pins `pnpm@11.25.0` via `packageManager`. Use Corepack
-(`corepack enable`) or install that exact version; a different major of pnpm
-may fail the frozen lockfile check.
+`npm ci` requires the committed `package-lock.json` and a Node.js version that
+satisfies the `engines` field in `package.json` (Node.js 22+ and npm 10+).
+Check yours with `kernext doctor`, then install a supported Node.js release
+from <https://nodejs.org>. The lockfile is npm's; a pnpm/yarn/bun lockfile will
+not install it.
 
 ## Running the shell
 
@@ -65,7 +67,7 @@ is rejected. Use a real terminal, or `screen`/`tmux`. Scripts run through
 - Windows `.cmd`/`.bat` arguments containing `"`, `%`, CR, LF, or NUL are
   refused — `cmd.exe` has no escaping for them.
 
-### `npm`/`pnpm`-installed tools fail with `os error 193`
+### npm-installed tools fail with `os error 193`
 
 Older builds selected the extensionless POSIX `sh` shim that npm installs
 next to the `.cmd` shim. Extensionless files are never executed on Windows;
@@ -109,13 +111,13 @@ Idle sessions are cleaned up by a background sweeper (60-second cadence,
 Desktop commands run through the local Rust runtime, never the web server —
 a server not running does not matter for the desktop app. If the PTY terminal
 fails, the desktop spawns its own executable as the worker
-(`KERNEXT_DESKTOP_WORKER=1`); run `pnpm desktop:build` again so the binary and
+(`KERNEXT_DESKTOP_WORKER=1`); run `npm run desktop:build` again so the binary and
 front end match.
 
 ### Desktop build aborts with a `@tauri-apps/api` version mismatch
 
 The Rust `tauri` crate and the npm `@tauri-apps/api` package must stay on the
-same major/minor. `pnpm install --frozen-lockfile` after changing either.
+same major/minor. `npm ci` after changing either.
 
 ### STATUS_ENTRYPOINT_NOT_FOUND at desktop startup on MinGW
 

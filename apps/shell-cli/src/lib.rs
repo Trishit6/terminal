@@ -4,6 +4,7 @@
 //! process boundary.
 
 pub mod cli;
+pub mod dev;
 pub mod repl;
 pub mod startup;
 pub mod worker;

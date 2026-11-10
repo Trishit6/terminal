@@ -131,7 +131,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
         response.status,
         'backend_unreachable',
         response.status >= 500
-          ? 'The request did not reach the KERNEXT server. When the site runs through the Vite dev server this usually means the backend is not running yet — start it with `cargo run -p shell-server` or `pnpm dev`, then connect again.'
+          ? 'The request did not reach the KERNEXT server. When the site runs through the Vite dev server this usually means the backend is not running yet — start it with `cargo run -p shell-server` or `npm run dev`, then connect again.'
           : `The server answered HTTP ${response.status} without a KERNEXT error body.`,
       );
     }

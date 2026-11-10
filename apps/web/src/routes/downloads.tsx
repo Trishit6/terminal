@@ -38,7 +38,7 @@ const PLATFORMS = [
     targets: ['x86_64', 'Windows 10 or later'],
     artifacts: [
       'CLI executable: `kernext.exe` (portable archive)',
-      'Desktop installer produced by Tauri (`pnpm desktop:build`)',
+      'Desktop installer produced by Tauri (`npm run desktop:build`)',
     ],
   },
   {
@@ -230,16 +230,16 @@ cargo build --workspace --release
               Prerequisites
             </span>
             <span className="font-mono text-[10px] text-white/30">
-              pnpm 11 · Rust · platform toolchain
+              npm · Rust · platform toolchain
             </span>
           </div>
           <pre className="overflow-x-auto p-4 font-mono text-[11px] leading-relaxed sm:text-xs">
-            <code>{`pnpm install --frozen-lockfile
-pnpm web:build
-pnpm desktop:build
+            <code>{`npm ci
+npm run web:build
+npm run desktop:build
 
 # development window with hot reload
-pnpm desktop:dev`}</code>
+npm run desktop:dev`}</code>
           </pre>
         </div>
 

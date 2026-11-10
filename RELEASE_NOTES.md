@@ -38,7 +38,7 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
 - **External process execution**: direct `std::process::Command` execution
   without shell wrappers. Windows `.cmd`/`.bat` programs run through the system
   command interpreter with escaped arguments; `.exe`/`.com` launch natively.
-- **Windows external command fix**: npm/pnpm tools such as `opencode` and
+- **Windows external command fix**: npm-installed tools such as `opencode` and
   `omnirush` no longer fail with `os error 193`. Resolution used to pick the
   extensionless POSIX `sh` shim beside the `.cmd` shim, which `CreateProcess`
   cannot execute. `PATHEXT` is now honoured for `.com`, `.exe`, `.bat`, and
@@ -143,7 +143,7 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
 - Desktop commands execute through the local Rust runtime only — never the
   public web server, never a JavaScript shell simulation.
 - Windows release bundles (MSI and NSIS installers) build successfully through
-  `pnpm desktop:build`; the release binary passes a launch smoke test.
+  `npm run desktop:build`; the release binary passes a launch smoke test.
 - Verified on Windows; interactive Linux/macOS verification and macOS
   bundling remain open. See `docs/PROJECT_STATUS.md`.
 
@@ -157,7 +157,7 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
   pipeline, redirection, and environment behavior; HTTP sessions now persist
   directory changes the same way the CLI does.
 - **External-tool compatibility tests**: `git`, `cargo`, `rustc`, `node`,
-  `pnpm`, `python`, `curl`, `code`, and `opencode` run through the full engine
+  `npm`, `python`, `curl`, `code`, and `opencode` run through the full engine
   (absent tools are skipped, never assumed).
 - **CI**: lint, web, test, and desktop-bundle matrices across Windows x64,
   Linux x64, and macOS (Apple Silicon + Intel) on Node 24 action versions.
@@ -168,5 +168,5 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
   (`docs/SECURITY.md`), deployment guide (`docs/DEPLOYMENT.md`),
   troubleshooting (`docs/TROUBLESHOOTING.md`), and contribution guide
   (`CONTRIBUTING.md`).
-- **Fixed**: the root `pnpm desktop:dev` / `pnpm desktop:build` scripts, which
+- **Fixed**: the root `npm run desktop:dev` / `npm run desktop:build` scripts, which
   previously failed with "None of the selected packages has a 'tauri' script".

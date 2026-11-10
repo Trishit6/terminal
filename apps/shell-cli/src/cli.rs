@@ -1,3 +1,4 @@
+use crate::dev::{self, DevCommand};
 use crate::repl::Repl;
 use crate::startup::{self, Startup};
 use clap::Parser;
@@ -20,9 +21,17 @@ use std::sync::{Arc, RwLock};
     long_about = "KERNEXT — The Next Core of Computing.\n\n\
                   An independent, native Rust shell with its own lexer, parser, \
                   evaluator, built-in commands, pipelines, redirections, and \
-                  external process executor."
+                  external process executor.\n\n\
+                  With no command, KERNEXT starts the interactive shell. The \
+                  project commands (build, check, test, fmt, lint, run, clean, \
+                  doctor, version, help) wrap the Rust toolchain.",
+    disable_help_subcommand = true
 )]
 pub struct Cli {
+    /// Project command to run instead of starting the shell.
+    #[command(subcommand)]
+    pub command: Option<DevCommand>,
+
     /// Skip the startup banner and animation entirely.
     #[arg(long)]
     pub quiet: bool,
@@ -167,6 +176,12 @@ impl CompletionContext for SessionCompletionContext {
 
 pub fn run() -> Result<i32, ShellError> {
     let arguments = Cli::parse();
+
+    // Project commands run before the shell starts and do not need a terminal
+    // on standard input; they report the underlying tool's exit code directly.
+    if let Some(command) = arguments.command {
+        return Ok(dev::execute(command));
+    }
 
     if !io::stdin().is_terminal() {
         return Err(ShellError::message(
@@ -329,5 +344,34 @@ mod tests {
         assert!(!quiet.no_animation);
         assert!(!plain.quiet);
         assert!(plain.no_animation);
+        assert!(quiet.command.is_none());
+    }
+
+    #[test]
+    fn developer_commands_parse_and_leave_the_shell_mode_alone() {
+        let build =
+            Cli::try_parse_from(["kernext", "build", "--release"]).expect("build should parse");
+        assert!(matches!(
+            build.command,
+            Some(DevCommand::Build(crate::dev::BuildArgs {
+                release: true,
+                ..
+            }))
+        ));
+        assert!(!build.quiet);
+
+        let doctor = Cli::try_parse_from(["kernext", "doctor"]).expect("doctor should parse");
+        assert!(matches!(doctor.command, Some(DevCommand::Doctor)));
+    }
+
+    #[test]
+    fn test_arguments_after_the_separator_are_kept_verbatim() {
+        let cli = Cli::try_parse_from(["kernext", "test", "parser", "--", "--nocapture"])
+            .expect("test should parse");
+        let Some(DevCommand::Test(arguments)) = cli.command else {
+            panic!("expected the test subcommand");
+        };
+        assert_eq!(arguments.filter.as_deref(), Some("parser"));
+        assert_eq!(arguments.extra, vec!["--nocapture".to_string()]);
     }
 }

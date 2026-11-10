@@ -30,8 +30,9 @@ the authoritative engineering contract.
 ## Development setup
 
 - Rust 1.85+ (Rust 2024 edition).
-- Node.js + pnpm 11 (`package.json` pins `pnpm@11.25.0` via `packageManager`;
-  Corepack handles it).
+- Node.js 22+ and npm 10+ (`package.json` declares `engines` and the npm
+  workspaces). `npm ci` installs `apps/web` and `apps/desktop` from
+  `package-lock.json`. Do not introduce another package manager.
 - A real terminal for interactive verification.
 
 On the VFAT/`showexec` checkout, cargo artifacts automatically route to an
@@ -42,17 +43,28 @@ ext4 target directory via `.cargo/config.toml` — never create a repo-local
 
 ```sh
 # Rust: all of these must pass before you open a PR
-cargo fmt --all -- --check
-cargo check --workspace --all-targets
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+kernext fmt --check
+kernext check
+kernext test
+kernext lint
 
 # Web
-pnpm install --frozen-lockfile
-pnpm typecheck
-pnpm test
-pnpm build
+npm ci
+npm run typecheck
+npm test
+npm run build
+
+# Anything unclear about your machine?
+kernext doctor
 ```
+
+`kernext` project commands call the Cargo commands below, which remain valid:
+`cargo fmt --all -- --check`, `cargo check --workspace --all-targets`,
+`cargo test --workspace`, and
+`cargo clippy --workspace --all-targets -- -D warnings`.
+
+If you changed a dependency, regenerate the front-end lockfile with
+`npm install` and commit the updated `package-lock.json`.
 
 Focused suites are listed in [`README.md`](README.md#development). Filesystem
 tests use isolated temp directories and `Session::set_working_directory` —
@@ -70,8 +82,8 @@ on a particular external program.
   in `crates/shell-builtins/src/registry.rs`.
 - Desktop changes must keep `apps/desktop/src-tauri/build.rs` MinGW manifest
   shadowing intact (see [`docs/DESKTOP.md`](docs/DESKTOP.md)).
-- Do not commit build artifacts (`apps/web/dist`, any `target/` directory) or
-  modify `pnpm-lock.yaml` by hand.
+- Do not commit build artifacts (any `target/` directory) or
+  `node_modules/`; do not hand-edit `package-lock.json`.
 
 ## Reporting issues
 

@@ -33,6 +33,9 @@ pub const TAGLINE: &str = "The Next Core of Computing.";
 /// Short statement of the product values.
 pub const VALUES: &str = "OPEN • POWERFUL • INDEPENDENT";
 
+/// Official brand statement used next to the tagline in developer output.
+pub const BRAND_STATEMENT: &str = "Independent. Native. Engineered.";
+
 /// Supporting brand phrase used in the welcome message.
 pub const MOTTO: &str = "Build. Execute. Innovate.";
 

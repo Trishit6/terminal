@@ -43,7 +43,7 @@ const TOOLS: &[ToolCase] = &[
         expected: Some("v"),
     },
     ToolCase {
-        name: "pnpm",
+        name: "npm",
         flag: "--version",
         expected: None,
     },

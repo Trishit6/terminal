@@ -187,7 +187,7 @@ History is stored beside the config file unless `history_file` is absolute.
   rejected rather than altered, because `cmd.exe` has no escaping for them.
 - Windows resolution honours `PATHEXT` order but only for `.com`, `.exe`,
   `.bat`, and `.cmd`; extensionless files are never treated as executables.
-  This prevents launching npm/pnpm POSIX `sh` shims (the cause of Windows
+  This prevents launching npm POSIX `sh` shims (the cause of Windows
   `os error 193`).
 - The parent process environment is never mutated.
 - Child processes receive inherited variables plus exported locals, minus

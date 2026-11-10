@@ -61,22 +61,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Install pnpm
-        uses: pnpm/action-setup@v6
-        # Version comes from the packageManager pin in package.json.
       - name: Install Node
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
+          cache: npm
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
       - name: Typecheck
-        run: pnpm typecheck
+        run: npm run typecheck
       - name: Unit tests
-        run: pnpm test
+        run: npm test
       - name: Build
-        run: pnpm build
+        run: npm run build
 
   test:
     name: Test and release build (${{ matrix.os }})
@@ -146,13 +143,11 @@ jobs:
             librsvg2-dev \
             libgtk-3-dev \
             libdbus-1-dev
-      - name: Install pnpm
-        uses: pnpm/action-setup@v6
       - name: Install Node
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
+          cache: npm
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo target
@@ -163,11 +158,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-ci-desktop-
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
       - name: Build desktop application
         # Compiles the desktop app in release mode with the embedded front
         # end (beforeBuildCommand runs the web build) but skips installer
         # bundling; the release workflow produces the installers.
-        run: pnpm desktop:build --no-bundle
+        run: npm run build -w @kernext/desktop -- --no-bundle
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target

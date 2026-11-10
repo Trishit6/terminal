@@ -3,19 +3,29 @@
   "private": true,
   "version": "0.1.0",
   "description": "KERNEXT — The Next Core of Computing.",
-  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=22",
+    "npm": ">=10"
+  },
+  "workspaces": [
+    "apps/web",
+    "apps/desktop"
+  ],
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:server": "cargo run -p shell-server",
-    "web:dev": "pnpm --filter @kernext/web dev",
-    "web:build": "pnpm --filter @kernext/web build",
-    "web:preview": "pnpm --filter @kernext/web preview",
-    "web:typecheck": "pnpm --filter @kernext/web typecheck",
-    "web:test": "pnpm --filter @kernext/web test",
-    "desktop:dev": "pnpm --filter @kernext/desktop dev",
-    "desktop:build": "pnpm --filter @kernext/desktop build",
-    "typecheck": "pnpm web:typecheck",
-    "build": "pnpm web:build",
-    "test": "pnpm web:test"
+    "web:dev": "npm run dev -w @kernext/web",
+    "web:build": "npm run build -w @kernext/web",
+    "web:preview": "npm run preview -w @kernext/web",
+    "web:typecheck": "npm run typecheck -w @kernext/web",
+    "web:test": "npm run test -w @kernext/web",
+    "desktop:dev": "npm run dev -w @kernext/desktop",
+    "desktop:build": "npm run build -w @kernext/desktop",
+    "typecheck": "npm run web:typecheck",
+    "build": "npm run web:build",
+    "test": "npm run web:test"
+  },
+  "allowScripts": {
+    "esbuild": true
   }
 }

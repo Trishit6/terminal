@@ -548,7 +548,7 @@ export function useTerminalConnection({
         setBackendNotice(
           transportRef.current === 'tauri'
             ? message
-            : 'The KERNEXT server is not reachable. Start it with `cargo run -p shell-server` (or `pnpm dev`) and check again.',
+            : 'The KERNEXT server is not reachable. Start it with `cargo run -p shell-server` (or `npm run dev`) and check again.',
         );
         return null;
       }
@@ -622,7 +622,7 @@ export function useTerminalConnection({
           setBackendNotice(
             transportRef.current === 'tauri'
               ? message
-              : 'The KERNEXT server is not reachable. Start it with `cargo run -p shell-server` (or `pnpm dev`) and try again.',
+              : 'The KERNEXT server is not reachable. Start it with `cargo run -p shell-server` (or `npm run dev`) and try again.',
           );
         }
 
@@ -889,7 +889,7 @@ export function useTerminalConnection({
       setBackendNotice(
         transportRef.current === 'tauri'
           ? message
-          : 'The KERNEXT server is not reachable. Start it with `cargo run -p shell-server` (or `pnpm dev`) and check again.',
+          : 'The KERNEXT server is not reachable. Start it with `cargo run -p shell-server` (or `npm run dev`) and check again.',
       );
     }
   }, []);

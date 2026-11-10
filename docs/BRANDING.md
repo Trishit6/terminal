@@ -7,6 +7,7 @@
 | Product name | **KERNEXT** |
 | Tagline | **The Next Core of Computing.** |
 | Values | **OPEN • POWERFUL • INDEPENDENT** |
+| Brand statement | **Independent. Native. Engineered.** |
 | Support phrase | **Build. Execute. Innovate.** |
 | Prompt | `kernext ~ $ ` |
 | Executable | `kernext` |

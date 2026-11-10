@@ -1,5 +1,4 @@
 name: Release
-
 on:
   workflow_dispatch:
     inputs:
@@ -40,13 +39,11 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-      - name: Install pnpm
-        uses: pnpm/action-setup@v6
       - name: Install Node
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
+          cache: npm
       - name: Cache cargo target
         uses: actions/cache@v6
         with:
@@ -79,14 +76,14 @@ jobs:
         run: cargo test --workspace
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
-      - name: Install web dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Install dependencies
+        run: npm ci
       - name: Web typecheck
-        run: pnpm typecheck
+        run: npm run typecheck
       - name: Web tests
-        run: pnpm test
+        run: npm test
       - name: Web build
-        run: pnpm build
+        run: npm run build
 
   cli-windows:
     name: CLI Windows (x86_64, GNU)
@@ -247,13 +244,11 @@ jobs:
     needs: check
     steps:
       - uses: actions/checkout@v7
-      - name: Install pnpm
-        uses: pnpm/action-setup@v6
       - name: Install Node
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
+          cache: npm
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo target
@@ -263,10 +258,10 @@ jobs:
           key: ${{ runner.os }}-release-desktop-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-release-desktop-
-      - name: Install web dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Install dependencies
+        run: npm ci
       - name: Build desktop bundle
-        run: pnpm desktop:build
+        run: npm run build -w @kernext/desktop
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
       - name: Upload artifact
@@ -297,13 +292,11 @@ jobs:
             librsvg2-dev \
             libgtk-3-dev \
             libdbus-1-dev
-      - name: Install pnpm
-        uses: pnpm/action-setup@v6
       - name: Install Node
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
+          cache: npm
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo target
@@ -313,10 +306,10 @@ jobs:
           key: ${{ runner.os }}-release-desktop-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-release-desktop-
-      - name: Install web dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Install dependencies
+        run: npm ci
       - name: Build desktop bundle
-        run: pnpm desktop:build
+        run: npm run build -w @kernext/desktop
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
       - name: Upload artifact
@@ -333,13 +326,11 @@ jobs:
     needs: check
     steps:
       - uses: actions/checkout@v7
-      - name: Install pnpm
-        uses: pnpm/action-setup@v6
       - name: Install Node
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
+          cache: npm
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo target
@@ -349,10 +340,10 @@ jobs:
           key: ${{ runner.os }}-release-desktop-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-release-desktop-
-      - name: Install web dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Install dependencies
+        run: npm ci
       - name: Build desktop bundle
-        run: pnpm desktop:build
+        run: npm run build -w @kernext/desktop
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
       - name: Upload artifact
@@ -369,13 +360,11 @@ jobs:
     needs: check
     steps:
       - uses: actions/checkout@v7
-      - name: Install pnpm
-        uses: pnpm/action-setup@v6
       - name: Install Node
         uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: pnpm
+          cache: npm
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
       - name: Cache cargo target
@@ -385,10 +374,10 @@ jobs:
           key: ${{ runner.os }}-release-desktop-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-release-desktop-
-      - name: Install web dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Install dependencies
+        run: npm ci
       - name: Build desktop bundle
-        run: pnpm desktop:build
+        run: npm run build -w @kernext/desktop
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
       - name: Upload artifact

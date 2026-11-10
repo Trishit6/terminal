@@ -94,7 +94,7 @@ into the shell is rejected by design.
   `.cmd`/`.bat` run through `%COMSPEC%`/`System32\cmd.exe` with
   `/d /v:off /s /c` and a fully quoted command line. `PATHEXT` order is
   honoured but restricted to `.com`, `.exe`, `.bat`, `.cmd`.
-- **Extensionless files are not executables on Windows.** npm/pnpm ship a POSIX
+- **Extensionless files are not executables on Windows.** npm ships a POSIX
   `sh` shim with no extension next to the `.cmd` shim; picking the former is
   what caused `os error 193` for `opencode`/`omnirush`.
 - Windows script arguments containing `"`, `%`, CR, LF, or NUL are refused with

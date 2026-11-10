@@ -14,6 +14,7 @@ Official identity:
 - Product: **KERNEXT**
 - Tagline: **The Next Core of Computing.**
 - Values: **OPEN • POWERFUL • INDEPENDENT**
+- Brand statement: **Independent. Native. Engineered.**
 - Support phrase: **Build. Execute. Innovate.**
 - Prompt: `kernext ~ $ `
 - Executable: `kernext`
@@ -27,7 +28,8 @@ Pipelines and redirections are implemented natively; keep them that way.
 
 Workspace members:
 
-- `apps/shell-cli` — binary package `shell-cli`; executable name is `kernext`
+- `apps/shell-cli` — binary package `shell-cli`; executable name is `kernext`;
+  `src/dev.rs` implements the project commands and `kernext doctor`
 - `apps/shell-server` — local Axum server (HTTP sessions, engine and PTY
   WebSockets)
 - `apps/web` — React + Vite + Tailwind front end shared by web and desktop
@@ -59,7 +61,7 @@ must keep using `lex_spanned` + `parse`.
 ## Branding
 
 - Constants live in `crates/shell-core/src/lib.rs`: `SHELL_NAME`, `PRODUCT_NAME`,
-  `TAGLINE`, `VALUES`, `MOTTO`, `VERSION`.
+  `TAGLINE`, `BRAND_STATEMENT`, `VALUES`, `MOTTO`, `VERSION`.
 - `SHELL_NAME = "kernext"` drives config paths, Clap help/version, and the binary.
 - Do not hardcode versions. Use `VERSION` / `Session::version()`.
 - The CLI is text-only. Do not add a graphical splash or mountain wallpaper to
@@ -144,7 +146,7 @@ must keep using `lex_spanned` + `parse`.
   `.cmd`, in `PATHEXT` order. `.exe`/`.com` launch natively; `.cmd`/`.bat` use
   the script launcher. Other `PATHEXT` entries (`.vbs`, `.js`, `.ps1`) are not
   launched. Unix checks execute bits.
-- **Extensionless files are never executables on Windows.** npm/pnpm install a
+- **Extensionless files are never executables on Windows.** npm writes a
   POSIX `sh` shim with no extension beside the `.cmd` shim; selecting the
   extensionless one is what produced `os error 193`. Resolution must pick the
   `.cmd`.
@@ -265,6 +267,31 @@ used by `cargo metadata --no-deps`.
 Run from the workspace root of the buildable checkout.
 The `.cargo/config.toml` automatically routes build artifacts to `/home/trishit/.cache/terminal-target`.
 
+Prefer the KERNEXT project commands; they are the documented developer
+interface and they run the same Cargo invocations:
+
+```bash
+kernext fmt --check   # cargo fmt --all -- --check
+kernext check         # cargo check --workspace --all-targets
+kernext build         # cargo build --workspace
+kernext test          # cargo test --workspace
+kernext lint          # cargo clippy --workspace --all-targets -- -D warnings
+kernext run           # cargo run -p shell-cli
+kernext clean         # cargo clean
+kernext doctor        # environment and project inspection
+kernext version
+kernext help
+```
+
+`kernext` with no command still starts the interactive shell; subcommands run
+before the terminal check and need no TTY. Every project command accepts
+`--dry-run` and returns the underlying tool's exit code (`127` when the tool is
+missing). Cargo stays the Rust build tool — never rename it or the workspace
+files. Implementation: `apps/shell-cli/src/dev.rs`.
+
+Equivalent Cargo commands, for scripts and CI that must not depend on a
+pre-built `kernext`:
+
 ```bash
 cargo fmt --all -- --check
 cargo check --workspace --all-targets
@@ -274,23 +301,25 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p shell-cli
 ```
 
-Front end and desktop (pnpm only; `package.json` pins `pnpm@11.25.0`):
+Front end and desktop (npm workspaces, Node.js 22+, npm 10+; lockfile is
+`package-lock.json`):
 
 ```bash
-pnpm install --frozen-lockfile
-pnpm typecheck          # web typecheck (alias of web:typecheck)
-pnpm test               # web Vitest suite (alias of web:test)
-pnpm build              # web production build (alias of web:build)
-pnpm web:dev            # vite dev server (http://127.0.0.1:5173)
-pnpm desktop:dev        # tauri dev (web + desktop window)
-pnpm desktop:build      # tauri build (production bundle)
-cargo run -p shell-server   # local web API server
+npm ci                     # install apps/web and apps/desktop from the lockfile
+npm run typecheck          # web typecheck (alias of web:typecheck)
+npm test                   # web Vitest suite (alias of web:test)
+npm run build              # web production build (alias of web:build)
+npm run web:dev            # vite dev server (http://127.0.0.1:5173)
+npm run desktop:dev        # tauri dev (web + desktop window)
+npm run desktop:build      # tauri build (production bundle)
+cargo run -p shell-server  # local web API server
 ```
 
 The root `desktop:*` scripts delegate to the `dev`/`build` scripts inside
-`apps/desktop/package.json`. `pnpm --filter <pkg> <bin>` does not work — it
-only runs package scripts — so do not change them back to
-`pnpm --filter @kernext/desktop tauri …`.
+`apps/desktop/package.json`. npm workspaces are declared in the root
+`package.json`; never reintroduce `pnpm`, `yarn`, or `bun`, and never add a
+second lockfile. Tauri's build hooks run `npm --prefix ../web run …`, which is
+why the web scripts also exist in `apps/desktop/package.json`.
 
 Focused tests:
 
@@ -309,7 +338,7 @@ cargo test -p shell-desktop
 External-process and pipeline tests use the test binary itself as a portable
 helper; they do not require `python`, `git`, `sort`, `grep`, or any other
 particular program. `external_tools.rs` checks common developer tools
-(`git`, `cargo`, `rustc`, `node`, `pnpm`, `python`, `curl`, `code`,
+(`git`, `cargo`, `rustc`, `node`, `npm`, `python`, `curl`, `code`,
 `opencode`) through the full engine and skips any that are not installed.
 
 CI lives in `.github/workflows/ci.yml` (fmt, clippy, web job, test matrix

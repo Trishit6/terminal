@@ -1,6 +1,7 @@
 # KERNEXT
 
 **The Next Core of Computing.**  
+**Independent. Native. Engineered.**  
 **OPEN • POWERFUL • INDEPENDENT** — *Build. Execute. Innovate.*
 
 KERNEXT is an independent, cross-platform command-line shell written in Rust.
@@ -100,26 +101,45 @@ platform-specific code isolated:
 - Rust 1.85 or newer (Rust 2024 edition).
 - A working platform linker (a C toolchain on Linux/macOS, MSVC Build Tools or
   MinGW-w64 on Windows).
-- Node.js and pnpm 11+ for the Web front end and Desktop shell
-  (`package.json` pins `pnpm@11.25.0` via `packageManager`).
+- Node.js 22+ and npm 10+ for the Web front end and Desktop shell
+  (declared in `package.json` under `engines`; npm workspaces live in
+  `apps/web` and `apps/desktop`).
 - A real terminal for the interactive shell. Piping input into KERNEXT reports
   that standard input is not a terminal.
 
 ## Build and run
 
+KERNEXT owns its developer workflow. The `kernext` binary exposes project
+commands that wrap the Rust toolchain, so the toolchain stays an
+implementation detail:
+
 ```sh
-cargo build --workspace
-cargo run -p shell-cli
+kernext build      # cargo build --workspace
+kernext check      # cargo check --workspace --all-targets
+kernext test       # cargo test --workspace
+kernext fmt        # cargo fmt --all (--check to verify only)
+kernext lint       # cargo clippy --workspace --all-targets -- -D warnings
+kernext run        # cargo run -p shell-cli
+kernext clean      # cargo clean
+kernext doctor     # inspect the toolchain, front end, and project state
+kernext version    # KERNEXT and toolchain versions
+kernext help       # branded command reference
 ```
 
+Every project command returns the underlying tool's exit code, prints the
+invocation it ran, and accepts `--dry-run`. Cargo remains the Rust build tool:
+technical commands (`cargo build --workspace`, `cargo test -p shell-core`, and
+so on) still work exactly as before.
+
 The binary is `kernext` (`kernext.exe` on Windows). `--help` and `--version`
-are handled by Clap without starting a session.
+are handled by Clap without starting a session; `kernext` with no command
+starts the interactive shell.
 
 ### KERNEXT Web
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm web:dev          # vite dev server on http://127.0.0.1:5173
+npm ci
+npm run web:dev          # vite dev server on http://127.0.0.1:5173
 cargo run -p shell-server   # local API server (default http://127.0.0.1:7878)
 ```
 
@@ -128,15 +148,15 @@ The browser terminal talks to the server over
 (real pseudoterminal). The web front end builds with:
 
 ```sh
-pnpm web:typecheck
-pnpm web:build
+npm run web:typecheck
+npm run web:build
 ```
 
 ### KERNEXT Desktop
 
 ```sh
-pnpm desktop:dev      # tauri dev: vite + debug desktop window
-pnpm desktop:build    # tauri build: production bundle
+npm run desktop:dev      # tauri dev: vite + debug desktop window
+npm run desktop:build    # tauri build: production bundle
 ```
 
 The desktop application embeds the same React front end and executes commands
@@ -342,9 +362,8 @@ input
 terminal/
 ├── Cargo.toml
 ├── Cargo.lock
-├── package.json               # pnpm workspace scripts (web:*, desktop:*)
-├── pnpm-workspace.yaml
-├── pnpm-lock.yaml
+├── package.json               # npm workspaces + scripts (web:*, desktop:*)
+├── package-lock.json          # npm lockfile for apps/web and apps/desktop
 ├── README.md
 ├── AGENTS.md
 ├── RELEASE_NOTES.md
@@ -514,7 +533,7 @@ Windows launchers:
   `!` arrive as literal text and cannot become extra commands.
 - An argument containing `"`, `%`, CR, LF, or NUL is refused with a clear error
   rather than silently rewritten; `cmd.exe` has no escaping for those.
-- This is why npm and pnpm tools work: they install an extensionless POSIX `sh`
+- This is why npm-installed tools work: npm writes an extensionless POSIX `sh`
   shim plus a `.cmd` shim, and KERNEXT selects the `.cmd`.
 
 Argument handling:
@@ -856,21 +875,33 @@ Startup mode precedence:
 ## Development
 
 ```sh
+kernext fmt --check
+kernext check
+kernext build
+kernext test
+kernext lint
+kernext doctor
+npm ci
+npm run typecheck
+npm test
+npm run build
+```
+
+The same checks through Cargo, which the KERNEXT commands call:
+
+```sh
 cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-pnpm install --frozen-lockfile
-pnpm typecheck
-pnpm test
-pnpm build
 ```
 
-The `pnpm` scripts are defined at the workspace root: `web:dev`, `web:build`,
+The `npm` scripts are defined at the workspace root: `web:dev`, `web:build`,
 `web:preview`, `web:typecheck`, `web:test` (Vitest logic tests for the terminal
 engine), `desktop:dev`, `desktop:build`, plus the short aliases `typecheck`,
-`build`, and `test`.
+`build`, and `test`. `npm ci` installs both workspaces from
+`package-lock.json`.
 
 Focused test commands:
 
@@ -888,7 +919,7 @@ cargo test -p shell-desktop
 External-process and pipeline tests use the test binary itself as a portable
 helper, so they do not depend on `python`, `git`, `sort`, `grep`, or any other
 particular program being installed. `external_tools.rs` additionally verifies
-the common developer tools (`git`, `cargo`, `rustc`, `node`, `pnpm`, `python`,
+the common developer tools (`git`, `cargo`, `rustc`, `node`, `npm`, `python`,
 `curl`, `code`, `opencode`) through the full engine and skips any that are not
 installed on the host.
 
@@ -947,7 +978,11 @@ production build), and a desktop bundling job across the same operating systems.
   cross-interface consistency suite; external-tool compatibility tests;
   full documentation set (commands, security, deployment, troubleshooting,
   contributing); cross-platform CI matrices and a draft-only release workflow
-  with per-artifact checksums; fixed the broken root `desktop:*` pnpm scripts.
+  with per-artifact checksums; fixed the broken root `desktop:*` scripts.
+- **Developer experience (Phase 7):** `kernext build`/`check`/`test`/`fmt`/
+  `lint`/`run`/`clean`/`doctor`/`version`/`help` project commands, a branded
+  doctor report, npm workspaces with a committed `package-lock.json`, and
+  npm-based CI and release workflows.
 
 ## Roadmap
 

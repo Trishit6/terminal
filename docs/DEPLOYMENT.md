@@ -9,8 +9,8 @@ companion**, not a public service. Read
 
 ```sh
 # 1. Build the web front end (produces apps/web/dist)
-pnpm install --frozen-lockfile
-pnpm web:build
+npm ci
+npm run web:build
 
 # 2. Build and run the server
 cargo run -p shell-server        # debug
@@ -71,7 +71,7 @@ HTTP routes and either the same header or `?token=<token>` on WebSockets.
 ## Front-end development
 
 ```sh
-pnpm web:dev          # Vite dev server at http://127.0.0.1:5173
+npm run web:dev          # Vite dev server at http://127.0.0.1:5173
 cargo run -p shell-server
 ```
 
@@ -96,7 +96,7 @@ Do not expose it to untrusted networks.
 
 ## Desktop application
 
-The desktop application is self-contained: `pnpm desktop:build` produces
+The desktop application is self-contained: `npm run desktop:build` produces
 platform bundles (installers/packages) through Tauri, embedding the built
 front end. It never contacts the web server. See
 [`DESKTOP.md`](DESKTOP.md).

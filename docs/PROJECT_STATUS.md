@@ -9,7 +9,7 @@ completion snapshot; `README.md` and `docs/ARCHITECTURE.md` describe how the
 system works, while this file records how far verification reached.
 
 Verification host: Windows 11, Rust 1.99.1 (`x86_64-pc-windows-gnu`, WinLibs
-MinGW-w64), Node.js + pnpm 11.25.0.
+MinGW-w64), Node.js + npm 12.0.2.
 
 ## Verification results
 
@@ -19,13 +19,14 @@ MinGW-w64), Node.js + pnpm 11.25.0.
 | `cargo check --workspace --all-targets` | clean |
 | `cargo test --workspace` | 470 passed, 0 failed |
 | `cargo clippy --workspace --all-targets -- -D warnings` | clean |
-| `pnpm install --frozen-lockfile` | ok |
-| `pnpm typecheck` | ok |
-| `pnpm test` (Vitest) | 55 passed in 7 files |
-| `pnpm build` | ok (chunk-size warning only) |
-| `pnpm desktop:build -- --debug --no-bundle` | ok, application builds |
-| `pnpm desktop:build` (release bundle) | ok — MSI 9.2 MiB + NSIS 6.3 MiB; release binary launch smoke test ok |
+| `npm ci` | ok |
+| `npm run typecheck` | ok |
+| `npm test` (Vitest) | 55 passed in 7 files |
+| `npm run build` | ok (chunk-size warning only) |
+| `npm run build -w @kernext/desktop -- --debug --no-bundle` | ok, application builds |
+| `npm run desktop:build` (release bundle) | ok — MSI 9.2 MiB + NSIS 6.3 MiB; release binary launch smoke test ok |
 | Desktop launch smoke test | window `KERNEXT` opens and stays alive (debug in Phase 5, release in Phase 6) |
+| npm → migration complete | root `package.json` declares workspaces; `package-lock.json` committed; `npm ci`/`npm run typecheck`/`npm test`/`npm run build` all pass; `npm run desktop:dev` and `npm run desktop:build` delegate to `apps/desktop/package.json` scripts with `npm --prefix ../web run …` |
 
 Test counts per suite (Windows host):
 
@@ -126,7 +127,7 @@ signal/abort tests instead of the Windows launcher and ConPTY suites).
 
 ### Phase 6 integration work
 
-- **Fixed broken root scripts**: `pnpm desktop:dev` / `pnpm desktop:build`
+- **Fixed broken root scripts**: `npm run desktop:dev` / `npm run desktop:build`
   previously ran `pnpm --filter @kernext/desktop tauri …`, which requires a
   package *script* named `tauri`; they now delegate to the package's `dev` /
   `build` scripts and actually run. Verified with a debug build and a full
@@ -151,7 +152,7 @@ signal/abort tests instead of the Windows launcher and ConPTY suites).
   build), test matrix on `ubuntu-latest`, `windows-latest`, `macos-latest`
   (Apple Silicon), and `macos-15-intel` (Intel), and a desktop bundling matrix
   with the Linux webkit2gtk dependency set. Actions on Node 24 majors
-  (`checkout@v7`, `cache@v6`, `setup-node@v7`, `pnpm/action-setup@v6`,
+  (`checkout@v7`, `cache@v6`, `setup-node@v7`, `npm/action-setup@v6`,
   `upload-artifact@v7`, `download-artifact@v7`).
 - **Release workflow** (`release.yaml`): `workflow_dispatch`-only, draft-only;
   CLI archives for Windows x64, Linux GNU/musl x86_64, and macOS aarch64/x86_64
@@ -170,12 +171,12 @@ signal/abort tests instead of the Windows launcher and ConPTY suites).
 returns HTTP 200 with a real session; 28/28 API-level checks and 12/12
 real-browser checks pass through the Vite proxy. The reported
 `HTTP 500 (request_failed)` came from the Vite development proxy, not from
-Axum: when only `pnpm web:dev` was running, Vite answered `/api/v1/health` and
+Axum: when only `npm run web:dev` was running, Vite answered `/api/v1/health` and
 `/api/v1/sessions` with HTTP 500 and an empty/non-JSON body, and the old
 client converted that into the generic message. The frontend now distinguishes
 a KERNEXT JSON error from a proxy/network failure, probes health before
 connecting, and shows a first-run setup notice instead of a red banner. A
-single `pnpm dev` command starts both the Axum server and Vite.
+single `npm run dev` command starts both the Axum server and Vite.
 
 **Second backend defect found while verifying static hosting.**
 `ServeDir::not_found_service(ServeFile::new(index))` served the SPA shell for
@@ -308,15 +309,15 @@ cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-pnpm install --frozen-lockfile
-pnpm typecheck
-pnpm test
-pnpm build
+npm ci
+npm run typecheck
+npm test
+npm run build
 ```
 
 Desktop, from the root:
 
 ```sh
-pnpm desktop:build -- --debug --no-bundle   # fast debug build
-pnpm desktop:build                           # release bundle (installers)
+npm run build -w @kernext/desktop -- --debug --no-bundle   # fast debug build
+npm run desktop:build                           # release bundle (installers)
 ```

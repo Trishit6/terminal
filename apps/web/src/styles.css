@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Build output is tracked in this repository, so Tailwind's automatic source
+   detection would otherwise scan it and keep stale utilities alive. */
+@source not "../dist";
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 :root {

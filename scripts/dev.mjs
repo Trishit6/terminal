@@ -2,10 +2,10 @@
 /**
  * Starts the local KERNEXT development stack with one command:
  *
- *   pnpm dev
+ *   npm run dev
  *
  * - the Axum backend (`cargo run -p shell-server`) on http://127.0.0.1:7878
- * - the Vite web client (`pnpm web:dev`) on http://127.0.0.1:5173
+ * - the Vite web client (`npm run web:dev`) on http://127.0.0.1:5173
  *
  * The web client proxies `/api` and WebSocket upgrades to the backend, so
  * both processes are needed for the web terminal to work. Running only the
@@ -43,7 +43,7 @@ function shutdown(code = 0) {
 }
 
 function start(name, color, command, args) {
-  // On Windows `pnpm` is a .cmd shim, so both commands need a shell to
+  // On Windows `npm` is a .cmd shim, so both commands need a shell to
   // resolve. None of the arguments contain spaces or shell metacharacters.
   const child = spawn(command, args, {
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -102,4 +102,4 @@ console.log(`${CYAN}[dev]${RESET}   web     : http://127.0.0.1:5173`);
 console.log(`${CYAN}[dev]${RESET} Ctrl+C stops both processes.\n`);
 
 start('server', CYAN, 'cargo', ['run', '-p', 'shell-server']);
-start('web', BLUE, 'pnpm', ['web:dev']);
+start('web', BLUE, 'npm', ['run', 'web:dev']);

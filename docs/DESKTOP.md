@@ -9,7 +9,8 @@ simulates the shell in JavaScript.
 ## Prerequisites
 
 - Rust 1.85+ (Rust 2024 edition) with a working platform linker.
-- Node.js and pnpm 11 (`corepack` can supply the pinned `pnpm@11.25.0`).
+- Node.js 22+ and npm 10+ (npm workspaces are declared in the root
+  `package.json`).
 - On Windows: the WebView2 runtime (preinstalled on Windows 10/11).
 - On Linux: webkit2gtk and related system libraries; on macOS: Xcode command
   line tools.
@@ -19,15 +20,15 @@ simulates the shell in JavaScript.
 From the repository root:
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm desktop:dev      # tauri dev  (vite dev server + debug window)
-pnpm desktop:build    # tauri build (production bundle)
+npm ci
+npm run desktop:dev      # tauri dev  (vite dev server + debug window)
+npm run desktop:build    # tauri build (production bundle)
 ```
 
 From `apps/desktop` directly:
 
 ```sh
-pnpm exec tauri build --debug --no-bundle   # skip installer bundling
+npm run build -- --debug --no-bundle   # skip installer bundling
 ```
 
 Tauri configuration lives in `apps/desktop/src-tauri/tauri.conf.json`:
@@ -45,13 +46,13 @@ Tauri configuration lives in `apps/desktop/src-tauri/tauri.conf.json`:
 
 ## Packaging and release
 
-`pnpm desktop:build` (equivalently `tauri build` from `apps/desktop`)
+`npm run desktop:build` (equivalently `tauri build` from `apps/desktop`)
 performs, in order:
 
-1. `beforeBuildCommand` — `pnpm --filter @kernext/web build` regenerates
+1. `beforeBuildCommand` — `npm --prefix ../web run build` regenerates
    `apps/web/dist`. The bundle embeds those assets through
    `frontendDist`, so a release-mode build always carries the front end it
-   was built with; commit no `dist` output, it is generated.
+   was built with.
 2. A release-profile compile of `shell-desktop` (`kernext-desktop`).
    Plain `cargo build --workspace --release` compiles the desktop crate in
    dev/development mode (the `custom-protocol` feature is only enabled by the
