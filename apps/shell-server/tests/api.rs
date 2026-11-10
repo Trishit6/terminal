@@ -125,6 +125,43 @@ async fn missing_sessions_return_not_found() {
 }
 
 #[tokio::test]
+async fn client_side_routes_serve_the_spa_shell_with_ok() {
+    let directory = std::env::temp_dir().join(format!(
+        "kernext-spa-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock should be after the epoch")
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&directory).expect("temporary web directory should be created");
+    std::fs::write(
+        directory.join("index.html"),
+        "<!doctype html><title>KERNEXT SPA</title>",
+    )
+    .expect("index should be written");
+
+    let app = shell_server::router_with_static(AppState::from_env(), Some(directory.clone()));
+    let (status, body) = send(
+        &app,
+        Request::builder()
+            .uri("/terminal")
+            .body(Body::empty())
+            .expect("request should build"),
+    )
+    .await;
+
+    let _ = std::fs::remove_dir_all(&directory);
+
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "a client-side route must not look like a failed request"
+    );
+    assert!(String::from_utf8_lossy(&body).contains("KERNEXT SPA"));
+}
+
+#[tokio::test]
 async fn oversized_commands_are_rejected() {
     let app = router(AppState::from_env());
     let (status, body) = send(&app, json_request("POST", "/api/v1/sessions", "{}")).await;

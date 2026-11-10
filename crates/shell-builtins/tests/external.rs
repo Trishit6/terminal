@@ -270,7 +270,7 @@ fn files_without_execute_permission_report_permission_denied() {
 
 #[cfg(unix)]
 #[test]
-fn unlaunchable_executables_report_spawn_errors() {
+fn invalid_executables_report_failures() {
     use std::os::unix::fs::PermissionsExt;
 
     let directory = TempDirectory::new("spawn-error");
@@ -279,12 +279,33 @@ fn unlaunchable_executables_report_spawn_errors() {
     fs::set_permissions(&target, fs::Permissions::from_mode(0o755))
         .expect("permissions should be set");
 
-    let error = ExternalCommand::new(target.to_string_lossy().into_owned())
+    // Executing a text file that is not a valid binary fails everywhere, but
+    // how it fails depends on the libc: glibc and Darwin's execvp retry a
+    // non-ELF file through /bin/sh exactly like a POSIX shell would, so the
+    // child runs, prints "this: not found", and exits 127; musl reports
+    // ENOEXEC from the spawn instead. Either way the user sees a real error.
+    match ExternalCommand::new(target.to_string_lossy().into_owned())
         .stdio(StdioMode::Capture)
         .run()
-        .expect_err("invalid executable should fail");
-
-    assert!(matches!(error, ProcessError::Spawn { .. }), "{error:?}");
+    {
+        Ok(report) => {
+            assert!(
+                !report.success(),
+                "shell fallback should report failure: {report:?}"
+            );
+            assert_ne!(
+                report.exit_code(),
+                Some(0),
+                "shell fallback should not exit zero: {report:?}"
+            );
+            assert!(
+                !report.stderr().trim().is_empty(),
+                "shell fallback should explain the failure: {report:?}"
+            );
+        }
+        Err(ProcessError::Spawn { .. }) => {}
+        Err(other) => panic!("unexpected error for invalid executable: {other:?}"),
+    }
 }
 
 #[test]

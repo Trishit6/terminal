@@ -5,6 +5,8 @@
   "description": "KERNEXT — The Next Core of Computing.",
   "packageManager": "pnpm@11.25.0",
   "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "cargo run -p shell-server",
     "web:dev": "pnpm --filter @kernext/web dev",
     "web:build": "pnpm --filter @kernext/web build",
     "web:preview": "pnpm --filter @kernext/web preview",

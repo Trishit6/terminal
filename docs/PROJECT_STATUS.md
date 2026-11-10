@@ -17,11 +17,11 @@ MinGW-w64), Node.js + pnpm 11.25.0.
 | --- | --- |
 | `cargo fmt --all -- --check` | clean |
 | `cargo check --workspace --all-targets` | clean |
-| `cargo test --workspace` | 469 passed, 0 failed |
+| `cargo test --workspace` | 470 passed, 0 failed |
 | `cargo clippy --workspace --all-targets -- -D warnings` | clean |
 | `pnpm install --frozen-lockfile` | ok |
 | `pnpm typecheck` | ok |
-| `pnpm test` (Vitest) | 54 passed in 6 files |
+| `pnpm test` (Vitest) | 55 passed in 7 files |
 | `pnpm build` | ok (chunk-size warning only) |
 | `pnpm desktop:build -- --debug --no-bundle` | ok, application builds |
 | `pnpm desktop:build` (release bundle) | ok — MSI 9.2 MiB + NSIS 6.3 MiB; release binary launch smoke test ok |
@@ -46,9 +46,9 @@ Test counts per suite (Windows host):
 | `shell-line-editor` unit | 24 |
 | `shell-api` unit | 2 |
 | `shell-cli` unit + repl | 24 + 13 |
-| `shell-server` unit + api + consistency + ws | 5 + 4 + 7 + 1 |
+| `shell-server` unit + api + consistency + ws | 5 + 5 + 7 + 1 |
 | `shell-desktop` unit | 16 |
-| **Total** | **469** |
+| **Total** | **470** |
 
 The Unix baseline differs only in platform-specific suites (Unix uses
 signal/abort tests instead of the Windows launcher and ConPTY suites).
@@ -90,7 +90,8 @@ signal/abort tests instead of the Windows launcher and ConPTY suites).
   version (never hardcoded). **Web terminal**: engine mode with the cinematic
   startup animation, metallic K emblem, orbital ring, mountain silhouette, and
   planetary horizon.
-- Terminal logic (buffer, engine, ANSI, palette, input) covered by 54 Vitest
+- Terminal logic (buffer, engine, ANSI, palette, input) and the Tooltip
+  provider contract covered by 55 Vitest
   tests.
 
 ### KERNEXT Desktop (`apps/desktop`)
@@ -163,10 +164,37 @@ signal/abort tests instead of the Windows launcher and ConPTY suites).
   packaging section, and refreshed `README.md` / `AGENTS.md` / `CLAUDE.md` /
   `RELEASE_NOTES.md` / `knowledge.md`.
 
+## Web terminal HTTP 500 investigation (2026-11-10)
+
+**Root cause.** The backend was healthy. `POST /api/v1/sessions` against Axum
+returns HTTP 200 with a real session; 28/28 API-level checks and 12/12
+real-browser checks pass through the Vite proxy. The reported
+`HTTP 500 (request_failed)` came from the Vite development proxy, not from
+Axum: when only `pnpm web:dev` was running, Vite answered `/api/v1/health` and
+`/api/v1/sessions` with HTTP 500 and an empty/non-JSON body, and the old
+client converted that into the generic message. The frontend now distinguishes
+a KERNEXT JSON error from a proxy/network failure, probes health before
+connecting, and shows a first-run setup notice instead of a red banner. A
+single `pnpm dev` command starts both the Axum server and Vite.
+
+**Second backend defect found while verifying static hosting.**
+`ServeDir::not_found_service(ServeFile::new(index))` served the SPA shell for
+client-side routes but forced HTTP 404. `/terminal` therefore looked like a
+failed request on refresh. It now uses `ServeDir::fallback`, which keeps the
+index response's 200. Covered by
+`client_side_routes_serve_the_spa_shell_with_ok`.
+
+**PTY cleanup defect.** The PTY socket handler moved `PtyProcess` into a
+blocking wait task, so a browser disconnect could leave `kernext` running until
+the child exited on its own. `PtyProcess::try_wait` now lets the socket task
+poll the child, and disconnect sends Ctrl+C plus `exit`, then kills and reaps
+the process. Verified by starting `sleep 30` over `/api/v1/pty`, observing
+`kernext.exe` while connected, and observing no `kernext.exe` after disconnect.
+
 ## Tested
 
-- All 469 workspace tests pass on Windows (breakdown above), including the 16
-  desktop unit tests and the 17 shell-server tests (unit, api, consistency,
+- All 470 workspace tests pass on Windows (breakdown above), including the 16
+  desktop unit tests and the 18 shell-server tests (unit, api, consistency,
   ws).
 - The desktop build script's manifest override is verified by building the
   binary and extracting its embedded manifest: it declares
@@ -175,8 +203,26 @@ signal/abort tests instead of the Windows launcher and ConPTY suites).
   `TaskDialogIndirect` was missing from comctl32 v5).
 - Server API and WebSocket behavior covered by `shell-server` integration
   tests; PTY lifecycle covered by `shell-builtins` ConPTY tests.
+- **Web terminal acceptance, real backend:** `node scripts/e2e-terminal.mjs`
+  passed 28/28 checks against `http://127.0.0.1:5173` (Vite proxy) and
+  `http://127.0.0.1:7878` (Axum). It covers health, session create/delete,
+  `help`, `pwd`, `echo KERNEXT`, stderr/exit status, external `node`, clear,
+  session isolation, PTY resize, typed command echo, Ctrl+C, disconnect, and
+  reconnect.
+- **Web terminal acceptance, real browser:** `node scripts/e2e-browser.mjs`
+  drives headless Chrome over the DevTools Protocol. It passed 12/12 checks
+  against the Vite proxy and against the production bundle served by Axum:
+  no failed HTTP responses, no HTTP 500 banner, PTY connection, typed command
+  output, Engine-mode switch, engine command output, live session footer, and
+  current directory. With the backend stopped, the `--offline` mode passes
+  5/5: the setup notice appears, no raw 500 banner appears, and the UI does
+  not claim to be connected.
+- **SPA deep links:** `/terminal` served by the Axum static fallback returns
+  HTTP 200 with the index shell (new API integration test).
+- **PTY disconnect cleanup:** with `sleep 30` running, `kernext.exe` was
+  present during the session and absent after the WebSocket closed.
 - Web and desktop front end: TypeScript typecheck, production build, and the
-  54-test Vitest suite pass.
+  55-test Vitest suite pass.
 - Launch smoke test: `kernext-desktop.exe` opens a window titled `KERNEXT`,
   keeps running, and terminates cleanly when stopped.
 - All nine external developer tools (`git`, `cargo`, `rustc`, `node`, `pnpm`,
@@ -188,9 +234,18 @@ signal/abort tests instead of the Windows launcher and ConPTY suites).
 
 ## Unverified
 
-- **CI and release workflows have never been run.** They are configured for
-  four platforms, but no GitHub Actions run has been triggered or observed.
-  Do not claim they pass until a completed run exists.
+- **CI has run and failed; it has not yet passed.** Run #5 (commit
+  `05a4fb2`, 2026-11-10) failed in the `Format and Clippy` job at the Clippy
+  step with process exit 101; the test and desktop jobs were skipped. The
+  workflow at that commit did not install the Linux WebKitGTK/GTK development
+  packages required to compile the Tauri desktop crate, so Clippy could not
+  build the workspace on `ubuntu-latest`. The current workflow installs those
+  packages in the lint, test, and release check jobs. Job logs required admin
+  access, so the exact compiler line could not be downloaded; the failing step
+  is recorded in the public job metadata. Do not claim CI is green until a new
+  run completes.
+- **Release workflow has never been triggered.** It is draft-only and
+  `workflow_dispatch`-only; no release run exists.
 - **No GitHub Release has been published**; the downloads page links to the
   releases URL, which has no assets yet.
 - **Interactive desktop GUI usage.** Typing in the PTY terminal, tab
@@ -210,14 +265,22 @@ signal/abort tests instead of the Windows launcher and ConPTY suites).
   this Windows host; only the Windows builds were verified. Linux verification
   should run from `/run/media/trishit/UBUNTU 26_0/Projects/terminal` when
   mounted.
-- **Browser interaction.** The web UI was typechecked, built, and unit
-  tested, but no interactive browser session against the running server was
-  recorded in this phase.
+- **Remote GitHub Actions result after the workflow fix.** Run #5 failed at
+  Clippy before these changes. The workflow now installs the Linux Tauri
+  development packages, but a new run still has to be pushed and observed by
+  someone with repository access. Local runners cannot prove the hosted
+  matrix.
 - **Desktop file explorer destructive operations** (delete/rename through the
   UI) are implemented with confirmations but were not interactively driven.
 
 ## Known limitations
 
+- Engine-mode WebSocket sessions are line-oriented. The Interrupt control and
+  Ctrl+C clear the client input line, but they cannot cancel an engine command
+  that is already running on the server. PTY mode forwards Ctrl+C to the real
+  terminal process, and that path is verified.
+- Engine sessions have no terminal size, so resize messages only affect the
+  client's local rendering; the PTY transport does resize the real process.
 - CLI signal handling and process-group job control remain unimplemented
   (`fg` waits rather than handing over the terminal; `bg` only reports state).
 - No asynchronous background-job completion notice; run `jobs`/`wait`.

@@ -39,7 +39,10 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
               key={item.label}
               to={item.to}
               className="rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-surface-soft hover:text-foreground"
-              activeProps={{ className: 'text-foreground' }}
+              activeProps={{
+                className:
+                  'bg-surface-soft text-foreground shadow-[inset_0_-2px_0_var(--color-primary)]',
+              }}
               activeOptions={{ exact: true }}
             >
               {item.label}
@@ -78,7 +81,9 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
                 key={item.label}
                 to={item.to}
                 className="rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-surface-soft hover:text-foreground"
-                activeProps={{ className: 'text-foreground' }}
+                activeProps={{
+                  className: 'bg-surface-soft text-foreground',
+                }}
                 activeOptions={{ exact: true }}
               >
                 {item.label}

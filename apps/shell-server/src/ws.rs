@@ -285,11 +285,7 @@ async fn handle_pty_socket(socket: WebSocket, binary: PathBuf) {
     };
 
     let resizer = process.resizer();
-
-    // The child is owned by this task so its handles live for the session.
-    tokio::task::spawn_blocking(move || {
-        let _ = process.wait();
-    });
+    let mut ticker = tokio::time::interval(std::time::Duration::from_millis(200));
 
     let reader_tx = out_tx.clone();
     tokio::task::spawn_blocking(move || {
@@ -320,79 +316,98 @@ async fn handle_pty_socket(socket: WebSocket, binary: PathBuf) {
         }
     });
 
-    while let Some(message) = stream.next().await {
-        let Ok(message) = message else {
-            break;
-        };
+    loop {
+        tokio::select! {
+            incoming = stream.next() => {
+                let Some(Ok(message)) = incoming else {
+                    break;
+                };
 
-        let text = match message {
-            Message::Text(text) => text.to_string(),
-            Message::Close(_) => break,
-            Message::Ping(payload) => {
-                if out_tx.send(Message::Pong(payload)).await.is_err() {
-                    break;
-                }
-                continue;
-            }
-            _ => continue,
-        };
+                let text = match message {
+                    Message::Text(text) => text.to_string(),
+                    Message::Close(_) => break,
+                    Message::Ping(payload) => {
+                        if out_tx.send(Message::Pong(payload)).await.is_err() {
+                            break;
+                        }
+                        continue;
+                    }
+                    _ => continue,
+                };
 
-        match serde_json::from_str::<ClientMessage>(&text) {
-            Ok(ClientMessage::Input { data }) => {
-                if input_tx.send(data.into_bytes()).await.is_err() {
-                    break;
+                match serde_json::from_str::<ClientMessage>(&text) {
+                    Ok(ClientMessage::Input { data }) => {
+                        if input_tx.send(data.into_bytes()).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(ClientMessage::Execute { command }) => {
+                        if input_tx
+                            .send(format!("{command}\r").into_bytes())
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Ok(ClientMessage::Resize { rows, cols }) => {
+                        let _ = resizer.resize(PtySize::new(rows, cols));
+                    }
+                    Ok(ClientMessage::Interrupt) => {
+                        if input_tx.send(vec![0x03]).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(ClientMessage::Clear) => {
+                        if input_tx.send(b"clear\r".to_vec()).await.is_err() {
+                            break;
+                        }
+                    }
+                    Ok(ClientMessage::Ping) => {
+                        if out_tx
+                            .send(text_message(&ServerMessage::Pong))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Err(error) => {
+                        if out_tx
+                            .send(text_message(&ServerMessage::Error {
+                                message: format!("invalid message: {error}"),
+                            }))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
                 }
             }
-            Ok(ClientMessage::Execute { command }) => {
-                if input_tx
-                    .send(format!("{command}\r").into_bytes())
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
-            Ok(ClientMessage::Resize { rows, cols }) => {
-                let _ = resizer.resize(PtySize::new(rows, cols));
-            }
-            Ok(ClientMessage::Interrupt) => {
-                if input_tx.send(vec![0x03]).await.is_err() {
-                    break;
-                }
-            }
-            Ok(ClientMessage::Clear) => {
-                if input_tx.send(b"clear\r".to_vec()).await.is_err() {
-                    break;
-                }
-            }
-            Ok(ClientMessage::Ping) => {
-                if out_tx
-                    .send(text_message(&ServerMessage::Pong))
-                    .await
-                    .is_err()
-                {
-                    break;
-                }
-            }
-            Err(error) => {
-                if out_tx
-                    .send(text_message(&ServerMessage::Error {
-                        message: format!("invalid message: {error}"),
-                    }))
-                    .await
-                    .is_err()
-                {
-                    break;
+            _ = ticker.tick() => {
+                // The child can exit on its own (for example after `exit`).
+                // Notice that without blocking the socket task, so the
+                // process is always reaped and its ConPTY handles are closed.
+                match process.try_wait() {
+                    Ok(Some(_)) => break,
+                    Ok(None) => {}
+                    Err(_) => break,
                 }
             }
         }
     }
 
-    // Closing the input stream lets a well-behaved shell exit. The `exit`
-    // command is sent first so a foreground REPL does not treat EOF as an
-    // incomplete line.
+    // Closing the input stream lets a well-behaved shell exit. Ctrl+C first
+    // stops a foreground command; `exit` then ends a REPL that is still at a
+    // prompt. The process is killed if it ignores both, so a disconnected
+    // browser can never leave an orphaned shell behind.
+    let _ = input_tx.send(vec![0x03]).await;
     let _ = input_tx.send(b"exit\r".to_vec()).await;
     drop(input_tx);
+    process.kill();
+    let _ = process.wait();
+    drop(process);
     drop(out_tx);
     let _ = writer_task.await;
 }

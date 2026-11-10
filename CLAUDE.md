@@ -36,13 +36,13 @@ cargo fmt --all -- --check
 cargo run -p shell-cli
 
 pnpm install --frozen-lockfile
-pnpm typecheck          # web typecheck (alias of web:typecheck)
-pnpm test               # web Vitest suite (alias of web:test)
-pnpm build              # web production build (alias of web:build)
-pnpm web:dev            # vite dev server (http://127.0.0.1:5173)
-pnpm desktop:dev        # tauri dev
-pnpm desktop:build      # tauri build
-cargo run -p shell-server   # local web API server
+pnpm typecheck
+pnpm test
+pnpm build
+pnpm web:dev
+pnpm desktop:dev
+pnpm desktop:build
+cargo run -p shell-server
 ```
 
 Run a single test or test file:
@@ -124,7 +124,7 @@ Workspace members:
   it makes the binary die at startup with `STATUS_ENTRYPOINT_NOT_FOUND`.
 - **Root pnpm scripts delegate.** `desktop:dev`/`desktop:build` call the
   `dev`/`build` scripts in `apps/desktop/package.json`. `pnpm --filter <pkg>
-  <bin>` only runs package scripts, so `--filter @kernext/desktop tauri …`
+<bin>` only runs package scripts, so `--filter @kernext/desktop tauri …`
   fails; do not reintroduce it.
 
 ## Git discipline

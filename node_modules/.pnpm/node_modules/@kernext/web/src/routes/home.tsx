@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 import { LogoMark } from '@/components/site/logo';
+import { KERNEXT_VERSION } from '@/lib/version';
 import { cn } from '@/lib/utils';
 
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -47,44 +48,44 @@ const fadeUp = {
 const FEATURES = [
   {
     icon: Cpu,
-    title: 'Native lexer and parser',
+    title: 'It reads the command line itself',
     description:
-      'Input becomes a real AST. Pipelines, redirections, groups, and assignments are parsed by KERNEXT, never split with whitespace or handed to another shell.',
+      'Quotes, pipes, redirects, groups, and && / || follow one grammar. KERNEXT parses them into a syntax tree instead of splitting on spaces or handing the line to another shell.',
     label: 'Engine',
   },
   {
     icon: TerminalSquare,
-    title: 'A real pseudoterminal',
+    title: 'Full-screen programs work',
     description:
-      'ConPTY on Windows and openpty on Unix. Full-screen programs, resize, Ctrl+C, and raw terminal bytes stream over a dedicated WebSocket.',
+      'Editors, pagers, and prompts get a real terminal through ConPTY on Windows and openpty on Unix. Resize, colors, and Ctrl+C behave like your usual shell.',
     label: 'PTY',
   },
   {
     icon: Server,
-    title: 'Local Axum runtime',
+    title: 'A small local server',
     description:
-      'Sessions live in Rust. REST creates and inspects them; WebSockets execute commands or attach to the native shell process.',
+      'The browser talks to a Rust server on your machine. Sessions, commands, and raw terminal bytes never leave the machine by default.',
     label: 'Server',
   },
   {
     icon: Layers3,
     title: 'One engine, three surfaces',
     description:
-      'The CLI, web terminal, and desktop app all resolve to the same Dispatcher and the same built-in registry. No behavior forks per UI.',
+      'The CLI, web terminal, and desktop app share the same parser, built-ins, and process launcher, so a command behaves the same in each one.',
     label: 'Shared core',
   },
   {
     icon: Braces,
-    title: 'Scripting that stays native',
+    title: 'Scripting without another shell',
     description:
-      'Variables, exports, functions, loops, conditionals, pipelines, and redirections are evaluated in-process with bounded recursion and iteration.',
+      'Variables, functions, loops, and conditionals run inside KERNEXT. Recursion depth and loop counts are bounded, so a runaway script cannot take the shell down.',
     label: 'Language',
   },
   {
     icon: LockKeyhole,
     title: 'Local-first by default',
     description:
-      'Loopback binding, an explicit origin allowlist, session caps, idle cleanup, command-size limits, and optional bearer tokens for local use.',
+      'The server binds to loopback, accepts a fixed set of browser origins, caps sessions, cleans up idle ones, and supports an optional local token.',
     label: 'Safety',
   },
 ] as const;
@@ -193,9 +194,10 @@ function Hero() {
           </h1>
 
           <p className="mt-6 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-            KERNEXT is a native Rust shell engine with a real PTY, a local Axum
-            runtime, and a custom terminal that runs the same code in your
-            browser. No simulated shell. No Bash, CMD, or PowerShell wrapper.
+            KERNEXT is a shell written from scratch in Rust. It parses your
+            commands itself, runs pipelines natively, and gives you a genuine
+            terminal on the command line, in this browser, or in the desktop
+            app — all from one engine.
           </p>
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -263,15 +265,19 @@ function Hero() {
             </div>
             <div className="space-y-1 p-4 font-mono text-[11px] leading-relaxed text-[#d8e6f5] sm:text-xs">
               <TerminalLine prompt="kernext ~ $" command="version" />
-              <div className="text-[#67e8f9]">KERNEXT v0.1.0</div>
+              <div className="text-[#67e8f9]">KERNEXT v{KERNEXT_VERSION}</div>
               <TerminalLine prompt="kernext ~ $" command="echo hello-from-kernext" />
               <div className="text-[#c7d2fe]">hello-from-kernext</div>
-              <TerminalLine prompt="kernext ~ $" command="ls" />
-              <div className="text-[#9fb3c8]">apps&nbsp;&nbsp;crates&nbsp;&nbsp;docs&nbsp;&nbsp;installers</div>
+              <TerminalLine prompt="kernext ~ $" command="pwd" />
+              <div className="text-[#9fb3c8]">/home/you/Projects/kernext</div>
               <div className="flex items-center gap-1 pt-1">
                 <span className="text-[#67e8f9]">kernext ~ $</span>
                 <span className="inline-block h-4 w-2 animate-pulse bg-[#67e8f9]" />
               </div>
+            </div>
+            <div className="border-t border-white/10 px-4 py-2 text-[10px] text-white/35">
+              Example session — these commands run unchanged in the web
+              terminal.
             </div>
           </div>
         </motion.div>

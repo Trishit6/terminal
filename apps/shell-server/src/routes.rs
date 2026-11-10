@@ -45,7 +45,11 @@ pub fn router_with_static(state: AppState, web_dir: Option<PathBuf>) -> Router {
     let app = match web_dir {
         Some(directory) if directory.is_dir() => {
             let index = directory.join("index.html");
-            let service = ServeDir::new(directory).not_found_service(ServeFile::new(index));
+            // `fallback` keeps the index response's own 200 status;
+            // `not_found_service` would force 404 even when the SPA shell is
+            // served successfully, which makes a client-side route such as
+            // `/terminal` look like a failed request on refresh.
+            let service = ServeDir::new(directory).fallback(ServeFile::new(index));
             app.fallback_service(service)
         }
         _ => app.fallback(not_found),

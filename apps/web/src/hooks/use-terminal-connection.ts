@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { TerminalEngine } from '@/lib/terminal/engine';
 import {
+  ApiError,
   createSession,
   deleteSession,
   describeConnectionError,
@@ -55,6 +56,10 @@ export interface TerminalConnection {
   session: SessionInfo | null;
   health: HealthResponse | null;
   size: TerminalSize;
+  /** Whether the local backend answered the last reachability probe. */
+  backendState: 'unknown' | 'reachable' | 'unreachable';
+  /** Neutral hint explaining why the backend is unreachable. */
+  backendNotice: string | null;
   connect: () => void;
   disconnect: () => void;
   sendInput: (data: string) => void;
@@ -87,6 +92,10 @@ export function useTerminalConnection({
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
+  const [backendState, setBackendState] = useState<'unknown' | 'reachable' | 'unreachable'>(
+    'unknown',
+  );
+  const [backendNotice, setBackendNotice] = useState<string | null>(null);
   const [size, setSize] = useState<TerminalSize>({ rows: 24, cols: 80 });
 
   const socketRef = useRef<TerminalSocket | null>(null);
@@ -507,6 +516,46 @@ export function useTerminalConnection({
     [engine],
   );
 
+  const probeBackend = useCallback(
+    async (generation: number): Promise<HealthResponse | null> => {
+      try {
+        const nextHealth =
+          transportRef.current === 'tauri'
+            ? await desktopHealth()
+            : await fetchHealth();
+
+        if (generation !== generationRef.current) {
+          return null;
+        }
+
+        setHealth(nextHealth);
+        setBackendState('reachable');
+        setBackendNotice(null);
+        return nextHealth;
+      } catch (caught) {
+        if (generation !== generationRef.current) {
+          return null;
+        }
+
+        setHealth(null);
+        setBackendState('unreachable');
+
+        const message =
+          transportRef.current === 'tauri' && caught instanceof Error
+            ? caught.message
+            : describeConnectionError(caught);
+
+        setBackendNotice(
+          transportRef.current === 'tauri'
+            ? message
+            : 'The KERNEXT server is not reachable. Start it with `cargo run -p shell-server` (or `pnpm dev`) and check again.',
+        );
+        return null;
+      }
+    },
+    [],
+  );
+
   const connect = useCallback(() => {
     generationRef.current += 1;
     const generation = generationRef.current;
@@ -532,8 +581,22 @@ export function useTerminalConnection({
         }
 
         setHealth(nextHealth);
+        setBackendState('reachable');
+        setBackendNotice(null);
 
         if (modeRef.current === 'pty') {
+          // A reachable server can still be unable to start a PTY when the
+          // `kernext` executable was never built. That is a setup state, not a
+          // connection failure: keep the workspace idle and let it offer the
+          // working Engine transport instead of a red error banner.
+          if (nextHealth.pty_available === false) {
+            setBackendNotice(
+              'The local server is reachable, but it could not find the kernext executable, so PTY mode cannot start. Build it with `cargo build -p shell-cli`, or use Engine mode now.',
+            );
+            setStatus('idle');
+            return;
+          }
+
           await openPty(nextHealth);
         } else {
           await openEngine(generation);
@@ -543,11 +606,27 @@ export function useTerminalConnection({
           return;
         }
 
-        setError(
+        const message =
           transportRef.current === 'tauri' && caught instanceof Error
             ? caught.message
-            : describeConnectionError(caught),
-        );
+            : describeConnectionError(caught);
+
+        // A backend that cannot be reached is an environment state, not a
+        // terminal failure: remember it so the workspace can offer a
+        // first-run explanation instead of a bare error banner.
+        if (
+          caught instanceof TypeError ||
+          (caught instanceof ApiError && caught.status >= 500)
+        ) {
+          setBackendState('unreachable');
+          setBackendNotice(
+            transportRef.current === 'tauri'
+              ? message
+              : 'The KERNEXT server is not reachable. Start it with `cargo run -p shell-server` (or `pnpm dev`) and try again.',
+          );
+        }
+
+        setError(message);
         setStatus('error');
       }
     })();
@@ -567,13 +646,28 @@ export function useTerminalConnection({
       return undefined;
     }
 
-    connect();
+    // First contact is a reachability probe, not a connection attempt. When
+    // the backend is not running the workspace stays idle and explains what
+    // to do instead of flashing a red error banner; when it answers, the
+    // terminal connects straight away.
+    const generation = generationRef.current;
+
+    void (async () => {
+      const nextHealth = await probeBackend(generation);
+
+      if (
+        nextHealth !== null &&
+        generation === generationRef.current
+      ) {
+        connect();
+      }
+    })();
 
     return () => {
       generationRef.current += 1;
       closeSocket(true);
     };
-  }, [enabled, mode, transport, connect, closeSocket]);
+  }, [enabled, mode, transport, connect, closeSocket, probeBackend]);
 
   const submitLine = useCallback(
     (command: string) => {
@@ -781,13 +875,21 @@ export function useTerminalConnection({
           ? await desktopHealth()
           : await fetchHealth();
       setHealth(nextHealth);
-      setError(null);
+      setBackendState('reachable');
+      setBackendNotice(null);
     } catch (caught) {
       setHealth(null);
-      setError(
+      setBackendState('unreachable');
+
+      const message =
         transportRef.current === 'tauri' && caught instanceof Error
           ? caught.message
-          : describeConnectionError(caught),
+          : describeConnectionError(caught);
+
+      setBackendNotice(
+        transportRef.current === 'tauri'
+          ? message
+          : 'The KERNEXT server is not reachable. Start it with `cargo run -p shell-server` (or `pnpm dev`) and check again.',
       );
     }
   }, []);
@@ -798,6 +900,8 @@ export function useTerminalConnection({
     session,
     health,
     size,
+    backendState,
+    backendNotice,
     connect,
     disconnect,
     sendInput,

@@ -3,7 +3,21 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 
 const TooltipProvider = TooltipPrimitive.Provider;
-const Tooltip = TooltipPrimitive.Root;
+
+// Radix's Root requires a TooltipProvider ancestor and throws
+// "`Tooltip` must be used within `TooltipProvider`" without one. Embedding a
+// provider here keeps every Tooltip self-contained (the shared shadcn/ui
+// pattern), while callers that want one provider for a group of tooltips —
+// sharing delay and skip timing — can still mount TooltipProvider higher in
+// the tree and pass Root props (e.g. delayDuration) through to override.
+function Tooltip(props: React.ComponentProps<typeof TooltipPrimitive.Root>) {
+  return (
+    <TooltipProvider delayDuration={300}>
+      <TooltipPrimitive.Root {...props} />
+    </TooltipProvider>
+  );
+}
+
 const TooltipTrigger = TooltipPrimitive.Trigger;
 
 const TooltipContent = React.forwardRef<

@@ -147,12 +147,41 @@ impl PtyProcess {
         CtrlCForwarder::install(&self.master).ok()
     }
 
+    /// Returns the exit status when the child has already finished.
+    ///
+    /// Used by interactive bridges that must notice a child exiting while they
+    /// are also waiting for input, without blocking either side.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProcessError`] when polling fails.
+    pub fn try_wait(&mut self) -> Result<Option<ProcessStatus>, ProcessError> {
+        if let Some(status) = self.status {
+            return Ok(Some(status));
+        }
+
+        let status = self.child.try_wait().map_err(|source| ProcessError::Wait {
+            program: String::from("process"),
+            source,
+        })?;
+
+        Ok(status.map(|status| {
+            let status = ProcessStatus::from_exit_status(status);
+            self.status = Some(status);
+            status
+        }))
+    }
+
     /// Waits for the child to exit.
     ///
     /// # Errors
     ///
     /// Returns [`ProcessError`] when waiting fails.
     pub fn wait(&mut self) -> Result<ProcessStatus, ProcessError> {
+        if let Some(status) = self.status {
+            return Ok(status);
+        }
+
         let status = self.child.wait().map_err(|source| ProcessError::Wait {
             program: String::from("process"),
             source,

@@ -378,8 +378,53 @@ impl PtyProcess {
         CtrlCForwarder::install(self.pi.hProcess).ok()
     }
 
+    /// Returns the exit status when the child has already finished.
+    ///
+    /// Used by interactive bridges that must notice a child exiting while they
+    /// are also waiting for input, without blocking either side.
+    pub fn try_wait(&mut self) -> Result<Option<ProcessStatus>, ProcessError> {
+        if let Some(status) = self.status {
+            return Ok(Some(status));
+        }
+
+        const WAIT_TIMEOUT: u32 = 0x0000_0102;
+        let result = unsafe { WaitForSingleObject(self.pi.hProcess, 0) };
+
+        if result == WAIT_TIMEOUT {
+            return Ok(None);
+        }
+
+        if result == 0xFFFF_FFFF {
+            return Err(ProcessError::Wait {
+                program: String::from("process"),
+                source: io::Error::last_os_error(),
+            });
+        }
+
+        let mut exit_code = 0u32;
+        if unsafe { GetExitCodeProcess(self.pi.hProcess, &mut exit_code) } == 0 {
+            return Err(ProcessError::Wait {
+                program: String::from("process"),
+                source: io::Error::last_os_error(),
+            });
+        }
+
+        let status = ProcessStatus::from_code(exit_code as i32);
+        self.status = Some(status);
+        unsafe { CloseHandle(self.pi.hProcess) };
+        unsafe { ClosePseudoConsole(self.hpc) };
+        self.pi.hProcess = INVALID_HANDLE_VALUE;
+        self.hpc = 0;
+
+        Ok(Some(status))
+    }
+
     /// Waits for the child to exit.
     pub fn wait(&mut self) -> Result<ProcessStatus, ProcessError> {
+        if let Some(status) = self.status {
+            return Ok(status);
+        }
+
         let result = unsafe { WaitForSingleObject(self.pi.hProcess, INFINITE) };
         if result == 0xFFFFFFFF {
             return Err(ProcessError::Wait {

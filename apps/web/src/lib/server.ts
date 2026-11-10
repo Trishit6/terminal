@@ -111,17 +111,35 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     let body: ApiErrorBody | null = null;
+    let parsed = true;
 
     try {
       body = (await response.json()) as ApiErrorBody;
     } catch {
       body = null;
+      parsed = false;
+    }
+
+    // KERNEXT error responses always carry a JSON body with a stable code.
+    // An error response without one did not come from the KERNEXT server:
+    // when the site is served by the Vite dev server, its `/api` proxy
+    // answers HTTP 500 with an empty body whenever the backend is not
+    // running. Report that honestly and actionably instead of a bare
+    // "HTTP 500".
+    if (!parsed || !body) {
+      throw new ApiError(
+        response.status,
+        'backend_unreachable',
+        response.status >= 500
+          ? 'The request did not reach the KERNEXT server. When the site runs through the Vite dev server this usually means the backend is not running yet — start it with `cargo run -p shell-server` or `pnpm dev`, then connect again.'
+          : `The server answered HTTP ${response.status} without a KERNEXT error body.`,
+      );
     }
 
     throw new ApiError(
       response.status,
-      body?.code ?? 'request_failed',
-      body?.message ?? `The server answered with HTTP ${response.status}.`,
+      body.code ?? 'request_failed',
+      body.message ?? `The server answered with HTTP ${response.status}.`,
     );
   }
 
