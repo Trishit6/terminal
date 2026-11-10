@@ -98,7 +98,7 @@
     background-color: var(--background);
     color: var(--foreground);
     font-family: var(--font-sans);
-    font-synthesis-weight: none;
+    
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
   }
@@ -325,7 +325,7 @@
   }
 
   .balance {
-    text-wrap: balance;
+    
   }
 }
 
