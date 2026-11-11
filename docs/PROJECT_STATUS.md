@@ -1,6 +1,6 @@
 # KERNEXT Project Status
 
-Status as of Phase 11 (account backend and security hardening). The CLI, Web,
+Status snapshot after Phase 13 (responsive Web Terminal and site layouts). The CLI, Web,
 and Desktop surfaces share one Rust engine. MariaDB-backed accounts,
 authentication, and per-account web-terminal ownership are implemented. This
 document separates what is **implemented**, **tested**, **partially tested**,
@@ -70,13 +70,20 @@ Node.js + npm. MariaDB is available on `127.0.0.1:3307`.
 
 ### Hero and administration (Phase 12)
 
-- Cinematic 3D hero composition: a larger editorial layout, layered orbital
-  depth, a central KERNEXT emblem core, and a more integrated terminal preview.
-  The motion remains continuous, readable, and reduced-motion aware.
-- Refined navigation chrome and premium hero styling that keep the site
-  visually focused on the core object instead of generic SaaS panels.
-- Human-centered hero copy and actions: official identity, `Open Terminal`,
-  `Explore Features`, and example-session labelling.
+- The public site uses a minimalist engineering direction: a centered editorial
+  introduction, restrained surfaces, a subdued navigation bar, and a shared
+  dark palette. Homepage sections cover the CLI, Web, Desktop, verified
+  capabilities, supported platforms, the shared Rust architecture, and a
+  clearly labelled static terminal example with a link to the real Web Terminal.
+- The hero uses the existing KERNEXT mark on a CSS 3D metal-effect core with
+  two independently rotating orbital planes. Perspective, depth separation,
+  low-amplitude pointer parallax, automatic motion, and reduced-motion support
+  are implemented without adding a 3D dependency.
+- Official Windows, Linux, and Apple SVG marks are bundled locally for the
+  homepage and downloads. Shared cards allow long documentation code samples to
+  scroll within their panels instead of widening the mobile page.
+- Hero copy retains the official tagline, brand statement, and the concise
+  product description; primary actions open the Web Terminal and Features.
 - `users.role` (`user`/`admin`) and `users.must_change_password` migration.
 - Idempotent development administrator seed (`KERNEXT_SEED_ADMIN`), ignored in
   production, Argon2id-only, never logging credentials, never overwriting an
@@ -88,6 +95,28 @@ Node.js + npm. MariaDB is available on `127.0.0.1:3307`.
   post-migration schema verification.
 - Sign-in distinguishes an unreachable server from a server without accounts.
 
+### Responsive terminal and site layouts (Phase 13)
+
+- The browser Web Terminal has Compact, Standard, Large, and custom dimensions;
+  pointer/touch drag and keyboard resizing; fit-to-window; reset; and fullscreen
+  with a viewport-sized Escape-dismissible fallback when the browser denies
+  its fullscreen request. Resizing does not remount the terminal panel.
+- Terminal rows and columns continue to come from measured glyph dimensions.
+  Engine buffers resize immediately; PTY resize messages are coalesced to at
+  most one every 80 ms while dragging and send the latest measured size.
+- Font family and size, line height, padding, cursor style, background opacity,
+  and four terminal color themes are configurable. Versioned preferences are
+  validated and saved in local storage; signed-in web users also sync them
+  through the existing account preference endpoint. Tauri terminal defaults
+  and execution remain unchanged.
+- Public mobile navigation and the admin drawer provide Escape handling,
+  outside/backdrop dismissal, focus containment, and body scroll locking.
+- Responsive route checks covered 30 public, account, terminal, admin, and
+  desktop routes at all eight requested viewport widths/heights used in this
+  pass (1920×1080, 1440×900, 1366×768, 1024×768, 768×1024, 430×932,
+  390×844, and 360×800); no page-level horizontal overflow or uncaught
+  browser exceptions were observed.
+
 ## Tested
 
 - `cargo fmt --all -- --check` — clean.
@@ -97,8 +126,8 @@ Node.js + npm. MariaDB is available on `127.0.0.1:3307`.
   tests (see below).
 - `cargo clippy --workspace --all-targets -- -D warnings` — clean.
 - `npm run typecheck` — ok.
-- `npm test` (Vitest) — 55 passed in 7 files.
-- `npm run build` — ok (chunk-size warning only).
+- `npm test` (Vitest) — 58 passed in 8 files.
+- `npm run build` — ok.
 - **Live MariaDB integration** (`cargo test -p shell-server --test auth_db`
   against the configured database on port 3307): **9/9 passed**.
   - migrations apply (and are re-runnable)
@@ -112,12 +141,28 @@ Node.js + npm. MariaDB is available on `127.0.0.1:3307`.
   - repeated failed logins are rate limited
   - admin seed is idempotent, stores Argon2id, forces password change, and
     admin endpoints reject non-admins and un-changed passwords
-- **Real browser rendering:** Chrome headless against the production bundle
-  served by Axum at 1440px and at an emulated 390px viewport. Both orbital
-  rings changed transform over time; under emulated
-  `prefers-reduced-motion: reduce` both stayed static; the terminal preview
-  reported `transform: none`; mobile `scrollWidth === clientWidth` (no
-  horizontal overflow).
+- **Redesign browser verification:** Chrome headless against Vite, with
+  `prefers-reduced-motion` emulated both ways. At 1920×1080, 1440×900,
+  1366×768, 768×1024, and 390×844, the home page had no horizontal overflow;
+  the core and both orbital transforms changed over time without hover. Pointer
+  movement produced a 3D matrix transform, and reduced motion disabled all
+  three continuous animations. Navigating to Features and back retained the
+  animation. The local platform SVGs loaded successfully.
+- **Responsive route rendering:** Chrome headless visited Home, Features,
+  Documentation, Downloads, About, Contact, sign-in, account creation,
+  Terminal, and Admin at 1440px and 390px. No console errors or horizontal
+  overflow were observed; Admin redirected to sign-in while unauthenticated.
+  Documentation's long API examples initially exposed a mobile width issue;
+  constraining shared cards fixed it, and the route scan passed afterward.
+- **Core motion:** headless Edge with `prefers-reduced-motion: no-preference`
+  confirmed the KERNEXT core's Y-axis transform changes over time and the two
+  orbital tracks animate independently. Emulating reduced motion disabled the
+  continuous animations as expected.
+- **Responsive terminal controls:** headless Edge verified the compact preset
+  height, appearance controls, local preference storage and reload restoration,
+  pointer resizing, and Escape restoration from the window-sized fullscreen
+  fallback. The headless browser denied the native Fullscreen API request, so
+  native fullscreen was not visually verified in a headed browser.
 - **Real browser login:** Chrome headless against Vite on 5173, proxied to
   Axum on 7878. `/sign-in` showed no configuration or unreachable warning;
   submitting `admin@admin.com` / `password` navigated to `/account` with the
@@ -155,6 +200,11 @@ Node.js + npm. MariaDB is available on `127.0.0.1:3307`.
 - **Interactive desktop GUI.** Typing, tab switching, resizing, Ctrl+C, and
   settings were not driven interactively; the launch smoke test and shared web
   terminal tests ran.
+- **Live PTY resize in this pass.** Browser layout and controls were checked
+  with auth/health responses isolated for UI testing, but no authenticated PTY
+  session was used. The existing authenticated PTY command flow and the
+  process's response to a resize were therefore not re-verified; visual
+  resizing still uses the established WebSocket resize path.
 - **Hosted CI.** The workflow now includes a MariaDB service container and the
   `auth_db` job, but a hosted run after this change has not been observed.
 - **macOS and Linux GUI.** No macOS host and no mounted Linux checkout were

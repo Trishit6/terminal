@@ -4,6 +4,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 import {
@@ -80,7 +81,10 @@ interface AuthContextValue {
   listSessions: () => Promise<AuthSessionSummary[]>;
   revokeSession: (id: string) => Promise<void>;
   resendVerification: () => Promise<{ email_delivery: string }>;
-  updatePreferences: (theme: string) => Promise<Preferences>;
+  updatePreferences: (
+    theme: string,
+    terminalPreferences?: Record<string, unknown> | null,
+  ) => Promise<Preferences>;
   forgotPassword: (email: string) => Promise<{
     message: string;
     email_delivery: string;
@@ -104,6 +108,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [preferences, setPreferences] = useState<Preferences | null>(null);
   const [status, setStatus] = useState<AuthStatus>(DISABLED);
   const [serverReachable, setServerReachable] = useState(true);
+  const preferencesRef = useRef(preferences);
+  preferencesRef.current = preferences;
 
   const refresh = useCallback(async () => {
     if (isTauri()) {
@@ -280,14 +286,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const updatePreferences = useCallback(
-    async (theme: string) => {
+    async (
+      theme: string,
+      terminalPreferences =
+        preferencesRef.current?.terminal_preferences ?? null,
+    ) => {
       const next = isTauri()
         ? await desktopAuthUpdatePreferences(theme)
-        : await updatePreferencesRequest(theme, preferences?.terminal_preferences ?? null);
+        : await updatePreferencesRequest(theme, terminalPreferences);
       setPreferences(next);
       return next;
     },
-    [preferences?.terminal_preferences],
+    [],
   );
 
   const forgotPassword = useCallback(async (email: string) => {

@@ -6,13 +6,11 @@ import {
   Github,
   Globe2,
   Monitor,
-  Orbit,
   Scale,
   Sparkles,
   Terminal,
   TerminalSquare,
 } from 'lucide-react';
-import { motion } from 'motion/react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -25,8 +23,6 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { LogoMark } from '@/components/site/logo';
 import { KERNEXT_VERSION } from '@/lib/version';
-
-const EASE = [0.22, 1, 0.36, 1] as const;
 
 const VALUES = [
   {
@@ -61,7 +57,7 @@ const STACK = [
   { icon: Globe2, name: 'Axum + Tokio', detail: 'The local web runtime behind the web terminal.' },
   { icon: Monitor, name: 'Tauri 2', detail: 'The desktop host wrapping the same engine and terminal UI.' },
   { icon: Boxes, name: 'React 19 · Vite', detail: 'The shared front end for web and desktop.' },
-  { icon: Sparkles, name: 'Tailwind CSS v4', detail: 'The Cinematic Space & Systems design system.' },
+  { icon: Sparkles, name: 'Tailwind CSS v4', detail: 'A restrained, engineering-led interface system.' },
 ] as const;
 
 export function AboutPage() {
@@ -85,20 +81,12 @@ export function AboutPage() {
           </p>
         </div>
 
-        <motion.div
-          initial={{ opacity: 0, scale: 0.95 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.7, ease: EASE }}
-          className="relative mx-auto w-full max-w-[300px]"
-        >
-          <div className="pointer-events-none absolute -inset-10 -z-10 rounded-full bg-primary/10 blur-3xl" />
-          <div className="orbital aspect-square">
-            <div className="flex size-[46%] items-center justify-center rounded-full border border-primary/20 bg-background/70 shadow-[0_0_80px_rgba(34,211,238,0.18)] backdrop-blur-xl">
-              <LogoMark className="size-16" />
-            </div>
-            <span className="orbital-dot" />
+        <div className="about-core" aria-hidden="true">
+          <div className="about-core__face">
+            <LogoMark className="size-16" />
           </div>
-        </motion.div>
+          <span className="about-core__caption">KERNEXT / RUST ENGINE</span>
+        </div>
       </div>
 
       {/* Section heading keeps the outline valid: h1 → h2 → card h3s. */}
@@ -262,7 +250,7 @@ export function AboutPage() {
       </div>
 
       <div className="mt-10 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-        <Orbit className="size-3.5" />
+        <Cpu className="size-3.5" />
         KERNEXT · The Next Core of Computing.
       </div>
     </div>

@@ -1,1 +1,0 @@
-import{gt as e}from"./main-D5M6EKHa.js";var t=e(`ChevronLeft`,[[`path`,{d:`m15 18-6-6 6-6`,key:`1wnfg3`}]]);export{t};

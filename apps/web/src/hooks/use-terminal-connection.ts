@@ -105,6 +105,9 @@ export function useTerminalConnection({
   const modeRef = useRef<ConnectionMode>(mode);
   const transportRef = useRef<ConnectionTransport>(transport);
   const generationRef = useRef(0);
+  const ptyResizeTimerRef = useRef<number | null>(null);
+  const pendingPtyResizeRef = useRef<TerminalSize | null>(null);
+  const lastPtyResizeAtRef = useRef(0);
   const lineRef = useRef('');
   const promptRef = useRef(DEFAULT_PROMPT);
   const historyRef = useRef<string[]>([]);
@@ -127,7 +130,39 @@ export function useTerminalConnection({
     return true;
   }, []);
 
+  const queuePtyResize = useCallback(
+    (rows: number, cols: number) => {
+      pendingPtyResizeRef.current = { rows, cols };
+
+      if (ptyResizeTimerRef.current !== null) {
+        return;
+      }
+
+      const delay = Math.max(
+        0,
+        80 - (Date.now() - lastPtyResizeAtRef.current),
+      );
+      ptyResizeTimerRef.current = window.setTimeout(() => {
+        ptyResizeTimerRef.current = null;
+        const next = pendingPtyResizeRef.current;
+        pendingPtyResizeRef.current = null;
+
+        if (next) {
+          lastPtyResizeAtRef.current = Date.now();
+          sendClient({ type: 'resize', rows: next.rows, cols: next.cols });
+        }
+      }, delay);
+    },
+    [sendClient],
+  );
+
   const closeSocket = useCallback((deleteRemote: boolean) => {
+    if (ptyResizeTimerRef.current !== null) {
+      window.clearTimeout(ptyResizeTimerRef.current);
+      ptyResizeTimerRef.current = null;
+    }
+    pendingPtyResizeRef.current = null;
+
     const socket = socketRef.current;
     socketRef.current = null;
 
@@ -838,10 +873,10 @@ export function useTerminalConnection({
       engine.resize(rows, cols);
 
       if (modeRef.current === 'pty') {
-        sendClient({ type: 'resize', rows, cols });
+        queuePtyResize(rows, cols);
       }
     },
-    [engine, sendClient],
+    [engine, queuePtyResize],
   );
 
   const clear = useCallback(() => {

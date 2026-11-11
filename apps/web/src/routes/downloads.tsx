@@ -1,14 +1,11 @@
 import { Link } from '@tanstack/react-router';
 import {
-  Apple,
   ArrowRight,
   ArrowUpRight,
   Check,
-  Cpu,
   Download,
   ExternalLink,
   FileArchive,
-  MonitorDown,
   Package,
   ShieldCheck,
   TerminalSquare,
@@ -24,6 +21,7 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { PlatformMark } from '@/components/site/platform-mark';
 import { KERNEXT_VERSION } from '@/lib/version';
 
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -33,7 +31,7 @@ const REPOSITORY_URL = 'https://github.com/Trishit6/terminal';
 
 const PLATFORMS = [
   {
-    icon: MonitorDown,
+    brand: 'windows',
     name: 'Windows',
     targets: ['x86_64', 'Windows 10 or later'],
     artifacts: [
@@ -42,7 +40,7 @@ const PLATFORMS = [
     ],
   },
   {
-    icon: Cpu,
+    brand: 'linux',
     name: 'Linux',
     targets: ['x86_64', 'glibc and musl targets'],
     artifacts: [
@@ -52,7 +50,7 @@ const PLATFORMS = [
     ],
   },
   {
-    icon: Apple,
+    brand: 'macos',
     name: 'macOS',
     targets: ['Apple Silicon', 'Intel'],
     artifacts: [
@@ -138,7 +136,7 @@ export function DownloadsPage() {
                 <CardHeader className="gap-3">
                   <div className="flex items-center justify-between">
                     <div className="grid size-10 place-items-center rounded-xl border border-border bg-background/70 text-primary">
-                      <platform.icon className="size-5" />
+                      <PlatformMark platform={platform.brand} className="size-5" />
                     </div>
                     <Badge variant="secondary">CLI + Desktop</Badge>
                   </div>

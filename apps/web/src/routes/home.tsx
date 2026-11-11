@@ -1,161 +1,58 @@
 import { Link } from '@tanstack/react-router';
 import {
+  ArrowDown,
   ArrowRight,
   ArrowUpRight,
-  Braces,
   Check,
   Cpu,
-  Gauge,
   Globe2,
-  Layers3,
-  LockKeyhole,
   Monitor,
-  Network,
-  Orbit,
   Play,
   Server,
-  ShieldCheck,
-  Sparkles,
   Terminal,
   TerminalSquare,
-  Zap,
 } from 'lucide-react';
-import { motion } from 'motion/react';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
 import { OrbitalHero } from '@/components/site/orbital-hero';
+import { PlatformMark } from '@/components/site/platform-mark';
+import { Button } from '@/components/ui/button';
 import { KERNEXT_VERSION } from '@/lib/version';
 
-const EASE = [0.22, 1, 0.36, 1] as const;
-
-const fadeUp = {
-  initial: { opacity: 0, y: 18 },
-  whileInView: { opacity: 1, y: 0 },
-  viewport: { once: true, margin: '-80px' },
-  transition: { duration: 0.6, ease: EASE },
-};
-
-const FEATURES = [
+const CAPABILITIES = [
   {
-    icon: Cpu,
-    title: 'It reads the command line itself',
-    description:
-      'Quotes, pipes, redirects, groups, and && / || follow one grammar. KERNEXT parses them into a syntax tree instead of splitting on spaces or handing the line to another shell.',
-    label: 'Engine',
+    number: '01',
+    title: 'Native command engine',
+    detail:
+      'A hand-written lexer, parser, AST, evaluator, and 56 native built-ins give KERNEXT ownership of its command language.',
   },
   {
-    icon: TerminalSquare,
-    title: 'Full-screen programs work',
-    description:
-      'Editors, pagers, and prompts get a real terminal through ConPTY on Windows and openpty on Unix. Resize, colors, and Ctrl+C behave like your usual shell.',
-    label: 'PTY',
+    number: '02',
+    title: 'Real process execution',
+    detail:
+      'External programs launch through operating-system process APIs with arguments kept intact.',
   },
   {
-    icon: Server,
-    title: 'A small local server',
-    description:
-      'The browser talks to a Rust server on your machine. Sessions, commands, and raw terminal bytes never leave the machine by default.',
-    label: 'Server',
+    number: '03',
+    title: 'Interactive terminal',
+    detail:
+      'ConPTY on Windows and openpty on Unix provide full-screen programs with a real terminal.',
   },
   {
-    icon: Layers3,
-    title: 'One engine, three surfaces',
-    description:
-      'The CLI, web terminal, and desktop app share the same parser, built-ins, and process launcher, so a command behaves the same in each one.',
-    label: 'Shared core',
-  },
-  {
-    icon: Braces,
-    title: 'Scripting without another shell',
-    description:
-      'Variables, functions, loops, and conditionals run inside KERNEXT. Recursion depth and loop counts are bounded, so a runaway script cannot take the shell down.',
-    label: 'Language',
-  },
-  {
-    icon: LockKeyhole,
-    title: 'Local-first by default',
-    description:
-      'The server binds to loopback, accepts a fixed set of browser origins, caps sessions, cleans up idle ones, and supports an optional local token.',
-    label: 'Safety',
-  },
-] as const;
-
-const SURFACES = [
-  {
-    icon: Terminal,
-    title: 'KERNEXT CLI',
-    status: 'Implemented',
-    tone: 'success' as const,
-    description:
-      'The original surface. A Reedline prompt, cinematic startup, native pipelines, background jobs, and 56 built-ins.',
-    points: ['`kernext` executable', 'Animated startup + config', 'Native process execution'],
-    to: '/docs',
-    action: 'Read the CLI notes',
-  },
-  {
-    icon: Globe2,
-    title: 'KERNEXT Web',
-    status: 'Implemented',
-    tone: 'success' as const,
-    description:
-      'A React terminal with its own ANSI renderer, cursor, scrollback, keyboard mapping, and resize handling. No xterm.js.',
-    points: ['PTY and engine transports', 'Custom ANSI screen buffer', 'Local Axum session API'],
-    to: '/terminal',
-    action: 'Open the terminal',
-  },
-  {
-    icon: Monitor,
-    title: 'KERNEXT Desktop',
-    status: 'Implemented',
-    tone: 'success' as const,
-    description:
-      'A Tauri 2 shell around the same runtime: multi-tab terminal, command and file explorers, sessions, and settings — executing through the embedded engine, never a public server.',
-    points: ['Tauri 2 host with settings', 'Same web terminal UI', 'Local Rust command bridge'],
-    to: '/downloads',
-    action: 'Build the desktop app',
-  },
-] as const;
-
-const FLOW = [
-  {
-    icon: TerminalSquare,
-    title: 'Custom terminal',
-    detail: 'Keyboard → ANSI buffer → WebSocket frames',
-  },
-  {
-    icon: Network,
-    title: 'WebSocket bridge',
-    detail: 'Raw PTY bytes or one command line at a time',
-  },
-  {
-    icon: Server,
-    title: 'Axum + Tokio',
-    detail: 'Sessions, auth, limits, and upgrade handling',
-  },
-  {
-    icon: Cpu,
-    title: 'KERNEXT engine',
-    detail: 'Lex → parse → AST → dispatcher → outcome',
+    number: '04',
+    title: 'Pipelines and jobs',
+    detail:
+      'Native pipelines, redirections, and background jobs run through the shared Rust engine.',
   },
 ] as const;
 
 export function HomePage() {
   return (
-    <div className="overflow-hidden bg-background">
+    <div className="kernext-home">
       <Hero />
-      <ValueStrip />
+      <SurfacesSection />
+      <EngineSection />
       <PlatformSection />
       <ArchitectureSection />
-      <SurfacesSection />
-      <RuntimeSection />
+      <TerminalSection />
       <CallToAction />
     </div>
   );
@@ -163,146 +60,186 @@ export function HomePage() {
 
 function Hero() {
   return (
-    <section className="relative isolate overflow-hidden pb-20 pt-16 sm:pt-20 lg:pb-28">
-      <div className="absolute inset-0 -z-20 aurora" />
-      <div className="absolute inset-x-0 top-0 -z-10 h-[640px] shell-grid opacity-60" />
-      <div className="pointer-events-none absolute left-1/2 top-10 -z-10 h-[520px] w-[900px] -translate-x-1/2 rounded-full bg-primary/10 blur-[130px]" />
+    <section className="home-hero">
+      <div className="home-hero__copy">
+        <p className="home-eyebrow">
+          <span className="home-eyebrow__rule" />
+          Independent. Native. Engineered.
+        </p>
+        <h1>
+          The Next Core
+          <br />
+          of Computing<span className="text-primary">.</span>
+        </h1>
+        <p className="home-hero__description">
+          KERNEXT is an independent, Rust-powered computing environment bringing
+          a consistent shell experience to your terminal, browser and desktop.
+        </p>
+        <div className="home-hero__actions">
+          <Button asChild size="lg">
+            <Link to="/terminal">
+              <Play className="size-4 fill-current" />
+              Open Terminal
+            </Link>
+          </Button>
+          <Button asChild variant="outline" size="lg">
+            <Link to="/features">
+              Explore Features
+              <ArrowRight className="size-4" />
+            </Link>
+          </Button>
+        </div>
+      </div>
 
-      <div className="mx-auto grid w-full max-w-site items-center gap-16 px-4 sm:px-6 lg:grid-cols-[1.08fr_0.92fr] lg:px-8">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.7, ease: EASE }}
-          className="min-w-0 max-w-[680px]"
-        >
-          <div className="mb-7 inline-flex items-center gap-3 rounded-full border border-primary/20 bg-surface/60 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.24em] text-primary shadow-[0_0_30px_rgba(34,211,238,0.12)] backdrop-blur-sm">
-            <span className="h-2 w-2 rounded-full bg-primary shadow-[0_0_16px_rgba(34,211,238,0.8)]" aria-hidden="true" />
-            Independent. Native. Engineered.
-          </div>
+      <div className="home-hero__object">
+        <OrbitalHero />
+        <div className="home-hero__annotation home-hero__annotation--left">
+          <span>01</span>
+          <span>Rust runtime</span>
+        </div>
+        <div className="home-hero__annotation home-hero__annotation--right">
+          <span>02</span>
+          <span>One engine · three surfaces</span>
+        </div>
+      </div>
 
-          <h1 className="text-balance text-5xl font-semibold leading-[0.92] tracking-[-0.055em] text-foreground sm:text-6xl lg:text-[5.2rem]">
-            The Next Core of{' '}
-            <span className="text-gradient">Computing.</span>
-          </h1>
+      <a className="home-hero__scroll" href="#surfaces">
+        Explore the system
+        <ArrowDown className="size-3.5" />
+      </a>
+    </section>
+  );
+}
 
-          <p className="mt-6 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-            KERNEXT is an independent, Rust-powered computing environment designed
-            to bring a consistent shell experience to your terminal, browser, and
-            desktop — without a wrapper around Bash, PowerShell, or CMD.
-          </p>
+function SectionHeading({
+  eyebrow,
+  title,
+  description,
+}: {
+  eyebrow: string;
+  title: string;
+  description?: string;
+}) {
+  return (
+    <div className="home-section-heading">
+      <p className="home-eyebrow">
+        <span className="home-eyebrow__rule" />
+        {eyebrow}
+      </p>
+      <h2>{title}</h2>
+      {description ? <p>{description}</p> : null}
+    </div>
+  );
+}
 
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-            <Button asChild size="lg" className="group rounded-full border-primary/30 bg-primary text-primary-foreground shadow-[0_18px_42px_-18px_rgba(34,211,238,0.85)]">
-              <Link to="/terminal">
-                <Play className="size-4 fill-current" />
-                Open Terminal
-                <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
-              </Link>
-            </Button>
-            <Button asChild variant="outline" size="lg" className="rounded-full border-border-strong bg-surface/50 backdrop-blur-sm">
-              <Link to="/features">
-                Explore Features
-                <ArrowUpRight className="size-4" />
-              </Link>
-            </Button>
-          </div>
-
-          <div className="mt-9 flex flex-wrap items-center gap-x-5 gap-y-3 text-xs text-muted-foreground">
-            <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface/60 px-2.5 py-1.5">
-              <Check className="size-3.5 text-success" />
-              <span>One engine, three surfaces</span>
-            </span>
-            <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface/60 px-2.5 py-1.5">
-              <Check className="size-3.5 text-success" />
-              <span>Real PTY + engine modes</span>
-            </span>
-            <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface/60 px-2.5 py-1.5">
-              <Check className="size-3.5 text-success" />
-              <span>Local-first by default</span>
-            </span>
-          </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, scale: 0.96, y: 24 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          transition={{ duration: 0.85, ease: EASE, delay: 0.08 }}
-          className="relative mx-auto w-full min-w-0 max-w-[620px]"
-        >
-          <div className="pointer-events-none absolute -inset-10 -z-10 rounded-full bg-primary/10 blur-[120px]" />
-          <div className="hero-panel relative overflow-hidden rounded-[2rem] border border-white/10 bg-surface/40 p-4 shadow-[0_40px_120px_-30px_rgba(2,8,23,0.9)] backdrop-blur-sm sm:p-5">
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_15%,rgba(34,211,238,0.12),transparent_26%),radial-gradient(circle_at_80%_80%,rgba(168,85,247,0.12),transparent_30%)]" />
-            <OrbitalHero />
-
-            <div
-              data-terminal-preview="example"
-              className="relative mt-[-2.5%] overflow-hidden rounded-2xl border border-border-strong bg-[#04070c] shadow-[0_32px_80px_-32px_rgba(2,8,23,0.95)]"
-            >
-              <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5">
-                <div className="flex items-center gap-1.5">
-                  <span className="size-2 rounded-full bg-[#ff6b6b]/80" />
-                  <span className="size-2 rounded-full bg-[#f5d76e]/80" />
-                  <span className="size-2 rounded-full bg-[#5ee6a8]/80" />
-                </div>
-                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/40">
-                  Example session
-                </span>
-                <span className="font-mono text-[10px] text-white/30">local</span>
+function SurfacesSection() {
+  return (
+    <section id="surfaces" className="home-section home-surfaces">
+      <div className="home-section__inner">
+        <SectionHeading
+          eyebrow="One engine. Three surfaces."
+          title="A consistent shell, wherever you work."
+          description="Each surface is built around the same Rust engine—not a separate interpretation of it."
+        />
+        <div className="surface-showcase">
+          <article className="surface-showcase__item surface-showcase__item--cli">
+            <div className="surface-showcase__meta">
+              <span>01 / Interface preview</span>
+              <Terminal className="size-4" />
+            </div>
+            <div className="surface-cli-window">
+              <div className="surface-cli-window__line">
+                <span>kernext ~ $</span> kernext version
               </div>
-              <div className="space-y-1 p-4 font-mono text-[11px] leading-relaxed text-[#d8e6f5] sm:text-xs">
-                <TerminalLine prompt="kernext ~ $" command="version" />
-                <div className="text-[#67e8f9]">KERNEXT v{KERNEXT_VERSION}</div>
-                <TerminalLine prompt="kernext ~ $" command="echo hello-from-kernext" />
-                <div className="text-[#c7d2fe]">hello-from-kernext</div>
-                <TerminalLine prompt="kernext ~ $" command="pwd" />
-                <div className="text-[#9fb3c8]">/home/you/Projects/kernext</div>
-                <div className="flex items-center gap-1 pt-1">
-                  <span className="text-[#67e8f9]">kernext ~ $</span>
-                  <span className="inline-block h-4 w-2 animate-pulse bg-[#67e8f9]" />
-                </div>
+              <p>KERNEXT v{KERNEXT_VERSION}</p>
+              <div className="surface-cli-window__line">
+                <span>kernext ~ $</span> echo &quot;ready&quot;
               </div>
-              <div className="border-t border-white/10 px-4 py-2 text-[10px] text-white/35">
-                Example session — these commands run unchanged in the web terminal.
+              <p>ready</p>
+            </div>
+            <h3>KERNEXT CLI</h3>
+            <p>Native prompt, command history and process execution.</p>
+            <Link to="/docs" className="home-text-link">
+              CLI documentation <ArrowUpRight className="size-3.5" />
+            </Link>
+          </article>
+
+          <article className="surface-showcase__item surface-showcase__item--web">
+            <div className="surface-showcase__meta">
+              <span>02 / Browser</span>
+              <Globe2 className="size-4" />
+            </div>
+            <div className="surface-web-window" aria-hidden="true">
+              <div className="surface-web-window__bar">
+                <span />
+                <span />
+                <span />
+                <i>kernext / terminal</i>
+              </div>
+              <div className="surface-web-window__body">
+                <span className="text-primary">kernext ~ $</span>
+                <span> ls</span>
+                <span className="surface-web-window__output">src&nbsp;&nbsp; Cargo.toml&nbsp;&nbsp; README.md</span>
               </div>
             </div>
-          </div>
-        </motion.div>
+            <h3>KERNEXT Web</h3>
+            <p>A browser terminal with a custom renderer and real PTY transport.</p>
+            <Link to="/terminal" className="home-text-link">
+              Open Web Terminal <ArrowUpRight className="size-3.5" />
+            </Link>
+          </article>
+
+          <article className="surface-showcase__item surface-showcase__item--desktop">
+            <div className="surface-showcase__meta">
+              <span>03 / Desktop</span>
+              <Monitor className="size-4" />
+            </div>
+            <div className="surface-desktop-window" aria-hidden="true">
+              <div className="surface-desktop-window__rail">
+                <span className="surface-desktop-window__mark">K</span>
+                <span />
+                <span />
+                <span />
+              </div>
+              <div className="surface-desktop-window__screen">
+                <b>KERNEXT</b>
+                <span>Local runtime</span>
+                <i />
+              </div>
+            </div>
+            <h3>KERNEXT Desktop</h3>
+            <p>A Tauri application that runs through the local Rust runtime.</p>
+            <Link to="/downloads" className="home-text-link">
+              Desktop build notes <ArrowUpRight className="size-3.5" />
+            </Link>
+          </article>
+        </div>
       </div>
     </section>
   );
 }
 
-
-function TerminalLine({ prompt, command }: { prompt: string; command: string }) {
+function EngineSection() {
   return (
-    <div>
-      <span className="text-[#67e8f9]">{prompt}</span>{' '}
-      <span className="text-white/90">{command}</span>
-    </div>
-  );
-}
-
-function ValueStrip() {
-  const values = [
-    { value: '56', label: 'native built-ins' },
-    { value: '1', label: 'shared Rust engine' },
-    { value: '3', label: 'runtime surfaces' },
-    { value: '0', label: 'wrapper shells' },
-  ];
-
-  return (
-    <section className="border-y border-border bg-surface/30">
-      <div className="mx-auto grid w-full max-w-site grid-cols-2 divide-x divide-border px-4 sm:px-6 lg:grid-cols-4 lg:px-8">
-        {values.map((item) => (
-          <div key={item.label} className="px-4 py-6 text-center sm:py-8">
-            <div className="font-mono text-3xl font-semibold tracking-[-0.04em] text-foreground">
-              {item.value}
-            </div>
-            <div className="mt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-              {item.label}
-            </div>
-          </div>
-        ))}
+    <section className="home-section home-engine">
+      <div className="home-section__inner home-engine__layout">
+        <SectionHeading
+          eyebrow="Engineered for real work"
+          title="The shell owns the semantics."
+          description="KERNEXT parses and evaluates its own command language. It does not hand shell syntax to another interpreter."
+        />
+        <div className="capability-list">
+          {CAPABILITIES.map((item) => (
+            <article key={item.number} className="capability-list__item">
+              <span className="capability-list__number">{item.number}</span>
+              <div>
+                <h3>{item.title}</h3>
+                <p>{item.detail}</p>
+              </div>
+              <Check className="size-4 text-primary" aria-hidden="true" />
+            </article>
+          ))}
+        </div>
       </div>
     </section>
   );
@@ -310,49 +247,43 @@ function ValueStrip() {
 
 function PlatformSection() {
   return (
-    <section id="platform" className="relative py-20 sm:py-28">
-      <div className="mx-auto w-full max-w-site px-4 sm:px-6 lg:px-8">
-        <motion.div {...fadeUp} className="max-w-3xl">
-          <Badge variant="outline">Platform</Badge>
-          <h2 className="mt-4 text-balance text-3xl font-semibold tracking-[-0.03em] sm:text-4xl lg:text-5xl">
-            A shell engine, not a shell wrapper.
-          </h2>
-          <p className="mt-4 max-w-2xl text-sm leading-relaxed text-muted-foreground sm:text-base">
-            Every command crosses the same native pipeline: a lexer, a parser,
-            an AST, and a dispatcher built in Rust. Pipelines and redirections
-            stay in-process. External programs launch through native process
-            APIs, never through another shell.
-          </p>
-        </motion.div>
-
-        <div className="mt-12 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {FEATURES.map((feature, index) => (
-            <motion.div
-              key={feature.title}
-              initial={{ opacity: 0, y: 18 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, margin: '-60px' }}
-              transition={{ duration: 0.5, ease: EASE, delay: index * 0.05 }}
-            >
-              <Card className="group h-full overflow-hidden border-border/80 bg-surface/55 transition-colors hover:border-primary/30 hover:bg-surface">
-                <div className="h-px w-full bg-gradient-to-r from-transparent via-primary/40 to-transparent opacity-0 transition-opacity group-hover:opacity-100" />
-                <CardHeader className="gap-3">
-                  <div className="flex items-center justify-between">
-                    <div className="grid size-9 place-items-center rounded-xl border border-border bg-background/70 text-primary">
-                      <feature.icon className="size-4" />
-                    </div>
-                    <span className="font-mono text-[9px] uppercase tracking-[0.18em] text-muted-foreground">
-                      {feature.label}
-                    </span>
-                  </div>
-                  <CardTitle>{feature.title}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <CardDescription>{feature.description}</CardDescription>
-                </CardContent>
-              </Card>
-            </motion.div>
-          ))}
+    <section className="home-section home-platforms">
+      <div className="home-section__inner">
+        <div className="home-platforms__heading">
+          <SectionHeading
+            eyebrow="Cross-platform by design"
+            title="Built for the systems you use."
+            description="The workspace targets Windows, Linux and macOS, with platform-specific process and terminal backends."
+          />
+          <Link to="/downloads" className="home-text-link">
+            Platform build details <ArrowUpRight className="size-3.5" />
+          </Link>
+        </div>
+        <div className="platform-list">
+          <div className="platform-list__item">
+            <PlatformMark platform="windows" />
+            <div>
+              <h3>Windows</h3>
+              <p>Native process resolution · ConPTY · Tauri</p>
+            </div>
+            <span>Supported</span>
+          </div>
+          <div className="platform-list__item">
+            <PlatformMark platform="linux" />
+            <div>
+              <h3>Linux</h3>
+              <p>Native process execution · openpty · Tauri</p>
+            </div>
+            <span>Supported</span>
+          </div>
+          <div className="platform-list__item">
+            <PlatformMark platform="macos" />
+            <div>
+              <h3>macOS</h3>
+              <p>Native process execution · openpty · Tauri</p>
+            </div>
+            <span>Supported</span>
+          </div>
         </div>
       </div>
     </section>
@@ -361,225 +292,89 @@ function PlatformSection() {
 
 function ArchitectureSection() {
   return (
-    <section id="architecture" className="relative overflow-hidden border-y border-border bg-surface/25 py-20 sm:py-28">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(34,211,238,0.08),transparent_35%),radial-gradient(circle_at_80%_60%,rgba(139,92,246,0.08),transparent_35%)]" />
-      <div className="relative mx-auto grid w-full max-w-site gap-12 px-4 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:items-center lg:px-8">
-        <motion.div {...fadeUp}>
-          <Badge variant="outline">Architecture</Badge>
-          <h2 className="mt-4 text-balance text-3xl font-semibold tracking-[-0.03em] sm:text-4xl">
-            From keystroke to kernel.
-          </h2>
-          <p className="mt-4 max-w-lg text-sm leading-relaxed text-muted-foreground sm:text-base">
-            The browser owns presentation. The server owns the session. The
-            engine owns semantics. A raw PTY transport is available when a
-            program needs the whole screen &mdash; not just a line of output.
-          </p>
-
-          <div className="mt-8 space-y-3">
-            {FLOW.map((step, index) => (
-              <div key={step.title} className="flex gap-3">
-                <div className="flex flex-col items-center">
-                  <div className="grid size-9 shrink-0 place-items-center rounded-xl border border-border bg-background/70 text-primary">
-                    <step.icon className="size-4" />
-                  </div>
-                  {index < FLOW.length - 1 ? (
-                    <div className="mt-1 h-6 w-px bg-border" />
-                  ) : null}
-                </div>
-                <div className="pt-1">
-                  <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
-                    Step {index + 1}
-                  </div>
-                  <div className="mt-0.5 text-sm font-medium">{step.title}</div>
-                  <div className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-                    {step.detail}
-                  </div>
-                </div>
-              </div>
-            ))}
+    <section id="architecture" className="home-section home-architecture">
+      <div className="home-section__inner">
+        <SectionHeading
+          eyebrow="A shared architecture"
+          title="One engine. Clear boundaries."
+          description="The same execution core serves the terminal, browser and desktop while each surface keeps its own interface."
+        />
+        <div className="architecture-map" aria-label="KERNEXT architecture">
+          <div className="architecture-lane">
+            <h3><Terminal className="size-4" /> CLI</h3>
+            <div className="architecture-lane__step">Reedline interface</div>
+            <ArrowDown className="architecture-lane__arrow" />
+            <div className="architecture-lane__step">shell-cli</div>
           </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, x: 20 }}
-          whileInView={{ opacity: 1, x: 0 }}
-          viewport={{ once: true, margin: '-80px' }}
-          transition={{ duration: 0.7, ease: EASE }}
-          className="space-y-4"
-        >
-          <Card className="overflow-hidden border-border-strong bg-[#04070c] text-[#d8e6f5]">
-            <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-              <div className="flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.18em] text-white/45">
-                <ShieldCheck className="size-3.5 text-[#5ee6a8]" />
-                Transport map
-              </div>
-              <span className="font-mono text-[10px] text-white/30">v1</span>
+          <div className="architecture-lane">
+            <h3><Globe2 className="size-4" /> Web</h3>
+            <div className="architecture-lane__step">React terminal UI</div>
+            <ArrowDown className="architecture-lane__arrow" />
+            <div className="architecture-lane__step"><Server className="size-3.5" /> Axum API + PTY</div>
+          </div>
+          <div className="architecture-lane">
+            <h3><Monitor className="size-4" /> Desktop</h3>
+            <div className="architecture-lane__step">Shared React UI</div>
+            <ArrowDown className="architecture-lane__arrow" />
+            <div className="architecture-lane__step">Tauri + local worker</div>
+          </div>
+          <div className="architecture-map__shared">
+            <Cpu className="size-5 text-primary" />
+            <div>
+              <strong>Shared Rust shell engine</strong>
+              <span>shell-core · shell-builtins · shell-runtime · shell-api</span>
             </div>
-            <pre className="overflow-x-auto p-4 font-mono text-[11px] leading-relaxed sm:text-xs">
-              <code>{`POST /api/v1/sessions        create a Rust session
-GET  /api/v1/sessions        list live sessions
-POST /api/v1/sessions/:id/execute
-WS   /api/v1/sessions/:id/ws engine transport
-WS   /api/v1/pty             native PTY transport
-
-client { type: "execute", command }
-client { type: "input", data }
-client { type: "resize", rows, cols }
-server { type: "output", stream, data }
-server { type: "result", action, session }`}</code>
-            </pre>
-          </Card>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <Card className="p-5">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <Gauge className="size-4 text-primary" />
-                Bounded by design
-              </div>
-              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                Session caps, idle cleanup, a 64 KiB command limit, and bounded
-                recursion and loop iterations keep the local runtime honest.
-              </p>
-            </Card>
-            <Card className="p-5">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <Orbit className="size-4 text-accent" />
-                No shell inside
-              </div>
-              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                KERNEXT passes argument vectors to native process APIs. It never
-                builds a command string for Bash, CMD, or PowerShell to parse.
-              </p>
-            </Card>
+            <span className="architecture-map__shared-detail">
+              Lexer → parser → evaluator → process runtime
+            </span>
           </div>
-        </motion.div>
-      </div>
-    </section>
-  );
-}
-
-function SurfacesSection() {
-  return (
-    <section id="surfaces" className="py-20 sm:py-28">
-      <div className="mx-auto w-full max-w-site px-4 sm:px-6 lg:px-8">
-        <motion.div {...fadeUp} className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div className="max-w-2xl">
-            <Badge variant="outline">Surfaces</Badge>
-            <h2 className="mt-4 text-balance text-3xl font-semibold tracking-[-0.03em] sm:text-4xl">
-              One engine. Three ways in.
-            </h2>
-            <p className="mt-4 text-sm leading-relaxed text-muted-foreground sm:text-base">
-              The CLI is the reference surface. The web terminal is live in
-              this repository. The desktop host wraps the same engine in a
-              Tauri 2 application with its own explorers and settings.
-            </p>
-          </div>
-          <Button asChild variant="outline" size="sm">
-            <Link to="/docs" hash="status">
-              View verified status
-              <ArrowUpRight className="size-3.5" />
-            </Link>
-          </Button>
-        </motion.div>
-
-        <div className="mt-12 grid gap-5 lg:grid-cols-3">
-          {SURFACES.map((surface, index) => (
-            <motion.div
-              key={surface.title}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true, margin: '-60px' }}
-              transition={{ duration: 0.55, ease: EASE, delay: index * 0.07 }}
-            >
-              <Card className="flex h-full flex-col bg-surface/55">
-                <CardHeader className="gap-4">
-                  <div className="flex items-center justify-between">
-                    <div className="grid size-10 place-items-center rounded-xl border border-border bg-background/70 text-primary">
-                      <surface.icon className="size-5" />
-                    </div>
-                    <Badge variant={surface.tone}>{surface.status}</Badge>
-                  </div>
-                  <div>
-                    <CardTitle className="text-base">{surface.title}</CardTitle>
-                    <CardDescription className="mt-2">
-                      {surface.description}
-                    </CardDescription>
-                  </div>
-                </CardHeader>
-                <CardContent className="mt-auto space-y-2.5">
-                  {surface.points.map((point) => (
-                    <div key={point} className="flex items-start gap-2 text-xs text-muted-foreground">
-                      <Check className="mt-0.5 size-3.5 shrink-0 text-success" />
-                      {point}
-                    </div>
-                  ))}
-                  <Separator className="my-4" />
-                  <Link
-                    to={surface.to}
-                    className="inline-flex items-center gap-1.5 text-xs font-medium text-primary transition-colors hover:text-primary-strong"
-                  >
-                    {surface.action}
-                    <ArrowRight className="size-3.5" />
-                  </Link>
-                </CardContent>
-              </Card>
-            </motion.div>
-          ))}
         </div>
       </div>
     </section>
   );
 }
 
-function RuntimeSection() {
-  const items = [
-    { icon: Zap, title: 'Native pipelines', detail: 'OS pipes between external stages, buffered bytes between built-ins.' },
-    { icon: Globe2, title: 'Real WebSockets', detail: 'Backpressure-aware relay with binary PTY frames and JSON control frames.' },
-    { icon: Cpu, title: 'Background jobs', detail: 'A shared job table with jobs, wait, kill, fg, and bg built-ins.' },
-    { icon: Sparkles, title: 'Cinematic startup', detail: 'A palette-driven emblem and wordmark that stays text-only in the CLI.' },
-  ];
-
+function TerminalSection() {
   return (
-    <section className="border-y border-border bg-surface/25 py-20 sm:py-24">
-      <div className="mx-auto grid w-full max-w-site gap-10 px-4 sm:px-6 lg:grid-cols-[1fr_1.1fr] lg:items-center lg:px-8">
-        <motion.div {...fadeUp}>
-          <Badge variant="outline">Runtime</Badge>
-          <h2 className="mt-4 text-balance text-3xl font-semibold tracking-[-0.03em] sm:text-4xl">
-            Built for the terminal, not around it.
-          </h2>
-          <p className="mt-4 text-sm leading-relaxed text-muted-foreground sm:text-base">
-            The web app does not pretend to be a terminal. It renders a real
-            screen buffer, maps keys to terminal sequences, resizes the PTY, and
-            shows exactly what the Rust process sends back.
+    <section className="home-section home-terminal">
+      <div className="home-section__inner home-terminal__layout">
+        <div>
+          <p className="home-eyebrow">
+            <span className="home-eyebrow__rule" />
+            Terminal experience
           </p>
-          <div className="mt-6 flex flex-wrap gap-2">
-            <Badge variant="secondary">React 19</Badge>
-            <Badge variant="secondary">Vite</Badge>
-            <Badge variant="secondary">Tailwind v4</Badge>
-            <Badge variant="secondary">TanStack Router</Badge>
-            <Badge variant="secondary">Motion</Badge>
+          <h2>A real shell, in your browser.</h2>
+          <p className="home-terminal__description">
+            The Web Terminal connects to the local Rust runtime. This short
+            example is static; open the terminal to run commands yourself.
+          </p>
+          <Button asChild size="lg">
+            <Link to="/terminal">
+              <TerminalSquare className="size-4" />
+              Open Web Terminal
+              <ArrowRight className="size-4" />
+            </Link>
+          </Button>
+        </div>
+        <div className="home-terminal-window" data-terminal-preview="example">
+          <div className="home-terminal-window__titlebar">
+            <div className="home-terminal-window__controls" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+            </div>
+            <span>Example session · KERNEXT</span>
+            <span className="home-terminal-window__local">STATIC</span>
           </div>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: '-80px' }}
-          transition={{ duration: 0.7, ease: EASE }}
-          className="grid gap-3 sm:grid-cols-2"
-        >
-          {items.map((item) => (
-            <Card key={item.title} className="p-5">
-              <div className="flex items-center gap-2 text-sm font-medium">
-                <item.icon className="size-4 text-primary" />
-                {item.title}
-              </div>
-              <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
-                {item.detail}
-              </p>
-            </Card>
-          ))}
-        </motion.div>
+          <div className="home-terminal-window__content">
+            <p><span>kernext ~ $</span> version</p>
+            <p className="home-terminal-window__output">KERNEXT v{KERNEXT_VERSION}</p>
+            <p><span>kernext ~ $</span> echo hello-from-kernext</p>
+            <p className="home-terminal-window__output">hello-from-kernext</p>
+            <p><span>kernext ~ $</span> pwd</p>
+            <p className="home-terminal-window__output">/home/you/Projects/kernext</p>
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -587,43 +382,22 @@ function RuntimeSection() {
 
 function CallToAction() {
   return (
-    <section className="py-20 sm:py-24">
-      <div className="mx-auto w-full max-w-site px-4 sm:px-6 lg:px-8">
-        <motion.div
-          initial={{ opacity: 0, y: 24 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: '-80px' }}
-          transition={{ duration: 0.65, ease: EASE }}
-          className="relative overflow-hidden rounded-3xl border border-border-strong bg-surface p-8 sm:p-12 lg:p-16"
-        >
-          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(34,211,238,0.18),transparent_38%),radial-gradient(circle_at_85%_80%,rgba(139,92,246,0.18),transparent_38%)]" />
-          <div className="relative flex flex-col gap-8 lg:flex-row lg:items-center lg:justify-between">
-            <div className="max-w-2xl">
-              <Badge variant="outline">Build. Execute. Innovate.</Badge>
-              <h2 className="mt-4 text-balance text-3xl font-semibold tracking-[-0.03em] sm:text-4xl">
-                The next core is local.
-              </h2>
-              <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted-foreground sm:text-base">
-                Start the server, open the terminal, and run a command through
-                the same Rust engine that powers the CLI.
-              </p>
-            </div>
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <Button asChild size="lg">
-                <Link to="/terminal">
-                  <TerminalSquare className="size-4" />
-                  Open terminal
-                </Link>
-              </Button>
-              <Button asChild variant="outline" size="lg">
-                <Link to="/docs">
-                  Read the docs
-                  <ArrowUpRight className="size-4" />
-                </Link>
-              </Button>
-            </div>
-          </div>
-        </motion.div>
+    <section className="home-cta">
+      <div className="home-cta__inner">
+        <div>
+          <p className="home-eyebrow">
+            <span className="home-eyebrow__rule" />
+            Build. Execute. Innovate.
+          </p>
+          <h2>KERNEXT</h2>
+          <p>The Next Core of Computing.</p>
+        </div>
+        <Button asChild size="lg">
+          <Link to="/terminal">
+            Start with the terminal
+            <ArrowRight className="size-4" />
+          </Link>
+        </Button>
       </div>
     </section>
   );

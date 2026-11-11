@@ -1,1 +1,0 @@
-import{AccountPage as e}from"./account-BnEXRWss.js";import{r as t}from"./dist-LceywMZV.js";var n=t();function r(){return(0,n.jsx)(e,{})}export{r as DesktopAccountPage};

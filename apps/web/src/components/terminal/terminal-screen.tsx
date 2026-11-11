@@ -14,6 +14,10 @@ import { colorToCss, styleKey } from '@/lib/terminal/palette';
 import { keyToTerminalData } from '@/lib/terminal/input';
 import type { TerminalEngine } from '@/lib/terminal/engine';
 import type { Cell } from '@/lib/terminal/types';
+import {
+  TERMINAL_THEMES,
+  type TerminalPreferences,
+} from '@/lib/terminal/preferences';
 import { cn } from '@/lib/utils';
 
 export interface TerminalScreenHandle {
@@ -27,6 +31,10 @@ export interface TerminalScreenProps {
   onResize: (rows: number, cols: number) => void;
   fontSize?: number;
   fontFamily?: string;
+  lineHeight?: number;
+  padding?: number;
+  theme?: TerminalPreferences['theme'];
+  opacity?: number;
   cursorStyle?: 'block' | 'bar' | 'underline';
   autoFocus?: boolean;
   className?: string;
@@ -66,6 +74,10 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
       onResize,
       fontSize = 13,
       fontFamily,
+      lineHeight = 1.45,
+      padding = 12,
+      theme = 'kernext-dark',
+      opacity = 1,
       cursorStyle = 'block',
       autoFocus = false,
       className,
@@ -79,9 +91,13 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
     const stuckRef = useRef(true);
     const onResizeRef = useRef(onResize);
     const composingRef = useRef(false);
+    const resizeFrameRef = useRef<number | null>(null);
+    const pendingSizeRef = useRef<{ rows: number; cols: number } | null>(null);
+    const lastSizeRef = useRef<{ rows: number; cols: number } | null>(null);
     const [cellHeight, setCellHeight] = useState(22);
     const buffer = engine.buffer;
     const effectiveFontFamily = withMonospaceFallback(fontFamily);
+    const palette = TERMINAL_THEMES[theme];
 
     onResizeRef.current = onResize;
 
@@ -119,7 +135,23 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
       const cols = Math.max(24, Math.floor(availableWidth / cellWidth));
 
       setCellHeight(height);
-      onResizeRef.current(rows, cols);
+      pendingSizeRef.current = { rows, cols };
+
+      if (resizeFrameRef.current === null) {
+        resizeFrameRef.current = window.requestAnimationFrame(() => {
+          resizeFrameRef.current = null;
+          const next = pendingSizeRef.current;
+          const previous = lastSizeRef.current;
+
+          if (
+            next &&
+            (previous?.rows !== next.rows || previous.cols !== next.cols)
+          ) {
+            lastSizeRef.current = next;
+            onResizeRef.current(next.rows, next.cols);
+          }
+        });
+      }
     }, []);
 
     useEffect(() => {
@@ -144,9 +176,13 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
       return () => {
         observer.disconnect();
         window.cancelAnimationFrame(frame);
+        if (resizeFrameRef.current !== null) {
+          window.cancelAnimationFrame(resizeFrameRef.current);
+          resizeFrameRef.current = null;
+        }
         document.fonts.removeEventListener('loadingdone', remeasure);
       };
-    }, [measure, fontSize, fontFamily]);
+    }, [measure, fontSize, fontFamily, lineHeight, padding]);
 
     useEffect(() => {
       if (autoFocus) {
@@ -269,8 +305,16 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
         style={
           {
             '--terminal-line-height': `${cellHeight}px`,
+            '--term-bg': palette.background,
+            '--term-fg': palette.foreground,
+            '--term-cursor': palette.cursor,
+            '--term-selection': palette.selection,
+            '--terminal-bg-opacity': `${Math.round(opacity * 100)}%`,
+            backgroundColor: `color-mix(in srgb, ${palette.background} ${Math.round(opacity * 100)}%, transparent)`,
+            color: palette.foreground,
             fontSize: `${fontSize}px`,
             fontFamily: effectiveFontFamily,
+            lineHeight,
           } as CSSProperties
         }
         onClick={focus}
@@ -281,6 +325,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
         <div
           ref={scrollRef}
           className="terminal-scroll relative z-[1] min-h-0 flex-1 px-4 py-3"
+          style={{ padding }}
           onScroll={handleScroll}
         >
           <span

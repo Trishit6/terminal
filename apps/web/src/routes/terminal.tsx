@@ -116,8 +116,12 @@ export function TerminalPage() {
         </div>
       </div>
 
-      <div className="h-[calc(100dvh-15.5rem)] min-h-[520px]">
-        <TerminalWorkspace transport="ws" defaultMode="pty" />
+      <div className="w-full min-w-0">
+        <TerminalWorkspace
+          transport="ws"
+          defaultMode="pty"
+          customizable
+        />
       </div>
     </div>
   );
