@@ -1,581 +1,184 @@
 # KERNEXT Project Status
 
-Status as of Phase 6 (product integration): the completed CLI, Web, and
-Desktop surfaces share one Rust engine, and the product-level work — public
-website, cross-interface consistency, documentation, CI/CD, and release
-packaging — is in place. This document separates what is **implemented**, what
-is **tested**, and what remains **unverified**. It is the authoritative
-completion snapshot; `README.md` and `docs/ARCHITECTURE.md` describe how the
-system works, while this file records how far verification reached.
+Status as of Phase 11 (account backend and security hardening). The CLI, Web,
+and Desktop surfaces share one Rust engine. MariaDB-backed accounts,
+authentication, and per-account web-terminal ownership are implemented. This
+document separates what is **implemented**, **tested**, **partially tested**,
+and still **unverified**. It is the authoritative completion snapshot;
+`README.md` describes usage and `docs/ARCHITECTURE.md`,
+`docs/BACKEND_ARCHITECTURE.md`, `docs/DATABASE.md`, and
+`docs/AUTHENTICATION.md` describe the system.
 
-Verification host: Windows 11, Rust 1.99.1 (`x86_64-pc-windows-gnu`, WinLibs
-MinGW-w64), Node.js + npm 12.0.2.
-
-## Verification results
-
-| Check | Result |
-| --- | --- |
-| `cargo fmt --all -- --check` | clean |
-| `cargo check --workspace --all-targets` | clean |
-| `cargo test --workspace` | 470 passed, 0 failed |
-| `cargo fmt --all -- --check` | clean |
-| `cargo check --workspace --all-targets` | clean |
-| `cargo test --workspace` | 470 passed, 0 failed |
-| `cargo clippy --workspace --all-targets -- -D warnings` | clean |
-| `npm ci` | ok |
-| `npm run typecheck` | ok |
-| `npm test` (Vitest) | 55 passed in 7 files |
-| `npm run build` | ok (chunk-size warning only) |
-| `npm run build -w @kernext/desktop -- --debug --no-bundle` | ok, application builds |
-| `npm run desktop:build` (release bundle) | ok — MSI 9.2 MiB + NSIS 6.3 MiB; release binary launch smoke test ok |
-| Desktop launch smoke test | window `KERNEXT` opens and stays alive (debug in Phase 5, release in Phase 6) |
-| npm → migration complete | root `package.json` declares workspaces; `package-lock.json` committed; `npm ci`/`npm run typecheck`/`npm test`/`npm run build` all pass; `npm run desktop:dev` and `npm run desktop:build` delegate to `apps/desktop/package.json` scripts with `npm --prefix ../web run …` |
-
-Test counts per suite (Windows host):
-
-| Suite | Tests |
-| --- | --- |
-| `shell-core` unit | 130 |
-| `shell-core` lexer + parser + doctests | 2 + 17 + 2 |
-| `shell-builtins` unit | 47 |
-| `shell-builtins` builtins | 40 |
-| `shell-builtins` external | 15 |
-| `shell-builtins` external_tools | 2 |
-| `shell-builtins` language | 16 |
-| `shell-builtins` pipeline | 30 |
-| `shell-builtins` pty (Windows) | 4 |
-| `shell-builtins` windows scripts | 20 |
-| `shell-runtime` unit | 34 |
-| `shell-config` unit | 14 |
-| `shell-line-editor` unit | 24 |
-| `shell-api` unit | 2 |
-| `shell-cli` unit + repl | 24 + 13 |
-| `shell-server` unit + api + consistency + ws | 5 + 5 + 7 + 1 |
-| `shell-desktop` unit | 16 |
-| **Total** | **470** |
+Verification host: Windows 11, Rust GNU toolchain (WinLibs MinGW-w64),
+Node.js + npm. MariaDB is available on `127.0.0.1:3307`.
 
 ## Implemented
 
-### KERNEXT Authentication (Phase 9)
-
-- MariaDB-backed user registry with idempotent versioned migrations (`users`, `user_sessions`, `password_reset_tokens`, `email_verification_tokens`, `user_preferences` tables; FKs, unique email/token constraints, indexes)
-- Argon2id password hashing with equalized timing for hash/verify
-- Session cookies (`kernext_session`, HttpOnly) + CSRF double-submit (`x-csrf-token`)
-- Fixed-window rate limiter (per-IP, configurable count/period)
-- SMTP mailer via `lettre` with `KERNEXT_DEV_MAIL=1` dev fallback outside production
-- Token generation and SHA-256 hash for single-use password reset and email verification tokens
-- Account endpoints: `/api/auth/status|register|login|logout|me|profile|preferences|forgot-password|reset-password|verify-email|resend-verification|change-password|sessions|sessions/{id}`
-- Ownership enforcement: terminal endpoints require authenticated ownership when `DATABASE_URL` is set
-- Cookie/CSRF-protected API; narrow CORS; rate limits; `KERNEXT_SECURE_COOKIES=1` in production
-- Database connection validation at startup; graceful shutdown; periodic session purge
-- Frontend: `AuthProvider`, sign-in/create-account/forgot/reset/verify-email pages; account/profile screen
-- Desktop Rust IPC bridge: `AccountState` with OS credential store (keyring/Keychain/SecretService), session cookie never exposed to webview
-- Account Tauri commands: `desktop_auth_state`, `desktop_auth_sign_in`, `desktop_auth_register`, `desktop_auth_sign_out`, `desktop_auth_forgot_password`, `desktop_auth_reset_password`, `desktop_auth_verify_email`, `desktop_auth_change_password`, `desktop_auth_update_profile`, `desktop_auth_sessions`, `desktop_auth_revoke_session`, `desktop_auth_resend_verification`, `desktop_auth_update_preferences`
-- Web terminal gated behind auth when accounts enabled; cookie credentials (`credentials: 'include'`); Bearer tokens still supported for local-only
-- `DATABASE_URL` unset preserves legacy local-only behavior; when set, terminal endpoints enforce ownership
-- `.env.example` with placeholders; `.env` gitignored
-
-### KERNEXT CLI (`kernext`)
-
-- Own lexer, parser, AST, evaluator; 56 built-in commands (including `host`, `sysinfo`, and the registered `[` alias of `test`); direct external process execution (no `sh -c`/`cmd /C` for KERNEXT syntax).
-- Pipelines over real OS pipes; `<`, `>`, `>>`, `2>`, `2>>` redirections; `;`, groups, `&&`/`||`.
-- Variables, expansion (`$name`, `${name}`, `$?`, `$`), `export`/`unset`/`env`/`set`, functions, `if`/`else`, `while`, `for`, `return`/`break`/`continue`.
-- Background jobs (`&`) with a job table and `jobs`/`wait`/`kill`/`fg`/`bg`.
-- Startup presentation (animated/plain/quiet), genuine `clear`/Ctrl+L, persistent history, tab completion, TOML configuration.
-
-### KERNEXT Web (`apps/shell-server`, `apps/web`)
-
-- Local Axum server: `GET /api/v1/health`, `GET|POST /api/v1/sessions`, `GET|DELETE /api/v1/sessions/{id}`, `POST /api/v1/sessions/{id}/execute`, `GET /api/v1/sessions/{id}/ws` (engine sessions), `GET /api/v1/pty` (real pseudoterminal), plus static serving of the built front end with an `index.html` fallback for client-side routes.
-- Engine WebSocket sessions execute through the same `Dispatcher` the CLI uses; PTY WebSocket relays raw bytes of the real `kernext` binary running on ConPTY (Windows) or `openpty` (Unix).
-- Security posture: loopback bind by default, optional bearer token (`KERNEXT_SERVER_TOKEN`, constant-time comparison), fixed browser-origin allowlist, `KERNEXT_MAX_SESSIONS` cap (16), 30-minute idle sweeper, 64 KiB command limit. Documented in `docs/SECURITY.md`.
-- React 19 + Vite + Tailwind CSS 4 + shadcn/ui + Lucide + Motion + TanStack Router front end. **Public website**: Home, Features, Documentation, Downloads, About, Contact, and a 404 page — responsive, route-level metadata, and a build-time version badge from the workspace version (never hardcoded). **Web terminal**: engine mode with the cinematic startup animation, metallic K emblem, orbital ring, mountain silhouette, and planetary horizon.
-- Terminal logic (buffer, engine, ANSI, palette, input) and the Tooltip provider contract covered by 55 Vitest tests.
-- Auth-gated terminal: when `DATABASE_URL` is set, `/terminal` requires valid session cookie; ownership enforced per-user.
-
-### KERNEXT Desktop (`apps/desktop`)
-
-- Tauri 2 application (`shell-desktop`, binary `kernext-desktop`) with custom title bar and sidebar: Home (dashboard), Terminal, Command Explorer, File Explorer, Sessions, Account, Settings, About KERNEXT.
-- Reuses the web front end (`frontendDist ../../web/dist`, route `/desktop`) behind a transport-aware terminal (`TerminalSocket` with WebSocket and Tauri IPC adapters).
-- Local Rust runtime only — 20+ Tauri commands covering health, dashboard, engine sessions, PTY sessions (write/resize/interrupt/close), filesystem (list/create/rename/delete/open), command catalog, account, and settings. The desktop never routes commands through the public web server and never simulates the shell in JavaScript.
-- Real PTY sessions spawn the desktop executable itself with `KERNEXT_DESKTOP_WORKER=1` to run `shell_cli::worker::run_embedded` — no sidecar binary.
-- Engine sessions reuse `shell_server::AppState::local()`.
-- Multi-tab terminal workspace (engine or PTY per tab), terminal font family/size and cursor style settings, theme (`midnight`/`light`/`system`), default working directory, history, and startup behavior persisted as validated TOML in the app config directory.
-- Dashboard shows real data (sessions, recent commands, platform); Command Explorer lists real registry metadata (all 56 built-ins) and performs real `PATH` checks; File Explorer performs real filesystem operations with confirmation dialogs and no permission bypass.
-- Full icon set generated via `tauri icon` (`.ico`, `.icns`, PNG sizes, iOS and Appx assets).
-- Windows MinGW manifest handling in `build.rs` (see `DESKTOP.md`) so the Common Controls v6 dependency survives linking on `*-pc-windows-gnu`.
-- Account navigation and profile screen; secure cookie storage; offline local shell usable without an account.
-
-## Verification results
-
-| Check | Result |
-| --- | --- |
-| `cargo fmt --all -- --check` | clean |
-| `cargo check --workspace --all-targets` | clean |
-| `cargo test --workspace` | 470 passed, 0 failed |
-| `cargo clippy --workspace --all-targets -- -D warnings` | clean |
-| `npm ci` | ok |
-| `npm run typecheck` | ok |
-| `npm test` (Vitest) | 55 passed in 7 files |
-| `npm run build` | ok (chunk-size warning only) |
-| `npm run build -w @kernext/desktop -- --debug --no-bundle` | ok, application builds |
-| `npm run desktop:build` (release bundle) | ok — MSI 9.2 MiB + NSIS 6.3 MiB; release binary launch smoke test ok |
-| Desktop launch smoke test | window `KERNEXT` opens and stays alive (debug in Phase 5, release in Phase 6) |
-| npm → migration complete | root `package.json` declares workspaces; `package-lock.json` committed; `npm ci`/`npm run typecheck`/`npm test`/`npm run build` all pass; `npm run desktop:dev` and `npm run desktop:build` delegate to `apps/desktop/package.json` scripts with `npm --prefix ../web run …` |
-
-Test counts per suite (Windows host):
-
-| Suite | Tests |
-| --- | --- |
-| `shell-core` unit | 130 |
-| `shell-core` lexer + parser + doctests | 2 + 17 + 2 |
-| `shell-builtins` unit | 47 |
-| `shell-builtins` builtins | 40 |
-| `shell-builtins` external | 15 |
-| `shell-builtins` external_tools | 2 |
-| `shell-builtins` language | 16 |
-| `shell-builtins` pipeline | 30 |
-| `shell-builtins` pty (Windows) | 4 |
-| `shell-builtins` windows scripts | 20 |
-| `shell-runtime` unit | 34 |
-| `shell-config` unit | 14 |
-| `shell-line-editor` unit | 24 |
-| `shell-api` unit | 2 |
-| `shell-cli` unit + repl | 24 + 13 |
-| `shell-server` unit + api + consistency + ws | 5 + 5 + 7 + 1 |
-| `shell-desktop` unit | 16 |
-| **Total** | **470** |
-
-The Unix baseline differs only in platform-specific suites (Unix uses
-signal/abort tests instead of the Windows launcher and ConPTY suites).
-
-## Implemented
-
-### KERNEXT CLI (`kernext`)
-
-- Own lexer, parser, AST, evaluator; 56 built-in commands (including `host`, `sysinfo`, and the registered `[` alias of `test`); direct external process execution (no `sh -c`/`cmd /C` for KERNEXT syntax).
-- Pipelines over real OS pipes; `<`, `>`, `>>`, `2>`, `2>>` redirections; `;`, groups, `&&`/`||`.
-- Variables, expansion (`$name`, `${name}`, `$?`, `$`), `export`/`unset`/`env`/`set`, functions, `if`/`else`, `while`, `for`, `return`/`break`/`continue`.
-- Background jobs (`&`) with a job table and `jobs`/`wait`/`kill`/`fg`/`bg`.
-- Startup presentation (animated/plain/quiet), genuine `clear`/Ctrl+L, persistent history, tab completion, TOML configuration.
-
-### KERNEXT Web (`apps/shell-server`, `apps/web`)
-
-- Local Axum server: `GET /api/v1/health`, `GET|POST /api/v1/sessions`, `GET|DELETE /api/v1/sessions/{id}`, `POST /api/v1/sessions/{id}/execute`, `GET /api/v1/sessions/{id}/ws` (engine sessions), `GET /api/v1/pty` (real pseudoterminal), plus static serving of the built front end with an `index.html` fallback for client-side routes.
-- Engine WebSocket sessions execute through the same `Dispatcher` the CLI uses; PTY WebSocket relays raw bytes of the real `kernext` binary running on ConPTY (Windows) or `openpty` (Unix).
-- Security posture: loopback bind by default, optional bearer token (`KERNEXT_SERVER_TOKEN`, constant-time comparison), fixed browser-origin allowlist, `KERNEXT_MAX_SESSIONS` cap (16), 30-minute idle sweeper, 64 KiB command limit. Documented in `docs/SECURITY.md`.
-- React 19 + Vite + Tailwind CSS 4 + shadcn/ui + Lucide + Motion + TanStack Router front end. **Public website**: Home, Features, Documentation, Downloads, About, Contact, and a 404 page — responsive, route-level metadata, and a build-time version badge from the workspace version (never hardcoded). **Web terminal**: engine mode with the cinematic startup animation, metallic K emblem, orbital ring, mountain silhouette, and planetary horizon.
-- Terminal logic (buffer, engine, ANSI, palette, input) and the Tooltip provider contract covered by 55 Vitest tests.
-- Auth-gated terminal: when `DATABASE_URL` is set, `/terminal` requires valid session cookie; ownership enforced per-user.
-
-### KERNEXT Desktop (`apps/desktop`)
-
-- Tauri 2 application (`shell-desktop`, binary `kernext-desktop`) with custom title bar and sidebar: Home (dashboard), Terminal, Command Explorer, File Explorer, Sessions, Account, Settings, About KERNEXT.
-- Reuses the web front end (`frontendDist ../../web/dist`, route `/desktop`) behind a transport-aware terminal (`TerminalSocket` with WebSocket and Tauri IPC adapters).
-- Local Rust runtime only — 20+ Tauri commands covering health, dashboard, engine sessions, PTY sessions (write/resize/interrupt/close), filesystem (list/create/rename/delete/open), command catalog, account, and settings. The desktop never routes commands through the public web server and never simulates the shell in JavaScript.
-- Real PTY sessions spawn the desktop executable itself with `KERNEXT_DESKTOP_WORKER=1` to run `shell_cli::worker::run_embedded` — no sidecar binary.
-- Engine sessions reuse `shell_server::AppState::local()`.
-- Multi-tab terminal workspace (engine or PTY per tab), terminal font family/size and cursor style settings, theme (`midnight`/`light`/`system`), default working directory, history, and startup behavior persisted as validated TOML in the app config directory.
-- Dashboard shows real data (sessions, recent commands, platform); Command Explorer lists real registry metadata (all 56 built-ins) and performs real `PATH` checks; File Explorer performs real filesystem operations with confirmation dialogs and no permission bypass.
-- Full icon set generated via `tauri icon` (`.ico`, `.icns`, PNG sizes, iOS and Appx assets).
-- Windows MinGW manifest handling in `build.rs` (see `DESKTOP.md`) so the Common Controls v6 dependency survives linking on `*-pc-windows-gnu`.
-- Account navigation and profile screen; secure cookie storage; offline local shell usable without an account.
-
-### KERNEXT Authentication (Phase 9)
-
-- MariaDB-backed user registry with idempotent versioned migrations (`users`, `user_sessions`, `password_reset_tokens`, `email_verification_tokens`, `user_preferences` tables; FKs, unique email/token constraints, indexes)
-- Argon2id password hashing with equalized timing for hash/verify
-- Session cookies (`kernext_session`, HttpOnly) + CSRF double-submit (`x-csrf-token`)
-- Fixed-window rate limiter (per-IP, configurable count/period)
-- SMTP mailer via `lettre` with `KERNEXT_DEV_MAIL=1` dev fallback outside production
-- Token generation and SHA-256 hash for single-use password reset and email verification tokens
-- Account endpoints: `/api/auth/status|register|login|logout|me|profile|preferences|forgot-password|reset-password|verify-email|resend-verification|change-password|sessions|sessions/{id}`
-- Ownership enforcement: terminal endpoints require authenticated ownership when `DATABASE_URL` is set
-- Cookie/CSRF-protected API; narrow CORS; rate limits; `KERNEXT_SECURE_COOKIES=1` in production
-- Database connection validation at startup; graceful shutdown; periodic session purge
-- Frontend: `AuthProvider`, sign-in/create-account/forgot/reset/verify-email pages; account/profile screen
-- Desktop Rust IPC bridge: `AccountState` with OS credential store (keyring/Keychain/SecretService), session cookie never exposed to webview
-- Account Tauri commands: `desktop_auth_state`, `desktop_auth_sign_in`, `desktop_auth_register`, `desktop_auth_sign_out`, `desktop_auth_forgot_password`, `desktop_auth_reset_password`, `desktop_auth_verify_email`, `desktop_auth_change_password`, `desktop_auth_update_profile`, `desktop_auth_sessions`, `desktop_auth_revoke_session`, `desktop_auth_resend_verification`, `desktop_auth_update_preferences`
-- Web terminal gated behind auth when accounts enabled; cookie credentials (`credentials: 'include'`); Bearer tokens still supported for local-only
-- `DATABASE_URL` unset preserves legacy local-only behavior; when set, terminal endpoints enforce ownership
-- `.env.example` with placeholders; `.env` gitignored
-
-## Tested
-
-- All 470 workspace tests pass on Windows (breakdown above), including the 16
-  desktop unit tests and the 18 shell-server tests (unit, api, consistency,
-  ws).
-- The desktop build script's manifest override is verified by building the
-  binary and extracting its embedded manifest: it declares
-  `Microsoft.Windows.Common-Controls` 6.0.0.0, and the application launches
-  (previously it died with `STATUS_ENTRYPOINT_NOT_FOUND` because
-  `TaskDialogIndirect` was missing from comctl32 v5).
-- Server API and WebSocket behavior covered by `shell-server` integration
-  tests; PTY lifecycle covered by `shell-builtins` ConPTY tests.
-- **Web terminal acceptance, real backend:** `node scripts/e2e-terminal.mjs`
-  passed 28/28 checks against `http://127.0.0.1:5173` (Vite proxy) and
-  `http://127.0.0.1:7878` (Axum). It covers health, session create/delete,
-  `help`, `pwd`, `echo KERNEXT`, stderr/exit status, external `node`, clear,
-  session isolation, PTY resize, typed command echo, Ctrl+C, disconnect, and
-  reconnect.
-- **Web terminal acceptance, real browser:** `node scripts/e2e-browser.mjs`
-  drives headless Chrome over the DevTools Protocol. It passed 12/12 checks
-  against the Vite proxy and against the production bundle served by Axum:
-  no failed HTTP responses, no HTTP 500 banner, PTY connection, typed command
-  output, Engine-mode switch, engine command output, live session footer, and
-  current directory. With the backend stopped, the `--offline` mode passes
-  5/5: the setup notice appears, no raw 500 banner appears, and the UI does
-  not claim to be connected.
-- **SPA deep links:** `/terminal` served by the Axum static fallback returns
-  HTTP 200 with the index shell (new API integration test).
-- **PTY disconnect cleanup:** with `sleep 30` running, `kernext.exe` was
-  present during the session and absent after the WebSocket closed.
-- Web and desktop front end: TypeScript typecheck, production build, and the
-  55-test Vitest suite pass.
-- Launch smoke test: `kernext-desktop.exe` opens a window titled `KERNEXT`,
-  keeps running, and terminates cleanly when stopped.
-- All nine external developer tools (`git`, `cargo`, `rustc`, `node`, `pnpm`,
-  `python`, `curl`, `code`, `opencode`) were executed through the engine on
-  this Windows host with exit status 0 (the `external_tools` suite runs them on
-  every platform, skipping absent tools).
-- Workflow YAML files parse cleanly and every referenced action version exists
-  (checked against published releases as of November 2026).
-
-## Partially Tested
-
-- **MariaDB live integration tests.** Schema migration and auth API
-  end-to-end tests require a running MariaDB instance at
-  `127.0.0.1:3307` with credentials configured through `DATABASE_URL`. The
-  migration `20261111000001_auth.sql` is idempotent and has been verified in
-  isolation; without a live DB, the full end-to-end test cycle cannot be
-  executed. This is a configuration blocker, not a code bug: supply
-  `DATABASE_URL=mysql://USER:PASSWORD@127.0.0.1:3307/DATABASE_NAME` to
-  enable.
-- **Interactive desktop GUI usage.** Typing in the PTY terminal, tab
-  creation/switching, resizing, Ctrl+C behavior, `clear`, history, and arrow
-  keys inside the desktop app were not exercised interactively in this
-  session; only the launch smoke test ran. The same terminal components are
-  exercised by automated tests on the web side, but a human pass over the
-  desktop UI is still needed.
-- **`tauri dev` hot-reload flow** was not run in this session.
-- **MSI/NSIS installer *installation*** — the bundles were built, but actually
-  installing them was not performed; the release binary itself was launched as
-  the smoke test.
-- **macOS.** No macOS host is available here; the app cannot be built or
-  launched on macOS from this machine, and macOS tool verification
-  (`external_tools`) has not run there.
-- **Linux desktop/web GUI.** The canonical Linux checkout is not mounted on
-  this Windows host; only the Windows builds were verified. Linux verification
-  should run from `/run/media/trishit/UBUNTU 26_0/Projects/terminal` when
-  mounted.
-- **Remote GitHub Actions result after the workflow fix.** Run #5 failed at
-  Clippy before these changes. The workflow now installs the Linux Tauri
-  development packages, but a new run still has to be pushed and observed by
-  someone with repository access. Local runners cannot prove the hosted
-  matrix.
-- **Desktop file explorer destructive operations** (delete/rename through the
-  UI) are implemented with confirmations but were not interactively driven.
-
-## Known limitations
-
-- Engine-mode WebSocket sessions are line-oriented. The Interrupt control and
-  Ctrl+C clear the client input line, but they cannot cancel an engine command
-  that is already running on the server. PTY mode forwards Ctrl+C to the real
-  terminal process, and that path is verified.
-- Engine sessions have no terminal size, so resize messages only affect the client's local rendering; the PTY transport does resize the real process.
-- CLI signal handling and process-group job control remain unimplemented
-  (`fg` waits rather than handing over the terminal; `bg` only reports state).
-- No asynchronous background-job completion notice; run `jobs`/`wait`.
-- No `source`/`.` script loading, no redirections on function calls, no
-  globbing, no script comments, no `2>&1` merge form.
-- Plain `cargo build --workspace --release` compiles the desktop crate in dev
-  mode (no embedded front end); only `tauri build` produces distributable
-  binaries — see `docs/DESKTOP.md`.
-- Desktop PTY sessions run the embedded CLI worker in this same executable; a
-  release-installed app therefore requires the `KERNEXT_DESKTOP_WORKER` path
-  to remain wired (it is, through `shell_cli::worker::run_embedded`).
-- The desktop uses `tauri-plugin-opener` only; capabilities are restricted to
-  the commands the front end actually invokes.
-- `macos-15-intel` (the last x86_64 GitHub runner image) is scheduled for
-  retirement in August 2027; the Intel matrix leg will need a replacement
-  after that date.
-
-## How to re-verify
-
-From the workspace root (the `.cargo/config.toml` target redirect applies
-automatically):
-
-```sh
-cargo fmt --all -- --check
-cargo check --workspace --all-targets
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-npm ci
-npm run typecheck
-npm test
-npm run build
-```
-
-Desktop, from the root:
-
-```sh
-npm run build -w @kernext/desktop -- --debug --no-bundle   # fast debug build
-npm run desktop:build                           # release bundle (installers)
-```
-
-[read_files: showing lines 240-322 of 323. Use code_search to locate the part you need and read a window around it, or call read_files again with offset=323 to continue.]
-
-The Unix baseline differs only in platform-specific suites (Unix uses
-signal/abort tests instead of the Windows launcher and ConPTY suites).
-
-## Implemented
-
-### KERNEXT CLI (`kernext`)
+### Shell engine (CLI)
 
 - Own lexer, parser, AST, evaluator; 56 built-in commands (including `host`,
   `sysinfo`, and the registered `[` alias of `test`); direct external process
-  execution (no `sh -c`/`cmd /C` for KERNEXT syntax).
-- Pipelines over real OS pipes; `<`, `>`, `>>`, `2>`, `2>>` redirections;
-  `;`, groups, `&&`/`||`.
-- Variables, expansion (`$name`, `${name}`, `$?`, `$$`), `export`/`unset`/
-  `env`/`set`, functions, `if`/`else`, `while`, `for`, `return`/`break`/
-  `continue`.
-- Background jobs (`&`) with a job table and `jobs`/`wait`/`kill`/`fg`/`bg`.
-- Startup presentation (animated/plain/quiet), genuine `clear`/Ctrl+L,
-  persistent history, tab completion, TOML configuration.
+  execution without `sh -c`/`cmd /C` for KERNEXT syntax.
+- Pipelines over real OS pipes; `<`, `>`, `>>`, `2>`, `2>>`; `;`, groups,
+  `&&`/`||`.
+- Variables, expansion (`$name`, `${name}`, `$?`, `$`), `export`/`unset`/`env`/
+  `set`, functions, `if`/`else`, `while`, `for`, `return`/`break`/`continue`.
+- Background jobs with a job table and `jobs`/`wait`/`kill`/`fg`/`bg`.
+- Startup presentation, genuine `clear`/Ctrl+L, history, completion, TOML
+  configuration.
 
-### KERNEXT Web (`apps/shell-server`, `apps/web`)
+### Web and Desktop
 
-- Local Axum server: `GET /api/v1/health`, `GET|POST /api/v1/sessions`,
-  `GET|DELETE /api/v1/sessions/{id}`, `POST /api/v1/sessions/{id}/execute`,
-  `GET /api/v1/sessions/{id}/ws` (engine sessions),
-  `GET /api/v1/pty` (real pseudoterminal), plus static serving of the built
-  front end with an `index.html` fallback for client-side routes.
-- Engine WebSocket sessions execute through the same `Dispatcher` the CLI
-  uses; PTY WebSocket relays raw bytes of the real `kernext` binary running on
-  ConPTY (Windows) or `openpty` (Unix).
-- Security posture: loopback bind by default, optional bearer token
-  (`KERNEXT_SERVER_TOKEN`, constant-time comparison), fixed browser-origin
-  allowlist, `KERNEXT_MAX_SESSIONS` cap (16), 30-minute idle sweeper, 64 KiB
-  command limit. Documented in `docs/SECURITY.md`.
-- React 19 + Vite + Tailwind CSS 4 + shadcn/ui + Lucide + Motion +
-  TanStack Router front end. **Public website**: Home, Features,
-  Documentation, Downloads, About, Contact, and a 404 page — responsive,
-  route-level metadata, and a build-time version badge from the workspace
-  version (never hardcoded). **Web terminal**: engine mode with the cinematic
-  startup animation, metallic K emblem, orbital ring, mountain silhouette, and
-  planetary horizon.
-- Terminal logic (buffer, engine, ANSI, palette, input) and the Tooltip
-  provider contract covered by 55 Vitest
-  tests.
+- Local Axum server with REST sessions, engine WebSocket, and real PTY
+  WebSocket (ConPTY on Windows, `openpty` on Unix); static SPA serving with
+  route metadata and SPA fallback.
+- React 19 + Vite + Tailwind front end: public site, web terminal, account
+  pages, and account dashboard.
+- Tauri 2 desktop app reusing the web front end, executing through the local
+  Rust runtime only; engine and PTY sessions, dashboard, command/file
+  explorers, sessions, account, settings.
+- Desktop account bridge keeps the session cookie in the OS credential store;
+  local shell works offline without sign-in.
 
-### KERNEXT Desktop (`apps/desktop`)
+### Accounts, MariaDB, and authentication
 
-- Tauri 2 application (`shell-desktop`, binary `kernext-desktop`) with custom
-  title bar and sidebar: Home (dashboard), Terminal, Command Explorer, File
-  Explorer, Sessions, Settings, About KERNEXT.
-- Reuses the web front end (`frontendDist ../../web/dist`, route `/desktop`)
-  behind a transport-aware terminal (`TerminalSocket` with WebSocket and
-  Tauri IPC adapters).
-- Local Rust runtime only — 20 Tauri commands covering health, dashboard,
-  engine sessions, PTY sessions (write/resize/interrupt/close), filesystem
-  (list/create/rename/delete/open), command catalog, and settings. The desktop
-  never routes commands through the public web server and never simulates the
-  shell in JavaScript.
-- Real PTY sessions spawn the desktop executable itself with
-  `KERNEXT_DESKTOP_WORKER=1` to run `shell_cli::worker::run_embedded` — no
-  sidecar binary.
-- Engine sessions reuse `shell_server::AppState::local()`.
-- Multi-tab terminal workspace (engine or PTY per tab), terminal font
-  family/size and cursor style settings, theme (`midnight`/`light`/`system`),
-  default working directory, history, and startup behavior persisted as
-  validated TOML in the app config directory.
-- Dashboard shows real data (sessions, recent commands, platform); Command
-  Explorer lists real registry metadata (all 56 built-ins) and performs real
-  `PATH` checks; File Explorer performs real filesystem operations with
-  confirmation dialogs and no permission bypass.
-- Full icon set generated via `tauri icon` (`.ico`, `.icns`, PNG sizes, iOS and
-  Appx assets).
-- Windows MinGW manifest handling in `build.rs` (see `DESKTOP.md`) so the
-  Common Controls v6 dependency survives linking on `*-pc-windows-gnu`.
+- SQLx `MySqlPool` (max 10, min 1, 5-second acquire timeout), startup
+  connectivity check, embedded idempotent migrations, 60-second session purge.
+- Schema: `users`, `user_sessions`, `password_reset_tokens`,
+  `email_verification_tokens`, `user_preferences`; FKs with cascade, unique
+  email/token constraints, indexes, UTC `DATETIME(6)`.
+- Argon2id password hashing with equalized unknown-account timing.
+- Registration, login, logout, current user, profile update, preferences,
+  change password, session listing/revocation, forgot/reset password, email
+  verification, resend verification.
+- HttpOnly `kernext_session` cookie, readable `kernext_csrf` cookie, CSRF
+  double-submit on state-changing requests, `SameSite=Strict`, `Secure` and HSTS
+  in production.
+- Fixed-window rate limits on register/login/recovery/verification; generic
+  invalid-credential and forgot-password responses.
+- SMTP delivery via `lettre`; `KERNEXT_DEV_MAIL=1` development token echo
+  outside production; delivery failures are reported, never pretended.
+- Terminal authorization: account required in account mode; every terminal
+  session bound to its owner; cross-user access returns `404`; per-account caps
+  (4 engine, 2 PTY); origin and cookie validation on WebSocket upgrades.
+- `GET /api/v1/health/database` reports connectivity and latency.
+- Security headers on every response (`nosniff`, `DENY` framing,
+  `no-referrer`, permissions policy, CSP, production HSTS).
+- Configurable origin allowlist (`KERNEXT_ALLOWED_ORIGINS`) shared by CORS and
+  request validation; `APP_PUBLIC_URL` for emailed links.
+- `.env.example` placeholders only; `.env` is gitignored.
 
-### Phase 6 integration work
+### Hero and administration (Phase 12)
 
-- **Fixed broken root scripts**: `npm run desktop:dev` / `npm run desktop:build`
-  previously ran `pnpm --filter @kernext/desktop tauri …`, which requires a
-  package *script* named `tauri`; they now delegate to the package's `dev` /
-  `build` scripts and actually run. Verified with a debug build and a full
-  release bundle build.
-- **Registered the `[` built-in**: the alias was documented and dispatched
-  (`"test" | "["` arm, closing-`]` handling) but never present in the registry,
-  so `[ 1 = 1 ]` fell through to external resolution and failed. It is now a
-  registry entry with tests.
-- **`host` and `sysinfo` built-ins** (Phase 6 start): DNS resolution via the
-  system resolver and a system/runtime report, with desktop catalog entries.
-- **Cross-interface consistency suite** (`apps/shell-server/tests/
-  consistency.rs`): help header, `version`, `pwd`/`cd` persistence semantics,
-  `ls`, `mkdir`, `echo`, pipelines, redirections, and environment across HTTP
-  sessions and the CLI engine. HTTP `cd` persistence was fixed in
-  `state.rs` (`directory_overridden`) rather than weakening the test.
-- **External-tool compatibility tests** (`external_tools.rs`): `git`, `cargo`,
-  `rustc`, `node`, `pnpm`, `python`, `curl`, `code`, and `opencode` execute
-  through the full engine; absent tools are skipped, never assumed.
-- **Website completion**: full page set (see Web above), honest status badges
-  per surface, downloads page linking only to the real GitHub Releases URL.
-- **CI workflow** (`ci.yml`): lint (fmt + clippy), web job (typecheck, Vitest,
-  build), test matrix on `ubuntu-latest`, `windows-latest`, `macos-latest`
-  (Apple Silicon), and `macos-15-intel` (Intel), and a desktop bundling matrix
-  with the Linux webkit2gtk dependency set. Actions on Node 24 majors
-  (`checkout@v7`, `cache@v6`, `setup-node@v7`, `npm/action-setup@v6`,
-  `upload-artifact@v7`, `download-artifact@v7`).
-- **Release workflow** (`release.yaml`): `workflow_dispatch`-only, draft-only;
-  CLI archives for Windows x64, Linux GNU/musl x86_64, and macOS aarch64/x86_64
-  (including `kernext-server`), desktop bundles for all four platforms, a
-  SHA-256 checksum for every artifact, a workspace-version guard against
-  mislabeled releases, and release creation through the `gh` CLI.
-- **Documentation set**: `docs/COMMANDS.md` (56 built-ins, flags verified
-  against the implementation), `docs/SECURITY.md`, `docs/DEPLOYMENT.md`,
-  `docs/TROUBLESHOOTING.md`, `CONTRIBUTING.md`, extended `docs/DESKTOP.md`
-  packaging section, and refreshed `README.md` / `AGENTS.md` / `CLAUDE.md` /
-  `RELEASE_NOTES.md` / `knowledge.md`.
-
-## Web terminal HTTP 500 investigation (2026-11-10)
-
-**Root cause.** The backend was healthy. `POST /api/v1/sessions` against Axum
-returns HTTP 200 with a real session; 28/28 API-level checks and 12/12
-real-browser checks pass through the Vite proxy. The reported
-`HTTP 500 (request_failed)` came from the Vite development proxy, not from
-Axum: when only `npm run web:dev` was running, Vite answered `/api/v1/health` and
-`/api/v1/sessions` with HTTP 500 and an empty/non-JSON body, and the old
-client converted that into the generic message. The frontend now distinguishes
-a KERNEXT JSON error from a proxy/network failure, probes health before
-connecting, and shows a first-run setup notice instead of a red banner. A
-single `npm run dev` command starts both the Axum server and Vite.
-
-**Second backend defect found while verifying static hosting.**
-`ServeDir::not_found_service(ServeFile::new(index))` served the SPA shell for
-client-side routes but forced HTTP 404. `/terminal` therefore looked like a
-failed request on refresh. It now uses `ServeDir::fallback`, which keeps the
-index response's 200. Covered by
-`client_side_routes_serve_the_spa_shell_with_ok`.
-
-**PTY cleanup defect.** The PTY socket handler moved `PtyProcess` into a
-blocking wait task, so a browser disconnect could leave `kernext` running until
-the child exited on its own. `PtyProcess::try_wait` now lets the socket task
-poll the child, and disconnect sends Ctrl+C plus `exit`, then kills and reaps
-the process. Verified by starting `sleep 30` over `/api/v1/pty`, observing
-`kernext.exe` while connected, and observing no `kernext.exe` after disconnect.
+- Three-layer CSS 3D orbital hero: independent outer/inner ring rotation, a
+  stationary sphere and emblem, floating technology labels outside the 3D
+  transforms, and a non-rotating terminal preview. Reduced Motion stops the
+  orbits and floating; the local `usePrefersReducedMotion` hook avoids Motion's
+  development warning.
+- Human-centered hero copy and actions: official identity, `Open Terminal`,
+  `Explore Features`, and example-session labelling.
+- `users.role` (`user`/`admin`) and `users.must_change_password` migration.
+- Idempotent development administrator seed (`KERNEXT_SEED_ADMIN`), ignored in
+  production, Argon2id-only, never logging credentials, never overwriting an
+  existing email.
+- Admin-only `GET /api/admin/users`, backend role checks, and forced password
+  change (`403 password_change_required`) on account and terminal features.
+- Deterministic env discovery (`KERNEXT_ENV_FILE`, `./.env`, workspace `.env`),
+  explicit production `DATABASE_URL` requirement, URL scheme validation, and
+  post-migration schema verification.
+- Sign-in distinguishes an unreachable server from a server without accounts.
 
 ## Tested
 
-- All 470 workspace tests pass on Windows (breakdown above), including the 16
-  desktop unit tests and the 18 shell-server tests (unit, api, consistency,
-  ws).
-- The desktop build script's manifest override is verified by building the
-  binary and extracting its embedded manifest: it declares
-  `Microsoft.Windows.Common-Controls` 6.0.0.0, and the application launches
-  (previously it died with `STATUS_ENTRYPOINT_NOT_FOUND` because
-  `TaskDialogIndirect` was missing from comctl32 v5).
-- Server API and WebSocket behavior covered by `shell-server` integration
-  tests; PTY lifecycle covered by `shell-builtins` ConPTY tests.
-- **Web terminal acceptance, real backend:** `node scripts/e2e-terminal.mjs`
-  passed 28/28 checks against `http://127.0.0.1:5173` (Vite proxy) and
-  `http://127.0.0.1:7878` (Axum). It covers health, session create/delete,
-  `help`, `pwd`, `echo KERNEXT`, stderr/exit status, external `node`, clear,
-  session isolation, PTY resize, typed command echo, Ctrl+C, disconnect, and
-  reconnect.
-- **Web terminal acceptance, real browser:** `node scripts/e2e-browser.mjs`
-  drives headless Chrome over the DevTools Protocol. It passed 12/12 checks
-  against the Vite proxy and against the production bundle served by Axum:
-  no failed HTTP responses, no HTTP 500 banner, PTY connection, typed command
-  output, Engine-mode switch, engine command output, live session footer, and
-  current directory. With the backend stopped, the `--offline` mode passes
-  5/5: the setup notice appears, no raw 500 banner appears, and the UI does
-  not claim to be connected.
-- **SPA deep links:** `/terminal` served by the Axum static fallback returns
-  HTTP 200 with the index shell (new API integration test).
-- **PTY disconnect cleanup:** with `sleep 30` running, `kernext.exe` was
-  present during the session and absent after the WebSocket closed.
-- Web and desktop front end: TypeScript typecheck, production build, and the
-  55-test Vitest suite pass.
-- Launch smoke test: `kernext-desktop.exe` opens a window titled `KERNEXT`,
-  keeps running, and terminates cleanly when stopped.
-- All nine external developer tools (`git`, `cargo`, `rustc`, `node`, `pnpm`,
-  `python`, `curl`, `code`, `opencode`) were executed through the engine on
-  this Windows host with exit status 0 (the `external_tools` suite runs them on
-  every platform, skipping absent tools).
-- Workflow YAML files parse cleanly and every referenced action version exists
-  (checked against published releases as of November 2026).
+- `cargo fmt --all -- --check` — clean.
+- `cargo check --workspace --all-targets` — clean.
+- `cargo test --workspace` — 470 workspace tests passed before Phase 11
+  hardening; the shell-server suite now also contains 7 MariaDB integration
+  tests (see below).
+- `cargo clippy --workspace --all-targets -- -D warnings` — clean.
+- `npm run typecheck` — ok.
+- `npm test` (Vitest) — 55 passed in 7 files.
+- `npm run build` — ok (chunk-size warning only).
+- **Live MariaDB integration** (`cargo test -p shell-server --test auth_db`
+  against the configured database on port 3307): **9/9 passed**.
+  - migrations apply (and are re-runnable)
+  - registration, duplicate-email conflict, login, logout
+  - revoked session cookie cannot be reused
+  - CSRF rejection and acceptance on profile updates
+  - single-use password reset; reset revokes sessions; old password rejected
+  - email verification updates the public profile
+  - password hash is Argon2id and only token hashes are stored
+  - terminal sessions are owner-scoped (cross-user read/execute returns 404)
+  - repeated failed logins are rate limited
+  - admin seed is idempotent, stores Argon2id, forces password change, and
+    admin endpoints reject non-admins and un-changed passwords
+- **Real browser rendering:** Chrome headless against the production bundle
+  served by Axum at 1440px and at an emulated 390px viewport. Both orbital
+  rings changed transform over time; under emulated
+  `prefers-reduced-motion: reduce` both stayed static; the terminal preview
+  reported `transform: none`; mobile `scrollWidth === clientWidth` (no
+  horizontal overflow).
+- **Real browser login:** Chrome headless against Vite on 5173, proxied to
+  Axum on 7878. `/sign-in` showed no configuration or unreachable warning;
+  submitting `admin@admin.com` / `password` navigated to `/account` with the
+  Administrator badge and first-login password banner; reloading the page kept
+  the session signed in. Through the same proxy, an invalid password returned
+  `401`, valid login `200`, logout `204`, and `/api/auth/me` returned `401`
+  after logout.
+- **PTY authorization and handshake:** the seeded admin's PTY upgrade returned
+  `403 password_change_required` as designed. The terminal page now detects
+  that flag and renders the change-password gate without opening a socket. A
+  freshly registered account reached `/terminal`, opened
+  `ws://127.0.0.1:5173/api/v1/pty`, reported PTY mode and dimensions, and ran
+  `echo PTY_SMOKE_OK` successfully; the temporary account was removed after the
+  check.
+- **Production front end:** `npm run build` now writes a `dist/index.html`
+  pointing at the hashed entry JS and extracted CSS (`scripts/build-index.mjs`)
+  instead of the development `/src/main.tsx`, so the served site renders.
+- **Launch-directory independence:** the server started from
+  `apps/shell-server` loaded the workspace `.env`, enabled MariaDB accounts,
+  and served the built front end. Admin login returned `200` with role `admin`
+  and `must_change_password: true`; the admin list correctly returned `403`
+  until the password changes.
+- **CLI without MariaDB:** `kernext version` runs with no `DATABASE_URL`,
+  confirming local execution remains independent of accounts.
+- Web terminal acceptance scripts (`node scripts/e2e-terminal.mjs`,
+  `node scripts/e2e-browser.mjs`) passed in earlier phases against the Vite
+  proxy and the production bundle served by Axum.
 
-## Unverified
+## Partially tested
 
-- **CI has run and failed; it has not yet passed.** Run #5 (commit
-  `05a4fb2`, 2026-11-10) failed in the `Format and Clippy` job at the Clippy
-  step with process exit 101; the test and desktop jobs were skipped. The
-  workflow at that commit did not install the Linux WebKitGTK/GTK development
-  packages required to compile the Tauri desktop crate, so Clippy could not
-  build the workspace on `ubuntu-latest`. The current workflow installs those
-  packages in the lint, test, and release check jobs. Job logs required admin
-  access, so the exact compiler line could not be downloaded; the failing step
-  is recorded in the public job metadata. Do not claim CI is green until a new
-  run completes.
-- **Release workflow has never been triggered.** It is draft-only and
-  `workflow_dispatch`-only; no release run exists.
-- **No GitHub Release has been published**; the downloads page links to the
-  releases URL, which has no assets yet.
-- **Interactive desktop GUI usage.** Typing in the PTY terminal, tab
-  creation/switching, resizing, Ctrl+C behavior, `clear`, history, and arrow
-  keys inside the desktop app were not exercised interactively in this
-  session; only the launch smoke test ran. The same terminal components are
-  exercised by automated tests on the web side, but a human pass over the
-  desktop UI is still needed.
-- **`tauri dev` hot-reload flow** was not run in this session.
-- **MSI/NSIS installer *installation*** — the bundles were built, but actually
-  installing them was not performed; the release binary itself was launched as
-  the smoke test.
-- **macOS.** No macOS host is available here; the app cannot be built or
-  launched on macOS from this machine, and macOS tool verification
-  (`external_tools`) has not run there.
-- **Linux desktop/web GUI.** The canonical Linux checkout is not mounted on
-  this Windows host; only the Windows builds were verified. Linux verification
-  should run from `/run/media/trishit/UBUNTU 26_0/Projects/terminal` when
-  mounted.
-- **Remote GitHub Actions result after the workflow fix.** Run #5 failed at
-  Clippy before these changes. The workflow now installs the Linux Tauri
-  development packages, but a new run still has to be pushed and observed by
-  someone with repository access. Local runners cannot prove the hosted
-  matrix.
-- **Desktop file explorer destructive operations** (delete/rename through the
-  UI) are implemented with confirmations but were not interactively driven.
+- **SMTP delivery.** The `lettre` path and delivery-status reporting are
+  implemented, but no real SMTP credentials are configured on this host, so an
+  actual email was not sent. Development token echo is verified. Production
+  email delivery remains an owner-provided configuration.
+- **Interactive desktop GUI.** Typing, tab switching, resizing, Ctrl+C, and
+  settings were not driven interactively; the launch smoke test and shared web
+  terminal tests ran.
+- **Hosted CI.** The workflow now includes a MariaDB service container and the
+  `auth_db` job, but a hosted run after this change has not been observed.
+- **macOS and Linux GUI.** No macOS host and no mounted Linux checkout were
+  used for this verification.
+- **Installer installation.** Bundles were built in earlier phases; installing
+  them was not repeated.
 
 ## Known limitations
 
-- Engine-mode WebSocket sessions are line-oriented. The Interrupt control and
-  Ctrl+C clear the client input line, but they cannot cancel an engine command
-  that is already running on the server. PTY mode forwards Ctrl+C to the real
-  terminal process, and that path is verified.
-- Engine sessions have no terminal size, so resize messages only affect the
-  client's local rendering; the PTY transport does resize the real process.
+- Engine WebSocket sessions are line-oriented: an interrupt clears the client
+  line but cannot cancel an already-running engine command. PTY mode forwards
+  Ctrl+C to the real process.
+- Engine sessions have no terminal size; resize is client-rendering only.
 - CLI signal handling and process-group job control remain unimplemented
-  (`fg` waits rather than handing over the terminal; `bg` only reports state).
-- No asynchronous background-job completion notice; run `jobs`/`wait`.
-- No `source`/`.` script loading, no redirections on function calls, no
-  globbing, no script comments, no `2>&1` merge form.
+  (`fg` waits; `bg` only reports state).
+- No asynchronous background-job completion notice.
+- No `source`/`.` loading, function-call redirections, globbing, script
+  comments, or `2>&1` merge form.
 - Plain `cargo build --workspace --release` compiles the desktop crate in dev
-  mode (no embedded front end); only `tauri build` produces distributable
-  binaries — see `docs/DESKTOP.md`.
-- Desktop PTY sessions run the embedded CLI worker in this same executable; a
-  release-installed app therefore requires the `KERNEXT_DESKTOP_WORKER` path
-  to remain wired (it is, through `shell_cli::worker::run_embedded`).
-- The desktop uses `tauri-plugin-opener` only; capabilities are restricted to
-  the commands the front end actually invokes.
-- `macos-15-intel` (the last x86_64 GitHub runner image) is scheduled for
-  retirement in August 2027; the Intel matrix leg will need a replacement
-  after that date.
+  mode; `tauri build` produces distributable binaries.
+- Engine-session caps and IP-based rate limiting are in-process. A multi-replica
+  deployment would need shared limits.
 
 ## How to re-verify
-
-From the workspace root (the `.cargo/config.toml` target redirect applies
-automatically):
 
 ```sh
 cargo fmt --all -- --check
@@ -588,9 +191,26 @@ npm test
 npm run build
 ```
 
-Desktop, from the root:
+MariaDB account integration (disposable database; the harness refuses a
+`DATABASE_URL` fallback unless its database name contains `test`):
 
 ```sh
-npm run build -w @kernext/desktop -- --debug --no-bundle   # fast debug build
-npm run desktop:build                           # release bundle (installers)
+KERNEXT_TEST_DATABASE_URL=mysql://kernext:CHANGE_ME@127.0.0.1:3307/kernext_test \
+  cargo test -p shell-server --test auth_db -- --nocapture
 ```
+
+Start the server with `.env` present to apply migrations and exercise the API:
+
+```sh
+cargo run -p shell-server
+curl -s http://127.0.0.1:7878/api/v1/health
+curl -s http://127.0.0.1:7878/api/v1/health/database
+curl -s http://127.0.0.1:7878/api/auth/status
+```
+
+## Remaining owner input
+
+- SMTP credentials (`SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`,
+  `SMTP_PASSWORD`, `SMTP_FROM`) for real verification/reset email.
+- A production `APP_PUBLIC_URL` and `KERNEXT_ALLOWED_ORIGINS` for deployment.
+- A disposable test database or CI service container (CI provides one).

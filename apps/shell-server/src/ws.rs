@@ -41,7 +41,7 @@ pub async fn session_socket(
     Query(auth): Query<WsAuth>,
 ) -> Result<Response, ApiError> {
     let user = if state.requires_accounts() {
-        Some(auth_routes::require_account(&state, &headers).await?)
+        Some(auth_routes::require_account_active(&state, &headers).await?)
     } else {
         authorize_ws(&state, &headers, auth.token.as_deref())?;
         None
@@ -62,9 +62,14 @@ pub async fn session_socket(
         }
     }
 
+    let connection = state.ws_connection_guard();
+
     Ok(ws
         .max_message_size(1024 * 1024)
-        .on_upgrade(move |socket| handle_session_socket(socket, session)))
+        .on_upgrade(move |socket| async move {
+            let _connection = connection;
+            handle_session_socket(socket, session).await;
+        }))
 }
 
 /// Upgrades a request to a raw pseudoterminal socket.
@@ -75,7 +80,7 @@ pub async fn pty_socket(
     Query(auth): Query<WsAuth>,
 ) -> Result<Response, ApiError> {
     let owner = if state.requires_accounts() {
-        auth_routes::require_account(&state, &headers)
+        auth_routes::require_account_active(&state, &headers)
             .await?
             .user
             .id
@@ -85,6 +90,7 @@ pub async fn pty_socket(
     };
 
     let permit = state.acquire_pty(&owner)?;
+    let terminal = state.register_pty(&owner)?;
 
     let binary = pty_binary().ok_or_else(|| {
         ApiError::unavailable(
@@ -92,12 +98,14 @@ pub async fn pty_socket(
              or set KERNEXT_BIN",
         )
     })?;
+    let connection = state.ws_connection_guard();
 
     Ok(ws
         .max_message_size(1024 * 1024)
         .on_upgrade(move |socket| async move {
             let _permit = permit;
-            handle_pty_socket(socket, binary).await;
+            let _connection = connection;
+            handle_pty_socket(socket, binary, terminal).await;
         }))
 }
 
@@ -127,9 +135,23 @@ async fn handle_session_socket(socket: WebSocket, session: Arc<Mutex<ShellSessio
         return;
     }
 
-    while let Some(message) = stream.next().await {
-        let Ok(message) = message else {
-            break;
+    let shutdown = match session.lock() {
+        Ok(guard) => guard.shutdown_signal(),
+        Err(_) => return,
+    };
+
+    loop {
+        let message = tokio::select! {
+            () = shutdown.notified() => {
+                let _ = send_message(&mut sink, &ServerMessage::SessionClosed).await;
+                break;
+            }
+            incoming = stream.next() => {
+                let Some(Ok(message)) = incoming else {
+                    break;
+                };
+                message
+            }
         };
 
         let text = match message {
@@ -273,8 +295,9 @@ async fn handle_session_socket(socket: WebSocket, session: Arc<Mutex<ShellSessio
     }
 }
 
-async fn handle_pty_socket(socket: WebSocket, binary: PathBuf) {
+async fn handle_pty_socket(socket: WebSocket, binary: PathBuf, terminal: crate::state::PtyHandle) {
     let (mut sink, mut stream) = socket.split();
+    let shutdown = terminal.shutdown();
     let (out_tx, mut out_rx) = mpsc::channel::<Message>(64);
 
     let writer_task = tokio::spawn(async move {
@@ -348,10 +371,12 @@ async fn handle_pty_socket(socket: WebSocket, binary: PathBuf) {
 
     loop {
         tokio::select! {
+            () = shutdown.notified() => break,
             incoming = stream.next() => {
                 let Some(Ok(message)) = incoming else {
                     break;
                 };
+                terminal.touch();
 
                 let text = match message {
                     Message::Text(text) => text.to_string(),

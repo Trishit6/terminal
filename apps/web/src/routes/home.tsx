@@ -18,7 +18,6 @@ import {
   Sparkles,
   Terminal,
   TerminalSquare,
-  Waves,
   Zap,
 } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -32,9 +31,8 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
-import { LogoMark } from '@/components/site/logo';
+import { OrbitalHero } from '@/components/site/orbital-hero';
 import { KERNEXT_VERSION } from '@/lib/version';
-import { cn } from '@/lib/utils';
 
 const EASE = [0.22, 1, 0.36, 1] as const;
 
@@ -175,42 +173,36 @@ function Hero() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, ease: EASE }}
-          className="max-w-2xl"
+          className="min-w-0 max-w-2xl"
         >
-          <div className="mb-6 flex flex-wrap items-center gap-2">
-            <Badge variant="outline" className="gap-2 pl-2">
-              <span className="relative flex size-1.5">
-                <span className="absolute inline-flex size-full animate-ping rounded-full bg-primary opacity-70" />
-                <span className="relative inline-flex size-1.5 rounded-full bg-primary" />
-              </span>
-              Local Rust runtime
-            </Badge>
-            <Badge variant="secondary">OPEN • POWERFUL • INDEPENDENT</Badge>
+          <div className="mb-6 flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.22em] text-primary/90">
+            <span className="h-px w-8 bg-primary/50" aria-hidden="true" />
+            Independent. Native. Engineered.
           </div>
 
           <h1 className="text-balance text-5xl font-semibold leading-[0.98] tracking-[-0.045em] text-foreground sm:text-6xl lg:text-7xl">
-            The next core of{' '}
-            <span className="text-gradient">computing.</span>
+            The Next Core of{' '}
+            <span className="text-primary">Computing.</span>
           </h1>
 
           <p className="mt-6 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-            KERNEXT is a shell written from scratch in Rust. It parses your
-            commands itself, runs pipelines natively, and gives you a genuine
-            terminal on the command line, in this browser, or in the desktop
-            app — all from one engine.
+            An independent, Rust-powered shell engineered for developers
+            who want a consistent, capable computing experience across their
+            terminal, browser and desktop. No wrapper around Bash or
+            PowerShell.
           </p>
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
             <Button asChild size="lg" className="group">
               <Link to="/terminal">
                 <Play className="size-4 fill-current" />
-                Open the terminal
+                Open Terminal
                 <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
               </Link>
             </Button>
             <Button asChild variant="outline" size="lg">
-              <Link to="/docs">
-                Read the architecture
+              <Link to="/features">
+                Explore Features
                 <ArrowUpRight className="size-4" />
               </Link>
             </Button>
@@ -219,15 +211,15 @@ function Hero() {
           <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
               <Check className="size-3.5 text-success" />
-              Same Rust engine as the CLI
+              One engine, three surfaces
             </span>
             <span className="inline-flex items-center gap-1.5">
               <Check className="size-3.5 text-success" />
-              Real ConPTY / openpty
+              Real ConPTY and openpty
             </span>
             <span className="inline-flex items-center gap-1.5">
               <Check className="size-3.5 text-success" />
-              Local-only defaults
+              Local-first by default
             </span>
           </div>
         </motion.div>
@@ -236,22 +228,15 @@ function Hero() {
           initial={{ opacity: 0, scale: 0.96, y: 24 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           transition={{ duration: 0.85, ease: EASE, delay: 0.08 }}
-          className="relative mx-auto w-full max-w-[580px]"
+          className="relative mx-auto w-full min-w-0 max-w-[580px]"
         >
           <div className="pointer-events-none absolute -inset-10 -z-10 rounded-full bg-primary/10 blur-3xl" />
-          <div className="relative mx-auto aspect-square w-[72%] max-w-[360px]">
-            <div className="orbital h-full w-full">
-              <div className="flex size-[46%] items-center justify-center rounded-full border border-primary/20 bg-background/70 shadow-[0_0_80px_rgba(34,211,238,0.18)] backdrop-blur-xl">
-                <LogoMark className="size-20 sm:size-24" />
-              </div>
-              <span className="orbital-dot" />
-            </div>
-            <FloatingChip className="-left-6 top-10" icon={Cpu} label="Rust engine" />
-            <FloatingChip className="-right-4 top-24" icon={Waves} label="ConPTY" />
-            <FloatingChip className="bottom-4 left-2" icon={Network} label="WebSocket" />
-          </div>
+          <OrbitalHero />
 
-          <div className="relative mt-[-12%] overflow-hidden rounded-2xl border border-border-strong bg-[#04070c] shadow-[0_40px_120px_-40px_rgba(2,8,23,0.95)]">
+          <div
+            data-terminal-preview="example"
+            className="relative mt-[-6%] overflow-hidden rounded-2xl border border-border-strong bg-[#04070c] shadow-[0_40px_120px_-40px_rgba(2,8,23,0.95)] sm:mt-[-8%]"
+          >
             <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5">
               <div className="flex items-center gap-1.5">
                 <span className="size-2 rounded-full bg-[#ff6b6b]/80" />
@@ -286,27 +271,6 @@ function Hero() {
   );
 }
 
-function FloatingChip({
-  className,
-  icon: Icon,
-  label,
-}: {
-  className?: string;
-  icon: typeof Cpu;
-  label: string;
-}) {
-  return (
-    <div
-      className={cn(
-        'absolute z-10 hidden items-center gap-2 rounded-full border border-border-strong bg-surface/85 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground shadow-xl backdrop-blur-md sm:flex',
-        className,
-      )}
-    >
-      <Icon className="size-3.5 text-primary" />
-      {label}
-    </div>
-  );
-}
 
 function TerminalLine({ prompt, command }: { prompt: string; command: string }) {
   return (

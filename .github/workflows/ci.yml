@@ -75,6 +75,44 @@ jobs:
       - name: Build
         run: npm run build
 
+  auth-db:
+    name: Account integration (MariaDB)
+    needs: lint
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_ROOT_PASSWORD: kernext-ci-root
+          MARIADB_DATABASE: kernext_test
+          MARIADB_USER: kernext
+          MARIADB_PASSWORD: kernext-ci-password
+        ports:
+          - 3307:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=12
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Cache cargo target
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/cargo-target
+          key: ${{ runner.os }}-ci-auth-db-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-ci-auth-db-
+      - name: Account and terminal ownership tests
+        # The tests run the embedded migrations themselves, so this also
+        # proves the schema is re-runnable against a fresh MariaDB instance.
+        run: cargo test -p shell-server --test auth_db -- --nocapture
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+          KERNEXT_TEST_DATABASE_URL: mysql://kernext:kernext-ci-password@127.0.0.1:3307/kernext_test
+
   test:
     name: Test and release build (${{ matrix.os }})
     needs: lint

@@ -14,6 +14,8 @@ export interface AuthUser {
   email_verified: boolean;
   created_at: string;
   account_status: string;
+  role: 'user' | 'admin' | string;
+  must_change_password: boolean;
 }
 
 export interface Preferences {
@@ -153,6 +155,14 @@ async function request<T>(
   }
 
   return (await response.json()) as T;
+}
+
+/** Shared JSON transport for API modules outside this file (admin console). */
+export function apiRequest<T>(
+  path: string,
+  init: RequestInit = {},
+): Promise<T> {
+  return request<T>(path, init);
 }
 
 export function fetchAuthStatus(): Promise<AuthStatus> {

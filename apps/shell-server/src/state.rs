@@ -2,6 +2,8 @@
 
 use crate::db::{AuthConfig, Database, Mailer, RateLimiter};
 use crate::error::ApiError;
+use chrono::{DateTime, Utc};
+use serde::Serialize;
 use shell_api::{
     CreateSessionRequest, ExecuteCommandRequest, ExecuteCommandResponse, SessionId, SessionInfo,
 };
@@ -12,7 +14,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 /// Maximum number of bytes accepted for one command line.
 pub const MAX_COMMAND_BYTES: usize = 64 * 1024;
@@ -24,7 +26,10 @@ pub struct ShellSession {
     dispatcher: Dispatcher,
     created_at: Instant,
     last_active: Instant,
+    created_wall: SystemTime,
+    last_active_wall: SystemTime,
     owner: Option<String>,
+    shutdown: Arc<tokio::sync::Notify>,
 }
 
 impl std::fmt::Debug for ShellSession {
@@ -67,6 +72,7 @@ impl ShellSession {
         let dispatcher =
             Dispatcher::with_options(ProcessOptions::new().with_stdio(StdioMode::Capture));
         let now = Instant::now();
+        let now_wall = SystemTime::now();
 
         Ok(Self {
             id,
@@ -74,7 +80,10 @@ impl ShellSession {
             dispatcher,
             created_at: now,
             last_active: now,
+            created_wall: now_wall,
+            last_active_wall: now_wall,
             owner,
+            shutdown: Arc::new(tokio::sync::Notify::new()),
         })
     }
 
@@ -152,9 +161,28 @@ impl ShellSession {
         }
     }
 
+    /// Administrator-facing snapshot of this engine session.
+    #[must_use]
+    pub fn admin_view(&self) -> AdminTerminalSession {
+        AdminTerminalSession {
+            id: format!("engine-{}", self.id.0),
+            owner: self.owner.clone(),
+            mode: "engine".to_owned(),
+            created_at: self.created_wall.into(),
+            last_active_at: self.last_active_wall.into(),
+            status: if self.session.is_running() {
+                "active".to_owned()
+            } else {
+                "stopped".to_owned()
+            },
+            platform: self.session.platform().display_name().to_owned(),
+        }
+    }
+
     /// Executes one command line through the KERNEXT lexer, parser, and AST.
     pub fn execute(&mut self, command: &str) -> ExecuteCommandResponse {
         self.last_active = Instant::now();
+        self.last_active_wall = SystemTime::now();
         let outcome = self.dispatcher.execute(&mut self.session, command);
         let action = action_name(outcome.action()).to_owned();
 
@@ -174,6 +202,13 @@ impl ShellSession {
     /// Stops the session so clients see a terminal lifecycle state.
     pub fn stop(&mut self) {
         self.session.stop();
+        self.shutdown.notify_one();
+    }
+
+    /// Signal used by an administrator to close the engine socket.
+    #[must_use]
+    pub fn shutdown_signal(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.shutdown)
     }
 
     /// Applies request-scoped working-directory and environment overrides.
@@ -263,6 +298,108 @@ pub struct SessionOverrides {
     directory_overridden: bool,
     old_directory: PathBuf,
     environment: Vec<(String, Option<String>, bool)>,
+}
+
+/// One live terminal session as shown in the administration console.
+///
+/// The dashboard deliberately excludes command input, terminal output, and
+/// working-directory file contents. It carries only identity, mode, timing,
+/// platform, and lifecycle state.
+#[derive(Debug, Clone, Serialize)]
+pub struct AdminTerminalSession {
+    pub id: String,
+    pub owner: Option<String>,
+    pub mode: String,
+    pub created_at: DateTime<Utc>,
+    pub last_active_at: DateTime<Utc>,
+    pub status: String,
+    pub platform: String,
+}
+
+struct PtySessionEntry {
+    id: u64,
+    owner: String,
+    created_at: SystemTime,
+    last_active_at: Mutex<SystemTime>,
+    platform: String,
+    shutdown: Arc<tokio::sync::Notify>,
+}
+
+impl PtySessionEntry {
+    fn view(&self) -> AdminTerminalSession {
+        AdminTerminalSession {
+            id: format!("pty-{}", self.id),
+            owner: Some(self.owner.clone()),
+            mode: "pty".to_owned(),
+            created_at: self.created_at.into(),
+            last_active_at: self
+                .last_active_at
+                .lock()
+                .map(|value| (*value).into())
+                .unwrap_or_else(|_| self.created_at.into()),
+            status: "active".to_owned(),
+            platform: self.platform.clone(),
+        }
+    }
+}
+
+/// Handle for one registered pseudoterminal connection.
+///
+/// Dropping it unregisters the session. The WebSocket task selects on
+/// [`PtyHandle::shutdown`] so an administrator can close a remote terminal
+/// without affecting any other connection.
+pub struct PtyHandle {
+    entry: Arc<PtySessionEntry>,
+    registry: Arc<Mutex<HashMap<u64, Arc<PtySessionEntry>>>>,
+}
+
+impl std::fmt::Debug for PtyHandle {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("PtyHandle")
+            .field("id", &self.entry.id)
+            .finish_non_exhaustive()
+    }
+}
+
+impl PtyHandle {
+    /// Public session identifier (`pty-N`).
+    #[must_use]
+    pub fn id(&self) -> String {
+        format!("pty-{}", self.entry.id)
+    }
+
+    /// Records client activity for the dashboard.
+    pub fn touch(&self) {
+        if let Ok(mut last_active) = self.entry.last_active_at.lock() {
+            *last_active = SystemTime::now();
+        }
+    }
+
+    /// Signal used to ask the owning socket task to close the session.
+    #[must_use]
+    pub fn shutdown(&self) -> Arc<tokio::sync::Notify> {
+        Arc::clone(&self.entry.shutdown)
+    }
+}
+
+impl Drop for PtyHandle {
+    fn drop(&mut self) {
+        if let Ok(mut sessions) = self.registry.lock() {
+            sessions.remove(&self.entry.id);
+        }
+    }
+}
+
+/// Increments the live WebSocket counter while held.
+pub struct WsConnectionGuard {
+    count: Arc<AtomicUsize>,
+}
+
+impl Drop for WsConnectionGuard {
+    fn drop(&mut self) {
+        self.count.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 fn load_config() -> Config {
@@ -364,6 +501,9 @@ pub struct AppState {
     max_sessions: usize,
     accounts: Option<Arc<AuthContext>>,
     pty_counts: Arc<Mutex<HashMap<String, usize>>>,
+    pty_sessions: Arc<Mutex<HashMap<u64, Arc<PtySessionEntry>>>>,
+    next_pty_id: Arc<AtomicUsize>,
+    ws_connections: Arc<AtomicUsize>,
 }
 
 impl AppState {
@@ -391,6 +531,9 @@ impl AppState {
             max_sessions,
             accounts: None,
             pty_counts: Arc::new(Mutex::new(HashMap::new())),
+            pty_sessions: Arc::new(Mutex::new(HashMap::new())),
+            next_pty_id: Arc::new(AtomicUsize::new(1)),
+            ws_connections: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -432,6 +575,9 @@ impl AppState {
             max_sessions: 16,
             accounts: None,
             pty_counts: Arc::new(Mutex::new(HashMap::new())),
+            pty_sessions: Arc::new(Mutex::new(HashMap::new())),
+            next_pty_id: Arc::new(AtomicUsize::new(1)),
+            ws_connections: Arc::new(AtomicUsize::new(0)),
         }
     }
 
@@ -582,6 +728,109 @@ impl AppState {
             counts: Arc::clone(&self.pty_counts),
             owner: owner.to_owned(),
         })
+    }
+
+    /// Registers one live pseudoterminal connection for the dashboard.
+    pub fn register_pty(&self, owner: &str) -> Result<PtyHandle, ApiError> {
+        let mut sessions = self
+            .pty_sessions
+            .lock()
+            .map_err(|_| ApiError::internal("pseudoterminal registry lock was poisoned"))?;
+        let id = self.next_pty_id.fetch_add(1, Ordering::Relaxed) as u64;
+        let now = SystemTime::now();
+        let entry = Arc::new(PtySessionEntry {
+            id,
+            owner: owner.to_owned(),
+            created_at: now,
+            last_active_at: Mutex::new(now),
+            platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
+            shutdown: Arc::new(tokio::sync::Notify::new()),
+        });
+
+        sessions.insert(id, Arc::clone(&entry));
+
+        Ok(PtyHandle {
+            entry,
+            registry: Arc::clone(&self.pty_sessions),
+        })
+    }
+
+    /// Number of live terminal WebSocket connections.
+    #[must_use]
+    pub fn ws_connections(&self) -> usize {
+        self.ws_connections.load(Ordering::Relaxed)
+    }
+
+    /// Counts one WebSocket connection until the returned guard is dropped.
+    #[must_use]
+    pub fn ws_connection_guard(&self) -> WsConnectionGuard {
+        self.ws_connections.fetch_add(1, Ordering::Relaxed);
+        WsConnectionGuard {
+            count: Arc::clone(&self.ws_connections),
+        }
+    }
+
+    /// Every live engine and pseudoterminal session, newest first.
+    #[must_use]
+    pub fn admin_terminal_sessions(&self) -> Vec<AdminTerminalSession> {
+        let mut listed = Vec::new();
+
+        if let Ok(sessions) = self.sessions.lock() {
+            for session in sessions.values() {
+                if let Ok(guard) = session.lock() {
+                    listed.push(guard.admin_view());
+                }
+            }
+        }
+
+        if let Ok(sessions) = self.pty_sessions.lock() {
+            for session in sessions.values() {
+                listed.push(session.view());
+            }
+        }
+
+        listed.sort_by_key(|session| std::cmp::Reverse(session.created_at));
+        listed
+    }
+
+    /// Terminates one live terminal session by its dashboard identifier.
+    ///
+    /// Engine sessions are stopped and removed from the registry; the owning
+    /// engine socket observes the stop signal. Pseudoterminals receive a
+    /// shutdown notification, and their socket task kills the child process
+    /// exactly as it does on a normal disconnect. Other sessions are
+    /// untouched.
+    pub fn terminate_terminal_session(&self, id: &str) -> Result<bool, ApiError> {
+        if let Some(raw) = id.strip_prefix("engine-") {
+            let Ok(number) = raw.parse::<usize>() else {
+                return Ok(false);
+            };
+            let Some(session) = self.remove(SessionId(number)) else {
+                return Ok(false);
+            };
+            if let Ok(mut guard) = session.lock() {
+                guard.stop();
+            }
+            return Ok(true);
+        }
+
+        if let Some(raw) = id.strip_prefix("pty-") {
+            let Ok(number) = raw.parse::<u64>() else {
+                return Ok(false);
+            };
+            let entry = self
+                .pty_sessions
+                .lock()
+                .ok()
+                .and_then(|mut sessions| sessions.remove(&number));
+            let Some(entry) = entry else {
+                return Ok(false);
+            };
+            entry.shutdown.notify_one();
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 
     /// Removes sessions that have been idle for longer than `max_idle`.

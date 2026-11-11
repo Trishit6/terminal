@@ -1,4 +1,4 @@
-import { motion, useReducedMotion } from 'motion/react';
+import { motion } from 'motion/react';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useId, useState } from 'react';
 import { LogoMark } from '@/components/site/logo';
@@ -24,8 +24,6 @@ export function AuthShell({
   footer?: React.ReactNode;
   wide?: boolean;
 }) {
-  const reduced = useReducedMotion();
-
   return (
     <div className="relative flex min-h-[calc(100dvh-4rem)] flex-col overflow-hidden">
       <div
@@ -39,7 +37,7 @@ export function AuthShell({
 
       <div className="relative mx-auto flex w-full max-w-6xl flex-1 items-center justify-center px-4 py-12 sm:px-6">
         <motion.div
-          initial={reduced ? false : { opacity: 0, y: 10 }}
+          initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
           className={cn('w-full', wide ? 'max-w-3xl' : 'max-w-[26rem]')}

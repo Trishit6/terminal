@@ -1,152 +1,127 @@
-# KERNEXT — project knowledge
+# KERNEXT — Repository Knowledge
 
 ## What this is
 
-KERNEXT is an independent, cross-platform command-line shell written in Rust. It
-has its own lexer, parser, AST, evaluator, built-in commands, and external process
-executor — it does **not** wrap `sh`, `bash`, PowerShell, or `cmd`. The same Rust
-engine powers three surfaces: the CLI (`apps/shell-cli`), a local Axum web server
-+ React front end (`apps/shell-server`, `apps/web`), and a Tauri 2 desktop app
-(`apps/desktop`). Branding is user-facing only: product/executable is `kernext`;
-every crate, package and Rust identifier stays `shell-*`. Do not rename crates.
+**KERNEXT** ("The Next Core of Computing.") is an independent, cross-platform
+shell written in Rust with its own lexer, parser, AST, evaluator, built-ins,
+pipeline engine, and external process executor. It never wraps Bash, PowerShell,
+or CMD. Three surfaces share one engine:
 
-The Cargo workspace **is** this project root (no nested workspace directory).
+- **CLI** — `apps/shell-cli`, binary `kernext` (interactive REPL, startup, dev commands)
+- **Web** — `apps/shell-server` (local Axum server) + `apps/web` (React + Vite + Tailwind)
+- **Desktop** — `apps/desktop` (Tauri 2, crate `shell-desktop`, binary `kernext-desktop`)
 
-## Where the code lives
+Internal crate/package names stay `shell-*`; only user-facing names are KERNEXT.
+
+### Where code lives
 
 | Path | Responsibility |
 | --- | --- |
-| `crates/shell-core` | Branding constants, `ShellError`, lexer/tokenizer, parser, AST, spans |
-| `crates/shell-config` | Typed `Config`, color/theme validation, TOML load/save, platform config path |
-| `crates/shell-runtime` | `Session` (cwd, variables, functions, last status), `Platform`, history, `JobTable` |
-| `crates/shell-builtins` | Registry, AST evaluator, native commands, pipelines, external executor, expansion |
-| `crates/shell-line-editor` | Reedline wrapper, prompt, completer, history backing, screen clearing |
-| `crates/shell-api` | Serializable session/terminal API contracts shared by server + desktop |
-| `apps/shell-cli` | Clap args, startup presentation, REPL, project commands (`dev.rs`) |
-| `apps/shell-server` | Local Axum server: HTTP sessions, engine + PTY WebSockets |
-| `apps/web` | React + Vite + Tailwind v4 front end shared by web + desktop |
-| `apps/desktop` | Tauri 2 desktop app (`src-tauri` crate root) |
+| `crates/shell-core` | Branding constants, lexer, parser, AST, spans, `ShellError` |
+| `crates/shell-runtime` | `Session` (cwd, config, variables, functions, lifecycle), jobs |
+| `crates/shell-builtins` | Registry (56 commands), `eval.rs`, `commands.rs`, `pipeline.rs`, `process.rs`, `expand.rs` |
+| `crates/shell-config` | TOML config model + validation |
+| `crates/shell-line-editor` | Reedline integration, clear helpers |
+| `crates/shell-api` | Serializable session/terminal API contracts |
+| `apps/shell-cli` | Clap args, startup renderer (`startup.rs`), REPL, `dev.rs` project commands |
+| `apps/shell-server` | Axum HTTP + engine/PTY WebSockets, MariaDB accounts, email, CSRF |
+| `apps/web` | React front end; terminal renderer in `src/lib/terminal/` and `src/components/terminal/` |
+| `apps/desktop` | Tauri 2 app; Rust runtime in `src-tauri/` |
+| `scripts/dev.mjs` | Starts backend + Vite dev stack |
 
-Execution flow — keep every command line on this path:
-
-```
-input -> lexer -> parser -> AST -> evaluator -> pipeline engine
-      -> built-in registry OR external process executor -> CommandOutcome -> Repl
-```
-
-Never split input with `split_whitespace`; the dispatcher must use `lex_spanned` + `parse`.
+Execution flow: `input → shell-core lexer → parser → AST → shell-builtins evaluator → pipeline → registry OR process executor → CommandOutcome → REPL`. Never split input with `split_whitespace`; `Dispatcher` uses `lex_spanned` + `parse`.
 
 ## Commands
 
-Run from the workspace root:
+### Rust (KERNEXT project commands, or Cargo directly)
 
 ```sh
-cargo build --workspace
-cargo run -p shell-cli          # binary is kernext / kernext.exe
-cargo test --workspace
-cargo fmt --all -- --check
-cargo check --workspace --all-targets
-cargo clippy --workspace --all-targets -- -D warnings
+kernext fmt --check   # cargo fmt --all -- --check
+kernext check         # cargo check --workspace --all-targets
+kernext build         # cargo build --workspace
+kernext test          # cargo test --workspace
+kernext lint          # cargo clippy --workspace --all-targets -- -D warnings
+kernext run           # cargo run -p shell-cli
+kernext clean         # cargo clean
+kernext doctor        # environment/project inspection
 ```
 
-Or via the `kernext` project commands: `kernext build|check|test|fmt|lint|run|clean|doctor|version|help`.
-
-Front end:
-
-```sh
-npm ci
-npm run web:dev          # vite dev server http://127.0.0.1:5173
-npm run web:typecheck
-npm run web:build
-npm test                 # web Vitest suite
-```
+All accept `--dry-run` and return the underlying tool's exit code. Cargo equivalent commands work too.
 
 Focused tests:
 
 ```sh
-cargo test -p shell-builtins --test builtins
-cargo test -p shell-builtins --test external
-cargo test -p shell-builtins --test pipeline
+cargo test -p shell-builtins --test builtins       # also --test pipeline, external, external_tools
 cargo test -p shell-core --test parser
 cargo test -p shell-cli --test repl
 cargo test -p shell-server
 cargo test -p shell-desktop
 ```
 
-No install step; Rust 1.85+. Interactive use requires a real TTY.
+### Front end / desktop (npm workspaces, Node 22+, npm 10+)
 
-## Conventions and hard constraints
+```sh
+npm ci                  # install apps/web + apps/desktop from lockfile
+npm run dev             # scripts/dev.mjs: shell-server (7878) + Vite (5173)
+npm run typecheck       # web typecheck
+npm test                # web Vitest suite
+npm run build           # web production build
+npm run web:dev         # Vite only
+npm run desktop:dev     # tauri dev
+npm run desktop:build   # tauri build
+cargo run -p shell-server
+```
 
-- Never let another shell parse KERNEXT input: no `sh -c`, `bash -c`, `cmd /C`,
-  `powershell -Command` for command syntax. `process.rs` passes each argument as
-  a separate `Command::arg` to the resolved executable path.
-- Built-ins always win over functions, functions over external programs. A `PATH`
-  program named `echo`/`cd`/`pwd` must never override a native command.
-- `cd` mutates `Session::working_directory` only, never process-wide cwd.
-  `commands::resolve_path` is the single resolver for relative paths.
-- Built-ins inside a real pipeline run on a cloned `Session`: filesystem effects
-  persist, but `cd`/`export`/`unset` must not leak to the parent. A lone command
-  still mutates the real session.
-- Pipelines use real OS pipes (`ChildStdout` → next stage's `Stdio::from`).
-  Never buffer a whole external stream just to connect stages; join writer threads
-  and reap every child, including on the error path. Final stage decides
-  success/exit code; intermediate `SIGPIPE` is not an error.
-- `exit` and `clear` actions propagate only from a single command, never from a
-  pipeline stage. `clear`/Ctrl+L writes CSI sequences via crossterm and is
-  suppressed when stdout is not a terminal.
-- Grouped pipeline stages are rejected with `"Grouped pipelines are not supported yet."`.
-- Expansion happens at evaluation time, one word → one argument (no field
-  splitting, no re-parsing). `$name`, `${name}`, `$?`, `$$`; single quotes and
-  `\$` stay literal. Undefined variables expand to empty.
-- `$?` updated after every command/pipeline/assignment: 0 success, external code,
-  1 built-in failure, 2 syntax error, 128+signal.
-- Cross-platform only: `std::path`, `HOME`/`USERPROFILE`, no Unix-only APIs
-  outside `#[cfg(unix)]`.
-- Windows: `PATHEXT` honoured but restricted to `.com`, `.exe`, `.bat`, `.cmd`;
-  extensionless files are never executables. `.cmd`/`.bat` run through
-  `%COMSPEC%`/`System32\cmd.exe` with `/d /v:off /s /c`. Script args containing
-  `"`, `%`, CR, LF, or NUL are refused.
-- Startup (`apps/shell-cli/src/startup.rs`) is presentation-only: never parse,
-  evaluate or launch commands; never fake progress or add artificial delays.
-- Never hardcode the version; use `VERSION` / `Session::version()`.
-- Emblem rows must all have identical character counts
-  (`emblem_rows_keep_a_constant_display_width`).
-- Internal crate/package names stay `shell-*`; do not rename.
+Interactive shell needs a real TTY; piping stdin is rejected. Use a terminal, `screen`, or `tmux`.
 
-## Build gotcha: pinned target dir
+## Conventions & gotchas
 
-`.cargo/config.toml` pins `build.target-dir = "/home/trishit/.cache/terminal-target"`
-as a workaround for a vfat-with-`showexec` checkout where extensionless build
-scripts and test binaries cannot execute.
+### Build environment (critical)
+- Repo may live on a **vfat `showexec`** mount where extensionless binaries can't execute. `.cargo/config.toml` sets `build.target-dir = "/home/trishit/.cache/terminal-target"` (ext4). Never create a repo-local `target/`, never change mount options, never hardcode a target dir in `Cargo.toml`.
+- **Windows GNU (MinGW):** `apps/desktop/src-tauri/build.rs` must keep shadowing the MinGW `default-manifest.o` on `*-pc-windows-gnu` (else `STATUS_ENTRYPOINT_NOT_FOUND`). GNU targets use `WindowsAttributes::new_without_app_manifest()`; MSVC/non-Windows keep Tauri's default.
+- Keep Rust `tauri` crate and npm `@tauri-apps/api` on the same major/minor. `tauri.conf.json` `frontendDist` is `../../web/dist`.
 
-- On a non-Linux checkout that path may be meaningless; override per command with
-  `CARGO_TARGET_DIR=/path/to/local-target cargo test …` rather than editing the
-  file unless asked.
-- Do not create a repo-local `target/`, and do not add a target dir or
-  OS-specific linker settings to `Cargo.toml`.
-- Do not change mount options without explicit permission.
+### Engine rules
+- Built-ins always win over external programs; functions win over external but lose to built-ins.
+- External execution (`process.rs`) never uses `sh -c`/`cmd /C`/PowerShell. One exception: Windows `.cmd`/`.bat` go through `%COMSPEC%` with `/d /v:off /s /c` (launcher, not parser). Args containing `"`, `%`, CR, LF, NUL are refused.
+- Windows resolution honors `PATHEXT` only for `.com/.exe/.bat/.cmd`; **extensionless files are never executables** (npm POSIX shims must resolve to `.cmd`).
+- Pipelines (`pipeline.rs`): external stages use real OS pipes; built-ins exchange buffered bytes; built-ins in a pipeline run on a cloned `Session` (state changes don't leak). Exit code/success come from the final stage.
+- Redirections: `<`, `>`, `>>`, `2>`, `2>>`; resolve via `commands::resolve_path`; `2>` recognized only when `2` starts a token. Grouped pipeline stages unsupported ("Grouped pipelines are not supported yet.").
+- `clear`/`exit` actions propagate only from a single command, never a pipeline stage.
+- Variables: assignment `name = value`; expansion `$name`, `${name}`, `$?`, `$$`; no field splitting; one word → one argument.
+- Startup renderer is presentation-only; never fake progress. Animated/Plain/Quiet modes; `NO_COLOR`/`TERM=dumb`/non-TTY disable ANSI. Emblem row widths are a test invariant. No artificial delays.
+- `clear` uses crossterm CSI sequences; never shell out to `clear`/`cls`; suppressed when stdout isn't a terminal. Ctrl+L is Reedline's default binding — verify by test, don't rebind.
 
-## Web front end notes
+### Web terminal
+- DOM renderer (rows of `div.terminal-row`), not canvas; no xterm.js or terminal dependencies. `apps/web/src/lib/terminal/` is unit-tested in Node.
+- **Never set a single-font `font-family`** — always append the monospace fallback stack (`withMonospaceFallback`).
+- `useTerminalConnection.resize` must call `engine.resize(rows, cols)` in both PTY and engine mode, then send `resize` to the PTY (guard with previous-size check).
+- `/terminal/render-test` is a backend-free visual regression fixture; keep it working.
+- Motion config in `main.tsx` respects Reduced Motion in prod; don't remove it.
 
-- Tailwind CSS v4 is integrated via `@tailwindcss/vite` in `apps/web/vite.config.ts`.
-  Do **not** add a `postcss.config.js` (it breaks because `package.json` has
-  `"type": "module"` and Tailwind v4 needs no PostCSS config). Tailwind config
-  lives in `apps/web/src/styles.css` (`@import "tailwindcss"`, `@theme`, etc.).
-- `apps/desktop` reuses `apps/web`; its `web:build` delegates to the web
-  package.
+### Web server / accounts
+- **Account mode** when `DATABASE_URL` is set (MariaDB, Argon2id, HttpOnly cookie sessions, CSRF double-submit, per-account terminal sessions); **local mode** (loopback-only, optional `KERNEXT_SERVER_TOKEN`) otherwise.
+- `.env` at workspace root loaded via `dotenvy`; real env vars win. Never commit `.env`. Local dev DB: `mysql://...@127.0.0.1:3307/...`.
+- Migrations in `apps/shell-server/migrations/` must be idempotent and must not drop tables.
+- Tokens use OS CSPRNG, only SHA-256 hashes persisted; register/login/verify/reset rate-limited. `KERNEXT_DEV_MAIL=1` returns tokens instead of sending email. SMTP via `SMTP_*` vars.
+- Web `apps/web/src/lib/auth.ts`; desktop keeps session cookie in OS credential store (`src-tauri/src/account.rs`).
 
-## Tests
+### Config
+- Model: `crates/shell-config/src/lib.rs`; loaded from `Config::default_path()` via `load_or_default`. Missing → defaults; invalid → warning + defaults. Unknown fields rejected (`deny_unknown_fields`); `history_size > 0`.
+- Key defaults: prompt `kernext ~ $ `, `color = true`, `startup_animation = true`, `animation_speed = "normal"`, `accent_color = "bright-cyan"`.
+- Colors accept ANSI names, `colorN`/`0–255`, `#RGB`/`#RRGGBB`. `apply_terminal_font = true` requires non-empty `terminal_font`.
 
-Add tests next to the behavior: unit tests in `src/`, integration tests in
-`crates/shell-builtins/tests/`, `crates/shell-core/tests/`,
-`apps/shell-cli/tests/`, plus `apps/shell-server` and `apps/shell-desktop`.
-Filesystem tests use isolated temp dirs plus `Session::set_working_directory`;
-they never mutate the process cwd. External-process and pipeline tests use the
-test binary itself as a helper via `CUSTOM_SHELL_TEST_HELPER` /
-`CUSTOM_SHELL_PIPELINE_ARGS` — keep them that way. Never weaken, skip or delete
-tests to make a build pass.
+### Branding
+- Constants in `crates/shell-core/src/lib.rs`: `SHELL_NAME = "kernext"`, `PRODUCT_NAME`, `TAGLINE`, `BRAND_STATEMENT`, `VALUES`, `MOTTO`, `VERSION`. Use `VERSION`, never hardcode versions. See `docs/BRANDING.md`.
 
-## Git
+### Tests
+- Filesystem tests use isolated temp dirs + `Session::set_working_directory`; never mutate process cwd in tests.
+- External/pipeline tests use the test binary itself as a helper (env `CUSTOM_SHELL_TEST_HELPER`, `CUSTOM_SHELL_PIPELINE_ARGS`); don't require specific external programs.
+- Never weaken or delete tests to make a build pass.
 
-Never run `git reset --hard`, `git checkout -- .`, `git clean`, or anything that
-discards working-tree changes. Do not commit, amend, rebase or push unless asked.
+### Git
+- Never run `git reset --hard`, `git checkout -- .`, `git clean`, or anything that discards working-tree changes without explicit permission. Don't commit/amend/rebase/push unless asked. Snapshot risky work outside the repo first.
+- Canonical checkout: `/run/media/trishit/UBUNTU 26_0/Projects/terminal` (Linux) / `D:\projects\React-Ts\terminal` (current Windows workstation). Don't edit duplicate checkouts or create new ones.
+
+### Docs to keep in sync
+`README.md`, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `RELEASE_NOTES.md`, and `docs/*` (`BRANDING`, `ARCHITECTURE`, `COMMANDS`, `DESKTOP`, `SECURITY`, `DEPLOYMENT`, `TROUBLESHOOTING`, `PROJECT_STATUS`). Built-in count in prose must match `DEFAULT_BUILTINS` in `registry.rs` (56).

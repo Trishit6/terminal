@@ -165,6 +165,59 @@ never simulates the shell in JavaScript. See
 [`docs/DESKTOP.md`](docs/DESKTOP.md) for configuration, architecture, and the
 Windows MinGW manifest handling.
 
+### Accounts and authentication
+
+Accounts are optional and MariaDB-backed. When `DATABASE_URL` is set, the
+server enables registration, Argon2id password hashing, HttpOnly session
+cookies, CSRF double-submit protection, email verification, password recovery,
+and per-account ownership of every web terminal session. Without
+`DATABASE_URL`, the server keeps its loopback-only local mode and the CLI and
+desktop shell work without any database.
+
+Exact development sequence from the workspace root:
+
+```sh
+npm ci          # install web/desktop workspaces
+npm run dev     # Axum on 127.0.0.1:7878 + Vite on 127.0.0.1:5173
+```
+
+Then open <http://127.0.0.1:5173/sign-in>. To run the halves separately, use
+`cargo run -p shell-server` (Axum) and `npm run web:dev` (Vite). The backend
+reads `./.env`, then the workspace-root `.env`, so the launch directory does
+not decide whether accounts load. Stop any existing Vite process before
+`npm run dev`; it stops the stack when either service fails to start.
+
+Development configuration (workspace-root `.env`, placeholders in
+`.env.example`):
+
+```env
+DATABASE_URL=mysql://kernext:CHANGE_ME@127.0.0.1:3307/kernext
+KERNEXT_DEV_MAIL=1
+KERNEXT_SEED_ADMIN=true
+KERNEXT_ADMIN_EMAIL=admin@admin.com
+KERNEXT_ADMIN_PASSWORD=password
+```
+
+The optional seed creates `admin@admin.com` / `password` once, with role
+`admin`, and requires a password change on first sign-in. It never runs in
+production and never overwrites an existing account. `GET /api/v1/health/database`
+reports database connectivity, and a missing `DATABASE_URL` in production is a
+startup error rather than a silent local-mode fallback.
+
+Account routes live under `/api/auth` (register, login, logout, me, recovery,
+verification, sessions, preferences); administrators can read
+`/api/admin/users`. `GET /api/v1/health/database` reports connectivity. The CLI
+never reads `DATABASE_URL`; local execution remains independent of database
+availability.
+
+The home page hero is a three-layer CSS 3D composition: independently rotating
+outer and inner orbital planes, a stationary sphere and emblem, and labels
+outside the 3D transform so they stay readable. Reduced Motion stops the
+orbits; the terminal preview never rotates. See
+[`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md),
+[`docs/DATABASE.md`](docs/DATABASE.md), and
+[`docs/BACKEND_ARCHITECTURE.md`](docs/BACKEND_ARCHITECTURE.md).
+
 ### Startup flags
 
 ```text
@@ -931,6 +984,12 @@ production build), and a desktop bundling job across the same operating systems.
 
 - [`docs/COMMANDS.md`](docs/COMMANDS.md) — every built-in command with usage.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — workspace and data flow.
+- [`docs/BACKEND_ARCHITECTURE.md`](docs/BACKEND_ARCHITECTURE.md) — server
+  modules, routes, and request security.
+- [`docs/DATABASE.md`](docs/DATABASE.md) — MariaDB schema, migrations, and the
+  test database.
+- [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md) — account flows, cookies,
+  CSRF, recovery, and terminal authorization.
 - [`docs/DESKTOP.md`](docs/DESKTOP.md) — desktop build, packaging, and MinGW
   manifest handling.
 - [`docs/SECURITY.md`](docs/SECURITY.md) — web terminal security model.

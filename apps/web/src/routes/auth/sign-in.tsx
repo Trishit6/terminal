@@ -15,7 +15,8 @@ import { Checkbox } from '@/components/auth/checkbox';
 export function SignInPage() {
   const navigate = useNavigate();
   const search = useSearch({ strict: false }) as { redirect?: string };
-  const { signIn, accountsEnabled, ready, signedIn } = useAuth();
+  const { signIn, accountsEnabled, ready, signedIn, serverReachable } =
+    useAuth();
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -107,13 +108,22 @@ export function SignInPage() {
         </div>
       ) : (
         <form onSubmit={handleSubmit} className="space-y-4" noValidate>
-          {!accountsEnabled ? (
+          {!serverReachable ? (
             <FormNotice tone="warning">
-              Account sign-in is not configured on this server. Start it with
+              The KERNEXT server is not reachable. Start it with
+              <code className="mx-1 rounded bg-surface-soft px-1 font-mono text-[11px]">
+                npm run dev
+              </code>
+              and reload this page.
+            </FormNotice>
+          ) : !accountsEnabled ? (
+            <FormNotice tone="warning">
+              Account sign-in is not configured on this server. Set
               <code className="mx-1 rounded bg-surface-soft px-1 font-mono text-[11px]">
                 DATABASE_URL
               </code>
-              set to a MariaDB connection to enable accounts.
+              to a MariaDB connection in the workspace <code>.env</code>, then
+              restart the backend.
             </FormNotice>
           ) : null}
 

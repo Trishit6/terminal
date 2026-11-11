@@ -4,8 +4,8 @@
 //! includes password hashes or raw session/reset tokens.
 
 use crate::db::{
-    self, AuthConfig, AuthUser, Preferences, PublicUser, RateLimiter, TokenTable, clear_cookies,
-    client_address, csrf_cookie, normalize_email, session_cookie, session_cookies,
+    self, AuditRecord, AuthConfig, AuthUser, Preferences, PublicUser, RateLimiter, TokenTable,
+    clear_cookies, client_address, csrf_cookie, normalize_email, session_cookie, session_cookies,
     validate_full_name, validate_password, verify_csrf,
 };
 use crate::error::ApiError;
@@ -139,6 +139,14 @@ async fn register(
         .await?;
     let cookies = session_cookies(&session, false, &accounts.config);
 
+    record_audit(
+        &accounts,
+        AuditRecord::new("auth.register")
+            .actor(&user.id, &user.email)
+            .ip(address),
+    )
+    .await;
+
     Ok(with_cookies(
         StatusCode::CREATED,
         &cookies,
@@ -193,12 +201,18 @@ async fn login(
         .verify_credentials(&email, &request.password)
         .await?
     else {
+        let mut record = AuditRecord::new("auth.login_failed");
+        record.actor_email = Some(email);
+        record.ip_address = Some(address);
+        record_audit(&accounts, record).await;
+
         return Err(ApiError::unauthorized(
             "the email address or password is incorrect",
         ));
     };
 
     accounts.limiter.clear(&limit_key);
+    accounts.db.record_login(&user.id).await?;
 
     let session = accounts
         .db
@@ -212,6 +226,14 @@ async fn login(
         .await?;
     let cookies = session_cookies(&session, request.remember, &accounts.config);
     let preferences = accounts.db.preferences(&user.id).await?;
+
+    record_audit(
+        &accounts,
+        AuditRecord::new("auth.login")
+            .actor(&user.id, &user.email)
+            .ip(&address),
+    )
+    .await;
 
     Ok(with_cookies(
         StatusCode::OK,
@@ -233,6 +255,13 @@ async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Result<Res
     // client and server state stay in sync.
     if let Some(user) = optional_user(&accounts, &headers).await? {
         accounts.db.revoke_session(&user.session_id).await?;
+        record_audit(
+            &accounts,
+            AuditRecord::new("auth.logout")
+                .actor(&user.user.id, &user.user.email)
+                .ip(client_address(&headers)),
+        )
+        .await;
     }
 
     Ok(with_cookies(
@@ -287,7 +316,7 @@ async fn update_profile(
     Json(request): Json<UpdateProfileRequest>,
 ) -> Result<Json<UpdateProfileResponse>, ApiError> {
     let accounts = accounts(&state)?;
-    let user = require_user(&accounts, &headers).await?;
+    let user = require_active_user(&accounts, &headers).await?;
     require_csrf(&headers, &user)?;
 
     let full_name = validate_full_name(&request.full_name)?;
@@ -340,7 +369,7 @@ async fn update_preferences(
     Json(request): Json<PreferencesRequest>,
 ) -> Result<Json<Preferences>, ApiError> {
     let accounts = accounts(&state)?;
-    let user = require_user(&accounts, &headers).await?;
+    let user = require_active_user(&accounts, &headers).await?;
     require_csrf(&headers, &user)?;
 
     if !matches!(request.theme.as_str(), "dark" | "light" | "system") {
@@ -524,6 +553,16 @@ async fn reset_password(
     let hash = db::hash_password(&request.password)?;
     accounts.db.change_password(&user_id, &hash, None).await?;
 
+    if let Some(user) = accounts.db.find_user_by_id(&user_id).await? {
+        record_audit(
+            &accounts,
+            AuditRecord::new("password.reset")
+                .target(&user.id, &user.email)
+                .ip(client_address(&headers)),
+        )
+        .await;
+    }
+
     Ok(with_cookies(
         StatusCode::OK,
         &clear_cookies(&accounts.config),
@@ -595,7 +634,7 @@ async fn resend_verification(
     headers: HeaderMap,
 ) -> Result<Json<ResendVerificationResponse>, ApiError> {
     let accounts = accounts(&state)?;
-    let user = require_user(&accounts, &headers).await?;
+    let user = require_active_user(&accounts, &headers).await?;
     require_csrf(&headers, &user)?;
 
     if user.user.email_verified {
@@ -645,6 +684,15 @@ async fn change_password(
         .change_password(&user.user.id, &new_hash, keep)
         .await?;
 
+    record_audit(
+        &accounts,
+        AuditRecord::new("password.changed")
+            .actor(&user.user.id, &user.user.email)
+            .target(&user.user.id, &user.user.email)
+            .ip(client_address(&headers)),
+    )
+    .await;
+
     Ok(Json(MessageResponse {
         message: "Your password has been changed.".to_owned(),
     }))
@@ -660,7 +708,7 @@ async fn list_sessions(
     headers: HeaderMap,
 ) -> Result<Json<SessionsResponse>, ApiError> {
     let accounts = accounts(&state)?;
-    let user = require_user(&accounts, &headers).await?;
+    let user = require_active_user(&accounts, &headers).await?;
     let sessions = accounts
         .db
         .list_sessions(&user.user.id, &user.session_id)
@@ -675,7 +723,7 @@ async fn delete_session(
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Result<StatusCode, ApiError> {
     let accounts = accounts(&state)?;
-    let user = require_user(&accounts, &headers).await?;
+    let user = require_active_user(&accounts, &headers).await?;
     require_csrf(&headers, &user)?;
 
     if !accounts.db.revoke_owned_session(&user.user.id, &id).await? {
@@ -743,6 +791,50 @@ pub(crate) async fn require_account(
 ) -> Result<AuthUser, ApiError> {
     let accounts = accounts(state)?;
     require_user(&accounts, headers).await
+}
+
+/// Resolves an account that is allowed to use account and terminal features.
+///
+/// An account still holding its seeded initial password is blocked until it
+/// changes that password; `/api/auth/me`, logout, and change-password remain
+/// available so the client can complete the flow.
+pub(crate) async fn require_account_active(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<AuthUser, ApiError> {
+    let user = require_account(state, headers).await?;
+    ensure_password_changed(&user)?;
+    Ok(user)
+}
+
+/// Rejects an account that must change its initial password.
+pub(crate) fn ensure_password_changed(user: &AuthUser) -> Result<(), ApiError> {
+    if user.user.must_change_password {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "password_change_required",
+            "change the initial password before using this feature",
+        ));
+    }
+
+    Ok(())
+}
+
+async fn require_active_user(
+    accounts: &crate::state::AuthContext,
+    headers: &HeaderMap,
+) -> Result<AuthUser, ApiError> {
+    let user = require_user(accounts, headers).await?;
+    ensure_password_changed(&user)?;
+    Ok(user)
+}
+
+/// Persists one audit row without failing the surrounding request.
+async fn record_audit(accounts: &crate::state::AuthContext, record: AuditRecord) {
+    let event_type = record.event_type.clone();
+    if let Err(error) = accounts.db.record_audit(&record).await {
+        tracing::warn!("KERNEXT audit write failed for {event_type}: {error}");
+    }
 }
 
 fn accounts(state: &AppState) -> Result<Arc<crate::state::AuthContext>, ApiError> {

@@ -6,6 +6,7 @@ import {
   lazyRouteComponent,
   Outlet,
 } from '@tanstack/react-router';
+import { AdminLayout } from './components/admin/admin-shell';
 import { DesktopShell } from './components/desktop/desktop-shell';
 import { SiteLayout, TerminalLayout } from './components/site/site-layout';
 import { NotFoundPage } from './routes/not-found';
@@ -87,6 +88,34 @@ const DesktopSettingsPage = lazyRouteComponent(
 const DesktopAboutPage = lazyRouteComponent(
   () => import('./routes/desktop/about'),
   'DesktopAboutPage',
+);
+const AdminOverviewPage = lazyRouteComponent(
+  () => import('./routes/admin/overview'),
+  'AdminOverviewPage',
+);
+const AdminUsersPage = lazyRouteComponent(
+  () => import('./routes/admin/users'),
+  'AdminUsersPage',
+);
+const AdminUserDetailPage = lazyRouteComponent(
+  () => import('./routes/admin/user-detail'),
+  'AdminUserDetailPage',
+);
+const AdminTerminalSessionsPage = lazyRouteComponent(
+  () => import('./routes/admin/terminal-sessions'),
+  'AdminTerminalSessionsPage',
+);
+const AdminHealthPage = lazyRouteComponent(
+  () => import('./routes/admin/health'),
+  'AdminHealthPage',
+);
+const AdminAuditPage = lazyRouteComponent(
+  () => import('./routes/admin/audit'),
+  'AdminAuditPage',
+);
+const AdminSettingsPage = lazyRouteComponent(
+  () => import('./routes/admin/settings'),
+  'AdminSettingsPage',
 );
 
 const SEO_BY_PATH = new Map(ROUTE_SEO.map((route) => [route.path, route]));
@@ -270,6 +299,61 @@ const terminalFixturesRoute = createRoute({
   head: () => headFor('/terminal/render-test'),
 });
 
+const adminRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/admin',
+  component: AdminLayout,
+});
+
+const adminIndexRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: '/',
+  component: AdminOverviewPage,
+  head: () => headFor('/admin'),
+});
+
+const adminUsersRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'users',
+  component: AdminUsersPage,
+  head: () => headFor('/admin/users'),
+});
+
+const adminUserDetailRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'users/$userId',
+  component: AdminUserDetailPage,
+  head: () => headFor('/admin/users'),
+});
+
+const adminTerminalSessionsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'terminal-sessions',
+  component: AdminTerminalSessionsPage,
+  head: () => headFor('/admin/terminal-sessions'),
+});
+
+const adminHealthRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'health',
+  component: AdminHealthPage,
+  head: () => headFor('/admin/health'),
+});
+
+const adminAuditRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'audit',
+  component: AdminAuditPage,
+  head: () => headFor('/admin/audit'),
+});
+
+const adminSettingsRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: 'settings',
+  component: AdminSettingsPage,
+  head: () => headFor('/admin/settings'),
+});
+
 const desktopRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/desktop',
@@ -349,6 +433,15 @@ const routeTree = rootRoute.addChildren([
     signOutRoute,
   ]),
   terminalLayoutRoute.addChildren([terminalRoute, terminalFixturesRoute]),
+  adminRoute.addChildren([
+    adminIndexRoute,
+    adminUsersRoute,
+    adminUserDetailRoute,
+    adminTerminalSessionsRoute,
+    adminHealthRoute,
+    adminAuditRoute,
+    adminSettingsRoute,
+  ]),
   desktopRoute.addChildren([
     desktopIndexRoute,
     desktopTerminalRoute,

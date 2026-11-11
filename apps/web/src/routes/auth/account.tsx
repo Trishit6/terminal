@@ -314,6 +314,12 @@ export function AccountPage() {
             </h1>
             <p className="mt-0.5 text-sm text-muted-foreground">{user.email}</p>
             <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+              {user.role === 'admin' ? (
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-primary/35 bg-primary/10 px-2 py-0.5 text-primary">
+                  <ShieldCheck className="size-3" />
+                  Administrator
+                </span>
+              ) : null}
               <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-muted-foreground">
                 Member since {formatDate(user.created_at)}
               </span>
@@ -342,6 +348,25 @@ export function AccountPage() {
           </Link>
         </Button>
       </header>
+
+      {user.must_change_password ? (
+        <div className="mt-5 rounded-xl border border-primary/25 bg-primary/5 px-4 py-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs leading-relaxed text-foreground">
+              This account is still using its initial password. Change it before
+              using account features or terminal sessions.
+            </p>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => setTab('security')}
+            >
+              Change password
+            </Button>
+          </div>
+        </div>
+      ) : null}
 
       {!user.email_verified ? (
         <div className="mt-5 rounded-xl border border-warning/25 bg-warning/5 px-4 py-3">

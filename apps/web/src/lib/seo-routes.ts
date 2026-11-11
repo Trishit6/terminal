@@ -125,6 +125,48 @@ export const ROUTE_SEO: readonly RouteSeo[] = [
     indexable: false,
   },
   {
+    path: '/admin',
+    title: 'Administration overview — KERNEXT',
+    description:
+      'KERNEXT administration: account totals, live sessions, service health, and recent security events.',
+    indexable: false,
+  },
+  {
+    path: '/admin/users',
+    title: 'User management — KERNEXT Administration',
+    description:
+      'Search KERNEXT accounts, filter by role and status, and manage roles, account status, and sessions.',
+    indexable: false,
+  },
+  {
+    path: '/admin/terminal-sessions',
+    title: 'Terminal sessions — KERNEXT Administration',
+    description:
+      'Monitor live KERNEXT web terminal sessions and terminate authorized remote connections.',
+    indexable: false,
+  },
+  {
+    path: '/admin/health',
+    title: 'System health — KERNEXT Administration',
+    description:
+      'Real backend checks for the HTTP API, MariaDB, schema migrations, WebSocket service, and terminal transports.',
+    indexable: false,
+  },
+  {
+    path: '/admin/audit',
+    title: 'Audit log — KERNEXT Administration',
+    description:
+      'Persisted security and administrative events with actor, target, and safe metadata.',
+    indexable: false,
+  },
+  {
+    path: '/admin/settings',
+    title: 'Administrator settings — KERNEXT',
+    description:
+      'Manage your administrator profile, password, active sessions, and theme preference.',
+    indexable: false,
+  },
+  {
     path: '/desktop',
     title: 'Dashboard — KERNEXT Desktop',
     description: 'The KERNEXT desktop application dashboard.',

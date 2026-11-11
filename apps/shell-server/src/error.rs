@@ -42,6 +42,12 @@ impl ApiError {
         Self::new(StatusCode::NOT_FOUND, "not_found", message)
     }
 
+    /// `403 Forbidden` for an authenticated caller lacking permission.
+    #[must_use]
+    pub fn forbidden(message: impl Into<String>) -> Self {
+        Self::new(StatusCode::FORBIDDEN, "forbidden", message)
+    }
+
     /// `409 Conflict`.
     #[must_use]
     pub fn conflict(message: impl Into<String>) -> Self {

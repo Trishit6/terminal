@@ -1,0 +1,112 @@
+/* KERNEXT Cinematic 3D Design System Tokens */
+/* These CSS variables establish the visual language for the entire website */
+
+:root {
+  /* Color palette - Deep Space & Systems */
+  --bg: #050B14;
+  --bg-secondary: #071421;
+  --bg-tertiary: #0B111B;
+  --accent: #20D4E8;
+  --accent-secondary: #329BFF;
+  --violet: #8064E8;
+  --violet-subtle: rgba(128, 100, 232, 0.15);
+
+  --text-primary: #EAF2FC;
+  --text-secondary: #9BAFC4;
+  --text-muted: #6F8196;
+  --text-on-accent: #050B14;
+
+  --border: rgba(255, 255, 255, 0.08);
+  --border-subtle: rgba(255, 255, 255, 0.05);
+
+  --card-bg: rgba(5, 11, 20, 0.55);
+  --card-bg-subtle: rgba(7, 20, 33, 0.4);
+
+  --success: #5EE6A8;
+  --info: #67E8F9;
+
+  /* Gradients */
+  --gradient-primary: radial-gradient(circle at 20% 20%, rgba(34, 211, 238, 0.08), transparent 35%),
+    radial-gradient(circle at 80% 60%, rgba(139, 92, 246, 0.08), transparent 35%);
+  --gradient-hero: radial-gradient(circle at 15% 20%, rgba(34, 211, 238, 0.18), transparent 38%),
+    radial-gradient(circle at 85% 80%, rgba(139, 92, 246, 0.18), transparent 38%);
+
+  /* Shadows */
+  --shadow-card: 0 40px 120px -40px rgba(2, 8, 23, 0.95);
+  --shadow-sm: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-orbit: 0 0 80px rgba(34, 211, 238, 0.18);
+
+  /* Transitions */
+  --transition-default: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-slow: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --transition-default: all 0.01s;
+    --transition-slow: all 0.01s;
+  }
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01s !important;
+  }
+}
+
+/* Scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Focus visible */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Selection */
+::selection {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+/* Root background */
+html {
+  background: var(--bg);
+  color: var(--text-primary);
+}
+
+/* Make sure body fills the background */
+body {
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.6;
+}
+
+/* Make colors accessible via CSS var usage */
+.text-primary { color: var(--text-primary); }
+.text-secondary { color: var(--text-secondary); }
+.text-muted { color: var(--text-muted); }
+.text-accent { color: var(--accent); }
+.text-violet { color: var(--violet); }
+.bg-primary { background: var(--bg); }
+.bg-secondary { background: var(--bg-secondary); }
+.border-primary { border-color: var(--border); }

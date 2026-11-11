@@ -5,7 +5,7 @@ import { useAuth } from '@/components/auth/auth-provider';
 import { Button } from '@/components/ui/button';
 
 export function TerminalPage() {
-  const { ready, signedIn, accountsEnabled } = useAuth();
+  const { ready, signedIn, user, accountsEnabled } = useAuth();
 
   if (!ready) {
     return (
@@ -41,6 +41,35 @@ export function TerminalPage() {
             <Link to="/create-account">Create an account</Link>
           </Button>
         </div>
+        <p className="mt-5 text-[11px] text-muted-foreground">
+          The KERNEXT CLI and desktop terminal keep working offline without an
+          account.
+        </p>
+      </div>
+    );
+  }
+
+  // Synthetic accounts are created with a one-time password. The server
+  // rejects terminal sockets with `403 password_change_required` until that
+  // password is replaced, so do not open a WebSocket that is guaranteed to
+  // fail; show the required step and link straight to the security settings.
+  if (accountsEnabled && user?.must_change_password) {
+    return (
+      <div className="mx-auto flex w-full max-w-lg flex-col items-center px-4 py-24 text-center">
+        <div className="grid size-12 place-items-center rounded-2xl border border-warning/30 bg-warning/5">
+          <ShieldCheck className="size-5 text-warning" />
+        </div>
+        <h1 className="mt-5 text-2xl font-semibold tracking-[-0.02em]">
+          Change your initial password first.
+        </h1>
+        <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+          This account still uses the password it was created with. Terminal
+          sessions stay locked until you choose a new one, so no terminal
+          connection was attempted.
+        </p>
+        <Button asChild className="mt-6">
+          <Link to="/account">Change password</Link>
+        </Button>
         <p className="mt-5 text-[11px] text-muted-foreground">
           The KERNEXT CLI and desktop terminal keep working offline without an
           account.

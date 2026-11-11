@@ -25,6 +25,35 @@ pub const ALLOWED_ORIGINS: &[&str] = &[
     "https://tauri.localhost",
 ];
 
+/// Browser origins allowed to talk to the local server.
+///
+/// `KERNEXT_ALLOWED_ORIGINS` may replace the built-in allowlist with a
+/// comma-separated list (for example a deployed web origin). An empty or
+/// unset variable keeps the local development and Tauri origins.
+#[must_use]
+pub fn allowed_origins() -> Vec<String> {
+    let configured = std::env::var("KERNEXT_ALLOWED_ORIGINS")
+        .ok()
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|origin| !origin.is_empty())
+                .map(ToOwned::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    if configured.is_empty() {
+        ALLOWED_ORIGINS
+            .iter()
+            .map(|origin| (*origin).to_owned())
+            .collect()
+    } else {
+        configured
+    }
+}
+
 /// Validates a browser `Origin` header when one is present.
 pub fn authorize_origin(headers: &HeaderMap) -> Result<(), ApiError> {
     let Some(origin) = headers.get(header::ORIGIN) else {
@@ -35,7 +64,7 @@ pub fn authorize_origin(headers: &HeaderMap) -> Result<(), ApiError> {
         .to_str()
         .map_err(|_| ApiError::unauthorized("the Origin header is not valid UTF-8"))?;
 
-    if ALLOWED_ORIGINS.contains(&origin) {
+    if allowed_origins().iter().any(|allowed| allowed == origin) {
         Ok(())
     } else {
         Err(ApiError::unauthorized(format!(

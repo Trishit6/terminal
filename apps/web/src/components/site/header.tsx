@@ -1,5 +1,5 @@
 import { Link, useRouterState } from '@tanstack/react-router';
-import { ArrowUpRight, Menu, TerminalSquare, UserRound, X } from 'lucide-react';
+import { ArrowUpRight, Menu, ShieldCheck, TerminalSquare, UserRound, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
 import { Logo } from '@/components/site/logo';
@@ -18,6 +18,7 @@ const NAV_ITEMS = [
 
 export function SiteHeader({ compact = false }: { compact?: boolean }) {
   const [open, setOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
   const { signedIn, user } = useAuth();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
 
@@ -25,11 +26,20 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
     setOpen(false);
   }, [pathname]);
 
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 24);
+    onScroll();
+    window.addEventListener('scroll', onScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
+
   return (
     <header
       className={cn(
-        'sticky top-0 z-40 border-b border-border bg-background/75 backdrop-blur-xl',
-        compact ? 'supports-[backdrop-filter]:bg-background/65' : '',
+        'sticky top-0 z-40 border-b transition-colors duration-300',
+        scrolled || compact
+          ? 'border-border bg-background/85 backdrop-blur-xl supports-[backdrop-filter]:bg-background/70'
+          : 'border-transparent bg-transparent backdrop-blur-0',
       )}
     >
       <div className="mx-auto flex h-16 w-full max-w-site items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
@@ -54,6 +64,14 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
 
         <div className="flex items-center gap-2">
           <ThemeToggle />
+          {signedIn && user?.role === 'admin' ? (
+            <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
+              <Link to="/admin">
+                <ShieldCheck className="size-4" />
+                Admin
+              </Link>
+            </Button>
+          ) : null}
           <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
             <Link to={signedIn ? '/account' : '/sign-in'}>
               <UserRound className="size-4" />
@@ -97,6 +115,14 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
                 {item.label}
               </Link>
             ))}
+            {signedIn && user?.role === 'admin' ? (
+              <Button asChild variant="secondary" className="mt-2">
+                <Link to="/admin">
+                  <ShieldCheck className="size-4" />
+                  Administration
+                </Link>
+              </Button>
+            ) : null}
             <Button asChild variant="secondary" className="mt-2">
               <Link to={signedIn ? '/account' : '/sign-in'}>
                 <UserRound className="size-4" />

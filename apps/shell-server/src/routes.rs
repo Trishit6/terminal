@@ -1,14 +1,15 @@
 //! REST routes for the KERNEXT server.
 
-use crate::auth::{ALLOWED_ORIGINS, authorize_request};
+use crate::auth::{allowed_origins, authorize_request};
 use crate::auth_routes;
 use crate::db::AuthUser;
 use crate::error::ApiError;
 use crate::spa;
 use crate::state::{AppState, MAX_COMMAND_BYTES, ShellSession};
 use crate::ws;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -40,7 +41,9 @@ pub fn router(state: AppState) -> Router {
 pub fn router_with_static(state: AppState, web_dir: Option<PathBuf>) -> Router {
     let app = Router::new()
         .merge(auth_routes::router())
+        .merge(crate::admin::router())
         .route("/api/v1/health", get(health))
+        .route("/api/v1/health/database", get(health_database))
         .route("/api/v1/sessions", get(list_sessions).post(create_session))
         .route(
             "/api/v1/sessions/{id}",
@@ -69,15 +72,16 @@ pub fn router_with_static(state: AppState, web_dir: Option<PathBuf>) -> Router {
         _ => app.fallback(api_not_found),
     };
 
-    app.layer(cors_layer())
+    app.layer(middleware::from_fn(security_headers))
+        .layer(cors_layer())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
 fn cors_layer() -> CorsLayer {
-    let origins = ALLOWED_ORIGINS
+    let origins = allowed_origins()
         .iter()
-        .map(|origin| HeaderValue::from_static(origin))
+        .filter_map(|origin| HeaderValue::from_str(origin).ok())
         .collect::<Vec<_>>();
 
     CorsLayer::new()
@@ -100,6 +104,50 @@ fn cors_layer() -> CorsLayer {
         ])
 }
 
+/// Adds defensive response headers to every response, including the SPA and
+/// the JSON API. HSTS is only emitted in production so local HTTP development
+/// is not pinned to HTTPS.
+async fn security_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+
+    for (name, value) in [
+        (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        (header::X_FRAME_OPTIONS, "DENY"),
+        (header::REFERRER_POLICY, "no-referrer"),
+        (
+            header::HeaderName::from_static("permissions-policy"),
+            "geolocation=(), microphone=(), camera=()",
+        ),
+        (
+            header::CONTENT_SECURITY_POLICY,
+            "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; \
+             script-src 'self'; connect-src 'self' ws: wss:; font-src 'self' data:; \
+             frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+        ),
+    ] {
+        headers.insert(name, HeaderValue::from_static(value));
+    }
+
+    if production() {
+        headers.insert(
+            header::STRICT_TRANSPORT_SECURITY,
+            HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        );
+    }
+
+    response
+}
+
+fn production() -> bool {
+    static PRODUCTION: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *PRODUCTION.get_or_init(|| {
+        std::env::var("KERNEXT_ENV")
+            .map(|value| value.eq_ignore_ascii_case("production"))
+            .unwrap_or(false)
+    })
+}
+
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok".to_owned(),
@@ -110,6 +158,34 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
         platform: format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH),
         pty_available: ws::pty_binary().is_some(),
     })
+}
+
+/// Reports account-database connectivity. Terminal and local mode stay usable
+/// when the database is unavailable; this endpoint makes the failure explicit.
+async fn health_database(
+    State(state): State<AppState>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let Some(accounts) = state.accounts() else {
+        return Err(ApiError::unavailable(
+            "the KERNEXT account database is not configured. Set DATABASE_URL to enable accounts.",
+        ));
+    };
+
+    let started = std::time::Instant::now();
+    sqlx::query("SELECT 1")
+        .execute(accounts.db.pool())
+        .await
+        .map_err(|error| {
+            ApiError::unavailable(format!(
+                "the KERNEXT account database is not reachable: {error}"
+            ))
+        })?;
+
+    Ok(Json(serde_json::json!({
+        "status": "ok",
+        "database": "mariadb",
+        "latency_ms": started.elapsed().as_millis() as u64,
+    })))
 }
 
 async fn create_session(
@@ -229,7 +305,7 @@ async fn authorize_terminal(
     headers: &HeaderMap,
 ) -> Result<Option<AuthUser>, ApiError> {
     if state.requires_accounts() {
-        let user = auth_routes::require_account(state, headers).await?;
+        let user = auth_routes::require_account_active(state, headers).await?;
         Ok(Some(user))
     } else {
         authorize_request(state, headers)?;
