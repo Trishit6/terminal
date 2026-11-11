@@ -1,6 +1,7 @@
 import { Link, useRouterState } from '@tanstack/react-router';
-import { ArrowUpRight, Menu, TerminalSquare, X } from 'lucide-react';
+import { ArrowUpRight, Menu, TerminalSquare, UserRound, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { useAuth } from '@/components/auth/auth-provider';
 import { Logo } from '@/components/site/logo';
 import { ThemeToggle } from '@/components/site/theme-toggle';
 import { Button } from '@/components/ui/button';
@@ -17,6 +18,7 @@ const NAV_ITEMS = [
 
 export function SiteHeader({ compact = false }: { compact?: boolean }) {
   const [open, setOpen] = useState(false);
+  const { signedIn, user } = useAuth();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
 
   useEffect(() => {
@@ -52,6 +54,12 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
 
         <div className="flex items-center gap-2">
           <ThemeToggle />
+          <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
+            <Link to={signedIn ? '/account' : '/sign-in'}>
+              <UserRound className="size-4" />
+              {signedIn ? (user?.full_name.split(' ')[0] ?? 'Account') : 'Sign in'}
+            </Link>
+          </Button>
           <Button asChild size="sm" className="hidden sm:inline-flex">
             <Link to="/terminal">
               <TerminalSquare className="size-4" />
@@ -89,7 +97,13 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
                 {item.label}
               </Link>
             ))}
-            <Button asChild className="mt-2">
+            <Button asChild variant="secondary" className="mt-2">
+              <Link to={signedIn ? '/account' : '/sign-in'}>
+                <UserRound className="size-4" />
+                {signedIn ? 'Your account' : 'Sign in'}
+              </Link>
+            </Button>
+            <Button asChild className="mt-1">
               <Link to="/terminal">
                 <TerminalSquare className="size-4" />
                 Open terminal

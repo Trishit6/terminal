@@ -1,0 +1,187 @@
+/**
+ * Canonical route metadata — the single source of truth for every route's
+ * document title and description.
+ *
+ * Consumers:
+ * - `router.tsx` builds each route's `head()` payload from `ROUTE_SEO`.
+ * - `scripts/seo.mjs` imports this file at build time (Node's native
+ *   TypeScript type stripping) and emits `dist/routes.json`,
+ *   `dist/sitemap.xml`, `dist/robots.txt`, and `dist/llms.txt`.
+ * - `apps/shell-server` loads `dist/routes.json` to patch the SPA shell's
+ *   head tags per route and to answer unknown paths with a real 404.
+ *
+ * Keep this file dependency-free (types and constants only): it must import
+ * nothing, so plain Node can load it without a bundler.
+ */
+
+export interface RouteSeo {
+  /** Route path exactly as registered in the router, lowercase, no trailing slash. */
+  readonly path: string;
+  /** Full, unique document title. */
+  readonly title: string;
+  /** One or two sentences describing this page's actual content. */
+  readonly description: string;
+  /** `true` for public, indexable marketing and documentation pages. */
+  readonly indexable: boolean;
+}
+
+export const ROUTE_SEO: readonly RouteSeo[] = [
+  {
+    path: '/',
+    title: 'KERNEXT — The Next Core of Computing.',
+    description:
+      'KERNEXT is a native Rust shell engine with a real PTY, a local Axum runtime, and one terminal that runs on the CLI, web, and desktop.',
+    indexable: true,
+  },
+  {
+    path: '/features',
+    title: 'KERNEXT Features — A Native Rust-Powered Shell',
+    description:
+      'A real lexer, parser, and evaluator in Rust: native pipelines, redirections, scripting, background jobs, a genuine PTY, and one engine behind the CLI, web, and desktop surfaces.',
+    indexable: true,
+  },
+  {
+    path: '/docs',
+    title: 'KERNEXT Documentation — Guides and References',
+    description:
+      'KERNEXT documentation: local quick start, HTTP API, WebSocket transports, security model, and verification status for the CLI, web terminal, and desktop app.',
+    indexable: true,
+  },
+  {
+    path: '/downloads',
+    title: 'Download KERNEXT — Windows, Linux and macOS',
+    description:
+      'Download KERNEXT from its GitHub releases or build it from source: CLI executable, desktop installers, and SHA-256 checksums for Windows, Linux, and macOS.',
+    indexable: true,
+  },
+  {
+    path: '/about',
+    title: 'About KERNEXT — Independent. Native. Engineered.',
+    description:
+      'KERNEXT is an open, powerful, independent Rust shell engine. One execution path, three surfaces, honest verification claims.',
+    indexable: true,
+  },
+  {
+    path: '/contact',
+    title: 'Contact KERNEXT — Get in Touch',
+    description:
+      'The KERNEXT repository is the single official channel for issues, contributions, and security reports.',
+    indexable: true,
+  },
+  {
+    path: '/terminal',
+    title: 'Web terminal — KERNEXT',
+    description:
+      'A real PTY or engine session served by the local KERNEXT Axum runtime — streaming output, interactive input, and genuine command execution.',
+    indexable: false,
+  },
+  {
+    path: '/terminal/render-test',
+    title: 'Terminal render test — KERNEXT',
+    description:
+      'Scripted terminal rendering fixtures for the KERNEXT DOM renderer: text, colours, Unicode, wrapping, long streams, and resize behaviour.',
+    indexable: false,
+  },
+  {
+    path: '/sign-in',
+    title: 'Sign in — KERNEXT',
+    description: 'Sign in to your KERNEXT account to open the web terminal.',
+    indexable: false,
+  },
+  {
+    path: '/create-account',
+    title: 'Create account — KERNEXT',
+    description: 'Create a KERNEXT account for the web terminal and desktop app.',
+    indexable: false,
+  },
+  {
+    path: '/forgot-password',
+    title: 'Reset your password — KERNEXT',
+    description: 'Request a KERNEXT password reset link by email.',
+    indexable: false,
+  },
+  {
+    path: '/reset-password',
+    title: 'Choose a new password — KERNEXT',
+    description: 'Set a new password for your KERNEXT account.',
+    indexable: false,
+  },
+  {
+    path: '/verify-email',
+    title: 'Verify email — KERNEXT',
+    description: 'Confirm your KERNEXT email address to activate the web terminal and desktop app.',
+    indexable: false,
+  },
+  {
+    path: '/account',
+    title: 'Your account — KERNEXT',
+    description: 'Manage your KERNEXT account, sessions, and preferences.',
+    indexable: false,
+  },
+  {
+    path: '/sign-out',
+    title: 'Signed out — KERNEXT',
+    description: 'You have signed out of your KERNEXT account.',
+    indexable: false,
+  },
+  {
+    path: '/desktop',
+    title: 'Dashboard — KERNEXT Desktop',
+    description: 'The KERNEXT desktop application dashboard.',
+    indexable: false,
+  },
+  {
+    path: '/desktop/terminal',
+    title: 'Terminal — KERNEXT Desktop',
+    description: 'Multi-tab terminal sessions in the KERNEXT desktop application.',
+    indexable: false,
+  },
+  {
+    path: '/desktop/commands',
+    title: 'Command Explorer — KERNEXT Desktop',
+    description: 'Browse the KERNEXT built-in command registry.',
+    indexable: false,
+  },
+  {
+    path: '/desktop/files',
+    title: 'File Explorer — KERNEXT Desktop',
+    description: 'Browse files through the KERNEXT desktop runtime.',
+    indexable: false,
+  },
+  {
+    path: '/desktop/sessions',
+    title: 'Sessions — KERNEXT Desktop',
+    description: 'Manage terminal sessions in the KERNEXT desktop application.',
+    indexable: false,
+  },
+  {
+    path: '/desktop/account',
+    title: 'Account — KERNEXT Desktop',
+    description: 'Your KERNEXT account in the desktop application.',
+    indexable: false,
+  },
+  {
+    path: '/desktop/settings',
+    title: 'Settings — KERNEXT Desktop',
+    description: 'Configure the KERNEXT desktop application: appearance, terminals, and account options.',
+    indexable: false,
+  },
+  {
+    path: '/desktop/about',
+    title: 'About — KERNEXT Desktop',
+    description: 'About the KERNEXT desktop application, its runtime, and how it relates to the CLI and web surfaces.',
+    indexable: false,
+  },
+];
+
+/** Metadata used when a path matches no route (the custom 404 page). */
+export const NOT_FOUND_SEO: Readonly<{ title: string; description: string }> = {
+  title: 'Page not found — KERNEXT',
+  description:
+    'The KERNEXT page you requested does not exist. The home page lists every section that does.',
+};
+
+/** Public routes listed in `sitemap.xml`. */
+export function sitemapRoutes(): readonly RouteSeo[] {
+  return ROUTE_SEO.filter((route) => route.indexable);
+}

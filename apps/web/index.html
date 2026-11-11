@@ -3,19 +3,70 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#05070d" />
+
+    <!-- Brand icons: SVG first for modern browsers, ICO for legacy tabs,
+         apple-touch-icon for iOS home screens, manifest for mobile
+         shortcuts and install metadata. -->
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- Fallback SEO tags for the home page: shown instantly on first paint,
+         read by non-JS crawlers, and patched per route by the web server.
+         React removes every [data-kernext-static] tag on mount and
+         <HeadContent /> renders the current route's metadata instead, so
+         each route keeps exactly one set of tags. Tags marked
+         data-kernext-origin additionally need the configured production
+         origin (VITE_PUBLIC_SITE_URL); the build removes them when no real
+         domain is configured rather than publishing a placeholder. -->
+    <title data-kernext-static>KERNEXT — The Next Core of Computing.</title>
     <meta
+      data-kernext-static
       name="description"
       content="KERNEXT is a native Rust shell engine with a real PTY, a local Axum runtime, and one terminal that runs on the CLI, web, and desktop."
     />
-    <meta name="theme-color" content="#05070d" />
-    <meta property="og:title" content="KERNEXT — The Next Core of Computing." />
+    <meta data-kernext-static name="robots" content="index,follow" />
     <meta
+      data-kernext-static
+      property="og:title"
+      content="KERNEXT — The Next Core of Computing."
+    />
+    <meta
+      data-kernext-static
       property="og:description"
       content="Open • Powerful • Independent. A native Rust shell engine for the CLI, web, and desktop."
     />
-    <meta property="og:type" content="website" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <title>KERNEXT — The Next Core of Computing.</title>
+    <meta data-kernext-static property="og:type" content="website" />
+    <meta data-kernext-static property="og:site_name" content="KERNEXT" />
+    <meta data-kernext-static data-kernext-origin property="og:url" content="/" />
+    <meta
+      data-kernext-static
+      data-kernext-origin
+      property="og:image"
+      content="/og-image.png"
+    />
+    <meta data-kernext-static data-kernext-origin property="og:image:width" content="1200" />
+    <meta data-kernext-static data-kernext-origin property="og:image:height" content="630" />
+    <meta data-kernext-static name="twitter:card" content="summary_large_image" />
+    <meta
+      data-kernext-static
+      name="twitter:title"
+      content="KERNEXT — The Next Core of Computing."
+    />
+    <meta
+      data-kernext-static
+      name="twitter:description"
+      content="Open • Powerful • Independent. A native Rust shell engine for the CLI, web, and desktop."
+    />
+    <meta
+      data-kernext-static
+      data-kernext-origin
+      name="twitter:image"
+      content="/og-image.png"
+    />
+    <link data-kernext-static data-kernext-origin rel="canonical" href="/" />
   </head>
   <body>
     <div id="root"></div>

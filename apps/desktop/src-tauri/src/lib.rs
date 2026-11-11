@@ -6,12 +6,14 @@
 //! user interface, but the desktop never routes commands through the public
 //! Axum server: it calls this local Rust runtime directly.
 
+pub mod account;
 pub mod command_catalog;
 pub mod filesystem;
 pub mod settings;
 pub mod state;
 pub mod terminal;
 
+use account::AccountState;
 use settings::{DesktopSettings, SettingsError};
 use shell_api::{API_VERSION, HealthResponse};
 use shell_core::{PRODUCT_NAME, VERSION};
@@ -34,6 +36,7 @@ pub fn run() -> Result<(), tauri::Error> {
                 .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?;
 
             app.manage(DesktopState::new(settings, config_dir));
+            app.manage(AccountState::new());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -57,6 +60,19 @@ pub fn run() -> Result<(), tauri::Error> {
             desktop_command_catalog,
             desktop_settings_get,
             desktop_settings_save,
+            desktop_auth_state,
+            desktop_auth_sign_in,
+            desktop_auth_register,
+            desktop_auth_sign_out,
+            desktop_auth_forgot_password,
+            desktop_auth_reset_password,
+            desktop_auth_verify_email,
+            desktop_auth_change_password,
+            desktop_auth_update_profile,
+            desktop_auth_sessions,
+            desktop_auth_revoke_session,
+            desktop_auth_resend_verification,
+            desktop_auth_update_preferences,
         ])
         .run(tauri::generate_context!())?;
 
@@ -242,6 +258,175 @@ fn desktop_settings_save(
     *current = settings.clone();
 
     Ok(settings)
+}
+
+// ---------------------------------------------------------------------------
+// Account commands
+//
+// These talk to the KERNEXT server from Rust. The session cookie never crosses
+// the IPC boundary, so ordinary frontend storage never holds a credential.
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Serialize)]
+struct DesktopRegisterResponse {
+    user: shell_server::db::PublicUser,
+    message: String,
+    email_verification_required: bool,
+    email_delivery: String,
+}
+
+#[derive(serde::Serialize)]
+struct DesktopForgotResponse {
+    message: String,
+    email_delivery: String,
+}
+
+#[derive(serde::Serialize)]
+struct DesktopMessageResponse {
+    message: String,
+}
+
+#[tauri::command]
+async fn desktop_auth_state(
+    state: State<'_, AccountState>,
+) -> Result<account::DesktopAuthState, String> {
+    Ok(state.inner().clone().state().await)
+}
+
+#[tauri::command]
+async fn desktop_auth_sign_in(
+    state: State<'_, AccountState>,
+    email: String,
+    password: String,
+    remember: bool,
+) -> Result<shell_server::db::PublicUser, String> {
+    state
+        .inner()
+        .clone()
+        .sign_in(email, password, remember)
+        .await
+}
+
+#[tauri::command]
+async fn desktop_auth_register(
+    state: State<'_, AccountState>,
+    full_name: String,
+    email: String,
+    password: String,
+    accept_terms: bool,
+) -> Result<DesktopRegisterResponse, String> {
+    let (user, message, email_delivery) = state
+        .inner()
+        .clone()
+        .register(full_name, email, password, accept_terms)
+        .await?;
+
+    Ok(DesktopRegisterResponse {
+        user,
+        message,
+        email_verification_required: true,
+        email_delivery,
+    })
+}
+
+#[tauri::command]
+async fn desktop_auth_sign_out(state: State<'_, AccountState>) -> Result<(), String> {
+    state.inner().clone().sign_out().await
+}
+
+#[tauri::command]
+async fn desktop_auth_forgot_password(
+    state: State<'_, AccountState>,
+    email: String,
+) -> Result<DesktopForgotResponse, String> {
+    let (message, email_delivery) = state.inner().clone().forgot_password(email).await?;
+    Ok(DesktopForgotResponse {
+        message,
+        email_delivery,
+    })
+}
+
+#[tauri::command]
+async fn desktop_auth_reset_password(
+    state: State<'_, AccountState>,
+    token: String,
+    password: String,
+) -> Result<DesktopMessageResponse, String> {
+    Ok(DesktopMessageResponse {
+        message: state
+            .inner()
+            .clone()
+            .reset_password(token, password)
+            .await?,
+    })
+}
+
+#[tauri::command]
+async fn desktop_auth_verify_email(
+    state: State<'_, AccountState>,
+    token: String,
+) -> Result<DesktopMessageResponse, String> {
+    Ok(DesktopMessageResponse {
+        message: state.inner().clone().verify_email(token).await?,
+    })
+}
+
+#[tauri::command]
+async fn desktop_auth_change_password(
+    state: State<'_, AccountState>,
+    current_password: String,
+    new_password: String,
+) -> Result<DesktopMessageResponse, String> {
+    Ok(DesktopMessageResponse {
+        message: state
+            .inner()
+            .clone()
+            .change_password(current_password, new_password)
+            .await?,
+    })
+}
+
+#[tauri::command]
+async fn desktop_auth_update_profile(
+    state: State<'_, AccountState>,
+    full_name: String,
+    email: String,
+) -> Result<shell_server::db::PublicUser, String> {
+    state.inner().clone().update_profile(full_name, email).await
+}
+
+#[tauri::command]
+async fn desktop_auth_sessions(
+    state: State<'_, AccountState>,
+) -> Result<Vec<serde_json::Value>, String> {
+    state.inner().clone().sessions().await
+}
+
+#[tauri::command]
+async fn desktop_auth_revoke_session(
+    state: State<'_, AccountState>,
+    id: String,
+) -> Result<(), String> {
+    state.inner().clone().revoke_session(id).await
+}
+
+#[tauri::command]
+async fn desktop_auth_resend_verification(
+    state: State<'_, AccountState>,
+) -> Result<DesktopForgotResponse, String> {
+    let email_delivery = state.inner().clone().resend_verification().await?;
+    Ok(DesktopForgotResponse {
+        message: "Verification status updated.".to_owned(),
+        email_delivery,
+    })
+}
+
+#[tauri::command]
+async fn desktop_auth_update_preferences(
+    state: State<'_, AccountState>,
+    theme: String,
+) -> Result<shell_server::db::Preferences, String> {
+    state.inner().clone().update_preferences(theme).await
 }
 
 #[cfg(test)]

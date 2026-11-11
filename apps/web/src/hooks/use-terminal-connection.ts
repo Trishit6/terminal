@@ -830,11 +830,18 @@ export function useTerminalConnection({
         return;
       }
 
+      // The visible grid must track the viewport in both modes. Otherwise the
+      // DOM buffer keeps its 24x80 default while the PTY is resized larger:
+      // full-screen repaints then address rows beyond the buffer, get clamped
+      // to the last grid row, and overwrite each other on screen. Engine mode
+      // wraps at 80 columns forever for the same reason.
+      engine.resize(rows, cols);
+
       if (modeRef.current === 'pty') {
         sendClient({ type: 'resize', rows, cols });
       }
     },
-    [sendClient],
+    [engine, sendClient],
   );
 
   const clear = useCallback(() => {

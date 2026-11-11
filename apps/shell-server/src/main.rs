@@ -2,6 +2,11 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
+    // `.env` next to the workspace root is the documented configuration path
+    // (see `.env.example`). Real environment variables always win; the file
+    // only fills in variables that were not already set.
+    let _ = dotenvy::dotenv();
+
     let filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("shell_server=info,tower_http=info"));
 

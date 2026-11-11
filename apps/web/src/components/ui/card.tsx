@@ -26,9 +26,12 @@ const CardHeader = React.forwardRef<HTMLDivElement, React.ComponentProps<'div'>>
 );
 CardHeader.displayName = 'CardHeader';
 
-const CardTitle = React.forwardRef<HTMLDivElement, React.ComponentProps<'div'>>(
+// Card titles are semantic `h3` elements: cards render inside section content
+// that already carries an `h1` (page) and `h2` (section), so `h3` completes a
+// valid heading outline instead of an anonymous div.
+const CardTitle = React.forwardRef<HTMLHeadingElement, React.ComponentProps<'h3'>>(
   ({ className, ...props }, ref) => (
-    <div
+    <h3
       ref={ref}
       className={cn('text-sm font-semibold tracking-tight', className)}
       {...props}

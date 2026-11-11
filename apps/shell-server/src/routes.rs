@@ -1,7 +1,10 @@
 //! REST routes for the KERNEXT server.
 
 use crate::auth::{ALLOWED_ORIGINS, authorize_request};
+use crate::auth_routes;
+use crate::db::AuthUser;
 use crate::error::ApiError;
+use crate::spa;
 use crate::state::{AppState, MAX_COMMAND_BYTES, ShellSession};
 use crate::ws;
 use axum::extract::{Path, State};
@@ -28,10 +31,15 @@ pub fn router(state: AppState) -> Router {
 /// Builds the router and optionally serves the built web client.
 ///
 /// `web_dir` is expected to contain `index.html` and Vite's `assets/` folder.
-/// Unmatched paths fall back to `index.html` so client-side router URLs work
-/// after a refresh. API routes always take precedence over the static fallback.
+/// When it also contains the route manifest (`routes.json`, written by
+/// `scripts/seo.mjs`), the SPA shell is served through [`crate::spa`] with
+/// per-route head patching and a real HTTP 404 for unknown paths. Without the
+/// manifest, every unmatched path still receives the shell with status 200 so
+/// client-side routes keep working. API routes always take precedence over
+/// the static fallback.
 pub fn router_with_static(state: AppState, web_dir: Option<PathBuf>) -> Router {
     let app = Router::new()
+        .merge(auth_routes::router())
         .route("/api/v1/health", get(health))
         .route("/api/v1/sessions", get(list_sessions).post(create_session))
         .route(
@@ -44,15 +52,21 @@ pub fn router_with_static(state: AppState, web_dir: Option<PathBuf>) -> Router {
 
     let app = match web_dir {
         Some(directory) if directory.is_dir() => {
-            let index = directory.join("index.html");
-            // `fallback` keeps the index response's own 200 status;
-            // `not_found_service` would force 404 even when the SPA shell is
-            // served successfully, which makes a client-side route such as
-            // `/terminal` look like a failed request on refresh.
-            let service = ServeDir::new(directory).fallback(ServeFile::new(index));
-            app.fallback_service(service)
+            match spa::SpaShell::load(&directory) {
+                Some(shell) => {
+                    let service = spa::static_service(&directory, std::sync::Arc::new(shell));
+                    app.fallback_service(service)
+                }
+                None => {
+                    // No route manifest: keep serving the SPA shell for any
+                    // path so client-side routes still work after a refresh.
+                    let index = directory.join("index.html");
+                    let service = ServeDir::new(directory).fallback(ServeFile::new(index));
+                    app.fallback_service(service)
+                }
+            }
         }
-        _ => app.fallback(not_found),
+        _ => app.fallback(api_not_found),
     };
 
     app.layer(cors_layer())
@@ -68,8 +82,22 @@ fn cors_layer() -> CorsLayer {
 
     CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
-        .allow_methods([Method::GET, Method::POST, Method::DELETE, Method::OPTIONS])
-        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION])
+        .allow_credentials(true)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PATCH,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            header::CONTENT_TYPE,
+            header::AUTHORIZATION,
+            header::COOKIE,
+            header::ACCEPT,
+            header::HeaderName::from_static("x-csrf-token"),
+        ])
 }
 
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
@@ -89,8 +117,8 @@ async fn create_session(
     headers: HeaderMap,
     Json(request): Json<CreateSessionRequest>,
 ) -> Result<Json<CreateSessionResponse>, ApiError> {
-    authorize_request(&state, &headers)?;
-    let session = state.create(&request)?;
+    let user = authorize_terminal(&state, &headers).await?;
+    let session = state.create_owned(&request, user.as_ref().map(|user| user.user.id.as_str()))?;
     let info = lock_session(&session)?.info();
 
     Ok(Json(CreateSessionResponse {
@@ -104,11 +132,14 @@ async fn list_sessions(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Json<SessionListResponse>, ApiError> {
-    authorize_request(&state, &headers)?;
+    let user = authorize_terminal(&state, &headers).await?;
 
-    Ok(Json(SessionListResponse {
-        sessions: state.list(),
-    }))
+    let sessions = match user {
+        Some(user) => state.list_owned(&user.user.id),
+        None => state.list(),
+    };
+
+    Ok(Json(SessionListResponse { sessions }))
 }
 
 async fn get_session(
@@ -116,11 +147,13 @@ async fn get_session(
     headers: HeaderMap,
     Path(id): Path<usize>,
 ) -> Result<Json<SessionInfo>, ApiError> {
-    authorize_request(&state, &headers)?;
+    let user = authorize_terminal(&state, &headers).await?;
     let session = state
         .get(SessionId(id))
         .ok_or_else(|| ApiError::not_found(format!("session {id} does not exist")))?;
-    let info = lock_session(&session)?.info();
+    let guard = lock_session(&session)?;
+    authorize_owned(&guard, user.as_ref())?;
+    let info = guard.info();
 
     Ok(Json(info))
 }
@@ -130,8 +163,15 @@ async fn delete_session(
     headers: HeaderMap,
     Path(id): Path<usize>,
 ) -> Result<StatusCode, ApiError> {
-    authorize_request(&state, &headers)?;
+    let user = authorize_terminal(&state, &headers).await?;
 
+    let session = state
+        .get(SessionId(id))
+        .ok_or_else(|| ApiError::not_found(format!("session {id} does not exist")))?;
+    {
+        let guard = lock_session(&session)?;
+        authorize_owned(&guard, user.as_ref())?;
+    }
     let session = state
         .remove(SessionId(id))
         .ok_or_else(|| ApiError::not_found(format!("session {id} does not exist")))?;
@@ -149,7 +189,7 @@ async fn execute_command(
     Path(id): Path<usize>,
     Json(request): Json<ExecuteCommandRequest>,
 ) -> Result<Json<ExecuteCommandResponse>, ApiError> {
-    authorize_request(&state, &headers)?;
+    let user = authorize_terminal(&state, &headers).await?;
 
     if request.command.len() > MAX_COMMAND_BYTES {
         return Err(ApiError::bad_request(format!(
@@ -160,6 +200,10 @@ async fn execute_command(
     let session = state
         .get(SessionId(id))
         .ok_or_else(|| ApiError::not_found(format!("session {id} does not exist")))?;
+    {
+        let guard = lock_session(&session)?;
+        authorize_owned(&guard, user.as_ref())?;
+    }
 
     let response = tokio::task::spawn_blocking(move || {
         let mut guard = lock_session(&session)?;
@@ -175,6 +219,37 @@ async fn execute_command(
     Ok(Json(response))
 }
 
+/// Enforces terminal authorization for one request.
+///
+/// With `DATABASE_URL` configured, a valid account session cookie is required
+/// and the returned user owns every terminal resource. Without it, the server
+/// keeps its documented local-only behavior.
+async fn authorize_terminal(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Option<AuthUser>, ApiError> {
+    if state.requires_accounts() {
+        let user = auth_routes::require_account(state, headers).await?;
+        Ok(Some(user))
+    } else {
+        authorize_request(state, headers)?;
+        Ok(None)
+    }
+}
+
+/// Rejects access to sessions owned by another account.
+fn authorize_owned(session: &ShellSession, user: Option<&AuthUser>) -> Result<(), ApiError> {
+    match user {
+        Some(user) if !session.is_owned_by(&user.user.id) => {
+            Err(ApiError::not_found("that terminal session does not exist"))
+        }
+        Some(_) if session.owner().is_none() => {
+            Err(ApiError::not_found("that terminal session does not exist"))
+        }
+        _ => Ok(()),
+    }
+}
+
 fn lock_session(
     session: &Arc<Mutex<ShellSession>>,
 ) -> Result<std::sync::MutexGuard<'_, ShellSession>, ApiError> {
@@ -183,7 +258,9 @@ fn lock_session(
         .map_err(|_| ApiError::internal("session lock was poisoned"))
 }
 
-async fn not_found() -> Response {
+/// JSON 404 for unmatched API paths; shared with the SPA shell fallback so
+/// unknown `/api/*` requests never receive an HTML body.
+pub(crate) async fn api_not_found() -> Response {
     (
         StatusCode::NOT_FOUND,
         Json(ApiErrorBody {

@@ -1,0 +1,32 @@
+# KERNEXT
+
+> The Next Core of Computing.
+
+KERNEXT is a native Rust shell engine with a real pseudoterminal (PTY), a
+local Axum runtime, and one terminal that runs on three surfaces: the CLI
+executable `kernext`, the local web terminal, and a Tauri 2 desktop
+application. One execution path — lexer, parser, AST evaluator, pipeline
+engine — is shared by all three surfaces; nothing is simulated.
+
+- Product: KERNEXT
+- Tagline: The Next Core of Computing.
+- Values: OPEN • POWERFUL • INDEPENDENT
+- Architecture: Rust workspace (shell-core, shell-builtins, shell-runtime,
+  shell-line-editor, shell-config, shell-api) plus a React web client and a
+  Tauri 2 desktop app
+- Platforms: Windows, Linux, macOS — built and tested on all three
+- CLI executable: `kernext`
+- Prompt: `kernext ~ $ `
+
+## Website
+
+- [Home](/)
+- [Features](/features)
+- [Documentation](/docs)
+- [Downloads](/downloads)
+- [About](/about)
+- [Contact](/contact)
+
+## Repository
+
+- https://github.com/Trishit6/terminal

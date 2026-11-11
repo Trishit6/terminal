@@ -101,16 +101,25 @@ export function AboutPage() {
         </motion.div>
       </div>
 
-      <div className="mt-12 grid gap-4 sm:grid-cols-3">
-        {VALUES.map((value) => (
-          <Card key={value.title} className="bg-surface/55">
-            <CardHeader>
-              <CardTitle className="text-base">{value.title}</CardTitle>
-              <CardDescription>{value.description}</CardDescription>
-            </CardHeader>
-          </Card>
-        ))}
-      </div>
+      {/* Section heading keeps the outline valid: h1 → h2 → card h3s. */}
+      <section>
+        <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-primary">
+          Values
+        </div>
+        <h2 className="mt-2 text-2xl font-semibold tracking-[-0.02em] sm:text-3xl">
+          What KERNEXT stands for
+        </h2>
+        <div className="mt-6 grid gap-4 sm:grid-cols-3">
+          {VALUES.map((value) => (
+            <Card key={value.title} className="bg-surface/55">
+              <CardHeader>
+                <CardTitle className="text-base">{value.title}</CardTitle>
+                <CardDescription>{value.description}</CardDescription>
+              </CardHeader>
+            </Card>
+          ))}
+        </div>
+      </section>
 
       <Separator className="my-12" />
 

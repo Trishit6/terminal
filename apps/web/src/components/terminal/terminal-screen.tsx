@@ -34,6 +34,29 @@ export interface TerminalScreenProps {
 
 const MAX_RENDERED_SCROLLBACK = 500;
 
+/**
+ * Fallbacks appended to any custom terminal font.
+ *
+ * A custom `fontFamily` must never be the whole `font-family` value: a machine
+ * without that font would fall back to the browser's default serif font, which
+ * breaks monospace cell alignment and makes tall block glyphs from symbol
+ * fallback fonts overlap row over row. The trailing generic family guarantees
+ * a monospace font is always used.
+ */
+const MONOSPACE_FALLBACK_STACK =
+  '"Cascadia Mono", "Cascadia Code", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace';
+
+function withMonospaceFallback(fontFamily: string | undefined): string | undefined {
+  if (!fontFamily) {
+    return undefined;
+  }
+
+  // A custom value may already be a full stack ending in a generic family.
+  const hasGeneric = /\b(monospace|serif|sans-serif)\s*$/i.test(fontFamily);
+
+  return hasGeneric ? fontFamily : `${fontFamily}, ${MONOSPACE_FALLBACK_STACK}`;
+}
+
 export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenProps>(
   function TerminalScreen(
     {
@@ -58,6 +81,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
     const composingRef = useRef(false);
     const [cellHeight, setCellHeight] = useState(22);
     const buffer = engine.buffer;
+    const effectiveFontFamily = withMonospaceFallback(fontFamily);
 
     onResizeRef.current = onResize;
 
@@ -110,9 +134,17 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
       observer.observe(scroll);
       const frame = window.requestAnimationFrame(measure);
 
+      // Glyph metrics change when a font finishes loading. Re-measure so the
+      // cell grid is computed from the font that actually renders, not from
+      // the substitute the browser used while the font was loading.
+      const remeasure = () => measure();
+      document.fonts.addEventListener('loadingdone', remeasure);
+      void document.fonts.ready.then(remeasure);
+
       return () => {
         observer.disconnect();
         window.cancelAnimationFrame(frame);
+        document.fonts.removeEventListener('loadingdone', remeasure);
       };
     }, [measure, fontSize, fontFamily]);
 
@@ -238,7 +270,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
           {
             '--terminal-line-height': `${cellHeight}px`,
             fontSize: `${fontSize}px`,
-            fontFamily: fontFamily ?? undefined,
+            fontFamily: effectiveFontFamily,
           } as CSSProperties
         }
         onClick={focus}
@@ -255,7 +287,7 @@ export const TerminalScreen = forwardRef<TerminalScreenHandle, TerminalScreenPro
             ref={probeRef}
             aria-hidden="true"
             className="pointer-events-none invisible absolute whitespace-pre font-mono"
-            style={{ fontSize: `${fontSize}px`, fontFamily: fontFamily ?? undefined }}
+            style={{ fontSize: `${fontSize}px`, fontFamily: effectiveFontFamily }}
           >
             {'W'.repeat(20)}
           </span>

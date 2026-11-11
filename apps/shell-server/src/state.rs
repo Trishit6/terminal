@@ -1,5 +1,6 @@
 //! Session registry and in-process KERNEXT engine instances.
 
+use crate::db::{AuthConfig, Database, Mailer, RateLimiter};
 use crate::error::ApiError;
 use shell_api::{
     CreateSessionRequest, ExecuteCommandRequest, ExecuteCommandResponse, SessionId, SessionInfo,
@@ -23,6 +24,7 @@ pub struct ShellSession {
     dispatcher: Dispatcher,
     created_at: Instant,
     last_active: Instant,
+    owner: Option<String>,
 }
 
 impl std::fmt::Debug for ShellSession {
@@ -38,6 +40,15 @@ impl std::fmt::Debug for ShellSession {
 impl ShellSession {
     /// Creates a session with the server's capture-oriented process I/O.
     pub fn new(id: SessionId, request: &CreateSessionRequest) -> Result<Self, ApiError> {
+        Self::new_owned(id, request, None)
+    }
+
+    /// Creates a session owned by an authenticated account.
+    pub fn new_owned(
+        id: SessionId,
+        request: &CreateSessionRequest,
+        owner: Option<String>,
+    ) -> Result<Self, ApiError> {
         let config = load_config();
         let mut session = Session::new(config)
             .map_err(|error| ApiError::internal(format!("could not start shell: {error}")))?;
@@ -63,7 +74,26 @@ impl ShellSession {
             dispatcher,
             created_at: now,
             last_active: now,
+            owner,
         })
+    }
+
+    /// Account that owns this session, when the account system is enabled.
+    #[must_use]
+    pub fn owner(&self) -> Option<&str> {
+        self.owner.as_deref()
+    }
+
+    /// Whether `user_id` may access this session.
+    ///
+    /// Sessions created without an owner (local-only server, tests, the
+    /// desktop runtime) are accessible to local callers.
+    #[must_use]
+    pub fn is_owned_by(&self, user_id: &str) -> bool {
+        match self.owner.as_deref() {
+            Some(owner) => owner == user_id,
+            None => false,
+        }
     }
 
     /// Session identifier.
@@ -207,6 +237,26 @@ impl ShellSession {
     }
 }
 
+/// Releases a pseudoterminal slot when the socket task ends.
+#[derive(Debug)]
+pub struct PtyPermit {
+    counts: Arc<Mutex<HashMap<String, usize>>>,
+    owner: String,
+}
+
+impl Drop for PtyPermit {
+    fn drop(&mut self) {
+        if let Ok(mut counts) = self.counts.lock()
+            && let Some(count) = counts.get_mut(&self.owner)
+        {
+            *count = count.saturating_sub(1);
+            if *count == 0 {
+                counts.remove(&self.owner);
+            }
+        }
+    }
+}
+
 /// State captured before request-scoped overrides are applied.
 #[derive(Debug)]
 pub struct SessionOverrides {
@@ -278,6 +328,33 @@ pub const fn action_name(action: CommandAction) -> &'static str {
     }
 }
 
+/// Account system attached to a server instance.
+///
+/// When this is present, terminal endpoints require a signed-in user and every
+/// session is bound to its owner. When it is absent the server keeps its
+/// original local-only bearer-token behavior, documented as such.
+#[derive(Clone)]
+pub struct AuthContext {
+    pub db: Arc<Database>,
+    pub config: Arc<AuthConfig>,
+    pub mailer: Arc<Mailer>,
+    pub limiter: Arc<RateLimiter>,
+}
+
+impl AuthContext {
+    /// Builds the account context from a connected database.
+    #[must_use]
+    pub fn new(db: Database, config: AuthConfig) -> Self {
+        let mailer = Mailer::from_env(&config.public_url);
+        Self {
+            db: Arc::new(db),
+            config: Arc::new(config),
+            mailer: Arc::new(mailer),
+            limiter: Arc::new(RateLimiter::default()),
+        }
+    }
+}
+
 /// Shared server state.
 #[derive(Clone)]
 pub struct AppState {
@@ -285,6 +362,8 @@ pub struct AppState {
     next_id: Arc<AtomicUsize>,
     token: Option<Arc<str>>,
     max_sessions: usize,
+    accounts: Option<Arc<AuthContext>>,
+    pty_counts: Arc<Mutex<HashMap<String, usize>>>,
 }
 
 impl AppState {
@@ -310,7 +389,28 @@ impl AppState {
             next_id: Arc::new(AtomicUsize::new(1)),
             token,
             max_sessions,
+            accounts: None,
+            pty_counts: Arc::new(Mutex::new(HashMap::new())),
         }
+    }
+
+    /// Attaches the MariaDB-backed account system.
+    #[must_use]
+    pub fn with_accounts(mut self, accounts: AuthContext) -> Self {
+        self.accounts = Some(Arc::new(accounts));
+        self
+    }
+
+    /// Account system, when `DATABASE_URL` was configured.
+    #[must_use]
+    pub fn accounts(&self) -> Option<Arc<AuthContext>> {
+        self.accounts.clone()
+    }
+
+    /// Whether terminal access requires an authenticated account.
+    #[must_use]
+    pub fn requires_accounts(&self) -> bool {
+        self.accounts.is_some()
     }
 
     /// Configured bearer token, when authentication is enabled.
@@ -330,6 +430,8 @@ impl AppState {
             next_id: Arc::new(AtomicUsize::new(1)),
             token: None,
             max_sessions: 16,
+            accounts: None,
+            pty_counts: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -350,6 +452,15 @@ impl AppState {
         &self,
         request: &CreateSessionRequest,
     ) -> Result<Arc<Mutex<ShellSession>>, ApiError> {
+        self.create_owned(request, None)
+    }
+
+    /// Creates a session bound to an account.
+    pub fn create_owned(
+        &self,
+        request: &CreateSessionRequest,
+        owner: Option<&str>,
+    ) -> Result<Arc<Mutex<ShellSession>>, ApiError> {
         let mut sessions = self
             .sessions
             .lock()
@@ -362,12 +473,35 @@ impl AppState {
             )));
         }
 
+        let user_sessions = match owner {
+            Some(owner) => sessions
+                .values()
+                .filter(|session| {
+                    session
+                        .lock()
+                        .map(|guard| guard.is_owned_by(owner))
+                        .unwrap_or(false)
+                })
+                .count(),
+            None => 0,
+        };
+
+        if owner.is_some() && user_sessions >= self.max_sessions_per_user() {
+            return Err(ApiError::conflict(
+                "this account already has the maximum number of terminal sessions",
+            ));
+        }
+
         let id = SessionId(self.next_id.fetch_add(1, Ordering::Relaxed));
-        let shell = ShellSession::new(id, request)?;
+        let shell = ShellSession::new_owned(id, request, owner.map(ToOwned::to_owned))?;
         let session = Arc::new(Mutex::new(shell));
         sessions.insert(id, Arc::clone(&session));
 
         Ok(session)
+    }
+
+    fn max_sessions_per_user(&self) -> usize {
+        4
     }
 
     /// Looks up a session by identifier.
@@ -390,6 +524,16 @@ impl AppState {
     /// Lists sessions ordered by identifier.
     #[must_use]
     pub fn list(&self) -> Vec<SessionInfo> {
+        self.list_filtered(None)
+    }
+
+    /// Lists sessions owned by one account.
+    #[must_use]
+    pub fn list_owned(&self, user_id: &str) -> Vec<SessionInfo> {
+        self.list_filtered(Some(user_id))
+    }
+
+    fn list_filtered(&self, owner: Option<&str>) -> Vec<SessionInfo> {
         let sessions = match self.sessions.lock() {
             Ok(guard) => guard.values().cloned().collect::<Vec<_>>(),
             Err(_) => return Vec::new(),
@@ -397,11 +541,47 @@ impl AppState {
 
         let mut listed = sessions
             .into_iter()
-            .filter_map(|session| session.lock().ok().map(|guard| guard.info()))
+            .filter_map(|session| {
+                let guard = session.lock().ok()?;
+                let visible = match owner {
+                    Some(owner) => guard.is_owned_by(owner),
+                    None => true,
+                };
+                visible.then(|| guard.info())
+            })
             .collect::<Vec<_>>();
 
         listed.sort_by_key(|session| session.id);
         listed
+    }
+
+    /// Reserves a pseudoterminal slot for an account (or `local` when the
+    /// server runs without accounts). Release it by dropping the returned
+    /// permit, which happens when the WebSocket task ends.
+    pub fn acquire_pty(&self, owner: &str) -> Result<PtyPermit, ApiError> {
+        let limit = if self.accounts.is_some() {
+            2
+        } else {
+            self.max_sessions
+        };
+        let mut counts = self
+            .pty_counts
+            .lock()
+            .map_err(|_| ApiError::internal("pseudoterminal registry lock was poisoned"))?;
+        let count = counts.entry(owner.to_owned()).or_insert(0);
+
+        if *count >= limit {
+            return Err(ApiError::conflict(
+                "this account already has the maximum number of pseudoterminals",
+            ));
+        }
+
+        *count += 1;
+
+        Ok(PtyPermit {
+            counts: Arc::clone(&self.pty_counts),
+            owner: owner.to_owned(),
+        })
     }
 
     /// Removes sessions that have been idle for longer than `max_idle`.

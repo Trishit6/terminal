@@ -1,0 +1,1 @@
+function e(e){return e.length<10?`Use at least 10 characters.`:e.length>128?`Use at most 128 characters.`:/[a-zA-Z]/.test(e)?/[0-9]/.test(e)?null:`Include at least one number.`:`Include at least one letter.`}function t(e){let t=e.trim();return t.length<=320&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)}export{e as n,t};

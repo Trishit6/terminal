@@ -1,0 +1,12 @@
+# robots.txt for KERNEXT
+# Crawling of the public website is allowed. Private application areas
+# (the desktop webview routes and the render-test fixture) and API
+# endpoints are excluded from crawling; account and terminal pages carry
+# robots noindex metadata instead, so crawlers can see and honor it.
+# robots.txt is not an authentication or privacy mechanism.
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /desktop/
+Disallow: /terminal/render-test

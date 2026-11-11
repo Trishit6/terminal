@@ -2,12 +2,14 @@
 
 ## Project
 
-KERNEXT is a custom Rust CLI shell with three implemented surfaces that share
+KERNEXT is a custom Rust shell with three implemented surfaces that share
 one engine: the CLI (`apps/shell-cli`), the local web server and React front
 end (`apps/shell-server`, `apps/web`), and the Tauri 2 desktop application
-(`apps/desktop`). The CLI phase is implemented, including branding, startup
-presentation, genuine `clear`/Ctrl+L, and config loading. Do not start new
-KERNEXT Web or Desktop feature work unless explicitly asked.
+(`apps/desktop`). The surfaces are implemented and tested, including branding,
+startup presentation, genuine `clear`/Ctrl+L, config loading, the web terminal
+(engine and real PTY transports), and MariaDB-backed accounts with email
+verification. Do not start new KERNEXT Web or Desktop feature work unless
+explicitly asked.
 
 Official identity:
 
@@ -31,7 +33,7 @@ Workspace members:
 - `apps/shell-cli` — binary package `shell-cli`; executable name is `kernext`;
   `src/dev.rs` implements the project commands and `kernext doctor`
 - `apps/shell-server` — local Axum server (HTTP sessions, engine and PTY
-  WebSockets)
+  WebSockets, MariaDB-backed accounts, CSRF, email)
 - `apps/web` — React + Vite + Tailwind front end shared by web and desktop
 - `apps/desktop` — Tauri 2 desktop application (crate `shell-desktop`,
   binary `kernext-desktop`); `apps/desktop/src-tauri` is the crate root
@@ -43,6 +45,7 @@ Workspace members:
 - `crates/shell-config` — TOML configuration model
 - `crates/shell-api` — serializable session/terminal API contracts shared by
   the web server and the desktop runtime
+- `scripts/` — developer tooling; `dev.mjs` runs the backend + web dev stack
 - `installers/` — Linux, macOS, Windows installation scripts
 - `docs/` — branding, architecture, desktop, and status documentation
 
@@ -195,6 +198,52 @@ must keep using `lex_spanned` + `parse`.
 - Grouped pipeline stages are unsupported: report
   `"Grouped pipelines are not supported yet."` Standalone groups still run.
 
+## Web terminal renderer
+
+- The web and desktop terminals share one component tree:
+  `TerminalWorkspace` -> `TerminalScreen` in
+  `apps/web/src/components/terminal/`. The screen is a DOM renderer (rows of
+  `div.terminal-row` with `<span>` runs), **not** a canvas. Do not introduce
+  xterm.js, a canvas renderer, or any other terminal dependency; the
+  buffer/parser/renderer pipeline in `apps/web/src/lib/terminal/`
+  (`ansi.ts`, `buffer.ts`, `engine.ts`, `input.ts`, `palette.ts`, `types.ts`,
+  `socket.ts`) is deliberate and unit-tested in Node without a DOM.
+- Font metrics: `TerminalScreen` measures one cell from a hidden probe span
+  (`'W'.repeat(20)` plus computed line height) and drives row height through
+  the `--terminal-line-height` CSS variable. Cell metrics must be measured
+  with the same font stack that renders the rows.
+- **Never set a single-font `font-family` on the terminal.** A custom font
+  name must always be followed by the monospace fallback stack and a generic
+  family: a machine without the custom font otherwise falls back to the
+  browser's default serif font, which destroys monospace alignment and makes
+  tall block glyphs overlap row over row (the "squashed blocks" corruption).
+  `withMonospaceFallback` in `terminal-screen.tsx` enforces this for every
+  `fontFamily` prop.
+- Re-measure after fonts load (`document.fonts.ready` plus the
+  `loadingdone` event): glyph metrics change when a font finishes loading, so
+  the cell grid must be recomputed from the font that actually renders, not
+  from the substitute used while it loaded.
+- **Resize invariant:** `useTerminalConnection.resize` must call
+  `engine.resize(rows, cols)` in both PTY and engine mode whenever the
+  measured size changes, then send `resize` to the PTY. If the visible grid
+  keeps its 24x80 default while the PTY grows, full-screen repaints address
+  rows beyond the buffer, get clamped to the last grid row, and overwrite each
+  other on screen. Engine mode wraps at 80 columns forever for the same
+  reason. Guard with a previous-size change to avoid resize feedback loops.
+- PTY transport: `apps/shell-server/src/ws.rs` spawns the real `kernext`
+  binary through ConPTY/openpty, relays raw bytes, and applies `resize`
+  messages to the PTY. The browser terminal and the PTY must agree on
+  rows/cols; verify with `mode con` on Windows.
+- `/terminal/render-test` (`apps/web/src/routes/terminal-fixtures.tsx`) is a
+  backend-free visual regression fixture: text, ANSI colours, Unicode, block
+  art, wrapped/unbroken lines, 100/1000-line streams, a local line editor
+  for typing, and a viewport size toggle. Keep it working.
+- Motion animations run under
+  `<MotionConfig reducedMotion={import.meta.env.PROD ? 'user' : 'never'}>` in
+  `main.tsx`: production respects the OS Reduced Motion preference, while
+  development keeps animations visible without the console warning (see
+  motion.dev/troubleshooting/reduced-motion-disabled). Do not remove this.
+
 ## Canonical checkout and duplicate-copy hazard
 
 The user-designated canonical project is:
@@ -306,14 +355,21 @@ Front end and desktop (npm workspaces, Node.js 22+, npm 10+; lockfile is
 
 ```bash
 npm ci                     # install apps/web and apps/desktop from the lockfile
+npm run dev                # full stack: shell-server on 7878 + vite on 5173
 npm run typecheck          # web typecheck (alias of web:typecheck)
 npm test                   # web Vitest suite (alias of web:test)
 npm run build              # web production build (alias of web:build)
-npm run web:dev            # vite dev server (http://127.0.0.1:5173)
+npm run web:dev            # vite dev server only (http://127.0.0.1:5173)
 npm run desktop:dev        # tauri dev (web + desktop window)
 npm run desktop:build      # tauri build (production bundle)
 cargo run -p shell-server  # local web API server
 ```
+
+`npm run dev` runs `scripts/dev.mjs`, which starts `cargo run -p shell-server`
+(with `.env` if present — see "Accounts, database, and email") and the Vite dev
+server; the dev server proxies `/api` and WebSocket upgrades to
+`127.0.0.1:7878`. `shell-server` also serves the built web client from
+`apps/web/dist` (`router_with_static`), with SPA fallback to `index.html`.
 
 The root `desktop:*` scripts delegate to the `dev`/`build` scripts inside
 `apps/desktop/package.json`. npm workspaces are declared in the root
@@ -468,6 +524,37 @@ The interactive shell requires a real TTY. Piping input directly into
 - `SHELL_NAME` determines config directory names (`kernext`).
 - `history_file` resolves relative to the config directory unless absolute.
 - Keep unknown fields rejected (`deny_unknown_fields`) and `history_size > 0`.
+
+## Accounts, database, and email
+
+- Two server modes (`apps/shell-server/src/lib.rs`): **account mode** when
+  `DATABASE_URL` is set — MariaDB-backed registration, Argon2id password
+  hashing, HttpOnly session cookies, CSRF double-submit, and every terminal
+  session bound to the signed-in account — and **local mode** when it is unset
+  (loopback-only, optional `KERNEXT_SERVER_TOKEN`).
+- Environment configuration comes from the gitignored `.env` at the workspace
+  root, loaded by `dotenvy` in `apps/shell-server/src/main.rs`. Real
+  environment variables always win; the file only fills gaps. `.env.example`
+  documents every variable. Never commit `.env` or real credentials.
+- `DATABASE_URL` is a `mysql://USER:PASSWORD@127.0.0.1:3307/DATABASE` URL.
+  Local development uses the local MariaDB on port 3307 with a dedicated
+  `kernext` database and `kernext` user; do not use the machine's shared
+  `root` account for the server.
+- Migrations live in `apps/shell-server/migrations/` and are applied by sqlx
+  at startup. They must stay idempotent (re-runnable) and never drop tables.
+- Session, password-reset, and email-verification tokens are generated from
+  the OS CSPRNG and only their SHA-256 hashes are persisted. Register, login,
+  verify, and reset endpoints are rate-limited.
+- `KERNEXT_DEV_MAIL=1` returns verification/reset tokens in the API response
+  instead of sending email. Real SMTP uses
+  `SMTP_HOST`/`SMTP_PORT`/`SMTP_USERNAME`/`SMTP_PASSWORD`/`SMTP_FROM`.
+- Web client: `apps/web/src/lib/auth.ts` (cookie sessions, CSRF header,
+  `AuthProvider`). Desktop: `apps/desktop/src-tauri/src/account.rs` proxies the
+  server and keeps the session cookie in the OS credential store; the webview
+  only ever sees public profile data.
+- The web terminal page is account-gated in account mode; sessions carry an
+  owner and are listed/deleted per account. Local mode keeps the open
+  loopback behaviour for development and desktop-adjacent workflows.
 
 ## Built-in behavior
 

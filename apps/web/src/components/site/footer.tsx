@@ -24,9 +24,12 @@ export function SiteFooter() {
           </div>
 
           <div>
-            <h3 className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+            {/* Footer column headings are `h2` so pages that go straight from
+                the page `h1` into the footer keep a valid heading outline
+                (no skipped levels). */}
+            <h2 className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
               Product
-            </h3>
+            </h2>
             <ul className="mt-4 space-y-2.5 text-sm">
               <li>
                 <Link to="/terminal" className="text-muted-foreground transition-colors hover:text-foreground">
@@ -52,9 +55,9 @@ export function SiteFooter() {
           </div>
 
           <div>
-            <h3 className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+            <h2 className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
               Project
-            </h3>
+            </h2>
             <ul className="mt-4 space-y-2.5 text-sm">
               <li>
                 <Link to="/about" className="text-muted-foreground transition-colors hover:text-foreground">

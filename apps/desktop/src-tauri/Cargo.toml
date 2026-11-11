@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 chrono.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde.workspace = true
 serde_json.workspace = true
 shell-api.workspace = true
@@ -29,6 +30,15 @@ tauri.workspace = true
 tauri-plugin-opener.workspace = true
 tokio.workspace = true
 toml.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+keyring = { version = "3", features = ["sync-secret-service"] }
 
 [build-dependencies]
 tauri-build.workspace = true

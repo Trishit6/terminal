@@ -26,10 +26,17 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  // Environment files are shared with the server and live at the workspace
+  // root (see `.env.example`): the web client only reads `VITE_*` variables,
+  // so server secrets stay server-side.
+  envDir: fileURLToPath(new URL('../..', import.meta.url)),
+  // Disable Vite's console forwarding to avoid __SERVER_FORWARD_CONSOLE__
+  // being injected as `undefined` when the option is not explicitly set.
   server: {
     host: '127.0.0.1',
     port: 5173,
     strictPort: true,
+    forwardConsole: false,
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:7878',
@@ -52,7 +59,16 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    // Production source maps are not published: they would ship readable
+    // source to every visitor. Local debugging keeps dev-mode maps.
+    sourcemap: false,
     target: 'es2022',
+    // Workaround for Vite 8 / rolldown EISDIR bug when using index.html as entry.
+    // Using src/main.tsx as the entry point avoids the HTML plugin issue.
+    rollupOptions: {
+      input: {
+        main: './src/main.tsx',
+      },
+    },
   },
 });

@@ -18,9 +18,11 @@ edition = "2024"
 rust-version = "1.85"
 
 [workspace.dependencies]
+argon2 = "0.5"
 axum = { version = "0.8", features = ["ws"] }
-chrono = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.5", features = ["derive"] }
+dotenvy = "0.15"
 crossterm = "0.29"
 futures-util = "0.3"
 reedline = "0.49"
@@ -40,4 +42,9 @@ shell-config = { path = "crates/shell-config", version = "0.1.0" }
 shell-core = { path = "crates/shell-core", version = "0.1.0" }
 shell-line-editor = { path = "crates/shell-line-editor", version = "0.1.0" }
 shell-runtime = { path = "crates/shell-runtime", version = "0.1.0" }
+rand = "0.8"
+sha2 = "0.10"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "hostname"] }
 shell-api = { path = "crates/shell-api", version = "0.1.0" }
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "mysql", "uuid", "chrono", "migrate"] }
+uuid = { version = "1", features = ["v4"] }

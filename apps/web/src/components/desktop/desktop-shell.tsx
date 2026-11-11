@@ -11,6 +11,7 @@ import {
   Settings,
   Square,
   Terminal,
+  UserRound,
   X,
 } from 'lucide-react';
 import { LogoMark } from '@/components/site/logo';
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
   { to: '/desktop/commands', label: 'Command Explorer', icon: Command, exact: false },
   { to: '/desktop/files', label: 'File Explorer', icon: FolderOpen, exact: false },
   { to: '/desktop/sessions', label: 'Sessions', icon: Layers, exact: false },
+  { to: '/desktop/account', label: 'Account', icon: UserRound, exact: false },
   { to: '/desktop/settings', label: 'Settings', icon: Settings, exact: false },
   { to: '/desktop/about', label: 'About KERNEXT', icon: Info, exact: false },
 ] as const;

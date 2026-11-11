@@ -10,6 +10,7 @@
 //!   Ctrl+C.
 
 use crate::auth::authorize_ws;
+use crate::auth_routes;
 use crate::error::ApiError;
 use crate::state::{AppState, ShellSession};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
@@ -39,11 +40,27 @@ pub async fn session_socket(
     headers: HeaderMap,
     Query(auth): Query<WsAuth>,
 ) -> Result<Response, ApiError> {
-    authorize_ws(&state, &headers, auth.token.as_deref())?;
+    let user = if state.requires_accounts() {
+        Some(auth_routes::require_account(&state, &headers).await?)
+    } else {
+        authorize_ws(&state, &headers, auth.token.as_deref())?;
+        None
+    };
 
     let session = state
         .get(SessionId(id))
         .ok_or_else(|| ApiError::not_found(format!("session {id} does not exist")))?;
+
+    if let Some(user) = &user {
+        let owned = session
+            .lock()
+            .map(|guard| guard.is_owned_by(&user.user.id))
+            .unwrap_or(false);
+
+        if !owned {
+            return Err(ApiError::not_found(format!("session {id} does not exist")));
+        }
+    }
 
     Ok(ws
         .max_message_size(1024 * 1024)
@@ -57,7 +74,17 @@ pub async fn pty_socket(
     headers: HeaderMap,
     Query(auth): Query<WsAuth>,
 ) -> Result<Response, ApiError> {
-    authorize_ws(&state, &headers, auth.token.as_deref())?;
+    let owner = if state.requires_accounts() {
+        auth_routes::require_account(&state, &headers)
+            .await?
+            .user
+            .id
+    } else {
+        authorize_ws(&state, &headers, auth.token.as_deref())?;
+        "local".to_owned()
+    };
+
+    let permit = state.acquire_pty(&owner)?;
 
     let binary = pty_binary().ok_or_else(|| {
         ApiError::unavailable(
@@ -68,7 +95,10 @@ pub async fn pty_socket(
 
     Ok(ws
         .max_message_size(1024 * 1024)
-        .on_upgrade(move |socket| handle_pty_socket(socket, binary)))
+        .on_upgrade(move |socket| async move {
+            let _permit = permit;
+            handle_pty_socket(socket, binary).await;
+        }))
 }
 
 async fn handle_session_socket(socket: WebSocket, session: Arc<Mutex<ShellSession>>) {

@@ -70,7 +70,12 @@ export function ContactPage() {
         </p>
       </div>
 
-      <div className="mt-10 grid gap-5 lg:grid-cols-3">
+      {/* Section heading keeps the outline valid: h1 → h2 → card h3s. */}
+      <h2 className="mt-12 font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+        Official channels
+      </h2>
+
+      <div className="mt-5 grid gap-5 lg:grid-cols-3">
         {CHANNELS.map((channel, index) => (
           <motion.div
             key={channel.title}

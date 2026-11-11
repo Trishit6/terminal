@@ -22,8 +22,10 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { desktopDashboard, type DesktopDashboard as Dashboard } from '@/lib/desktop';
+import { useAuth } from '@/components/auth/auth-provider';
 
 export function DesktopDashboardPage() {
+  const { signedIn, user, accountsEnabled } = useAuth();
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -99,6 +101,37 @@ export function DesktopDashboardPage() {
           {error}
         </div>
       ) : null}
+
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface/60 px-4 py-3">
+        <div className="flex items-center gap-3">
+          <span
+            className={
+              signedIn
+                ? 'size-2 rounded-full bg-success'
+                : 'size-2 rounded-full bg-muted-foreground/50'
+            }
+          />
+          <div>
+            <p className="text-xs font-medium">
+              {signedIn && user
+                ? `Signed in as ${user.full_name}`
+                : 'Local mode — shell features work without an account'}
+            </p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {signedIn && user
+                ? `${user.email} · account features enabled`
+                : accountsEnabled
+                  ? 'Sign in only for account and remote features; local terminals are unaffected.'
+                  : 'The account server is not configured. Local shell remains fully available.'}
+            </p>
+          </div>
+        </div>
+        <Button variant="outline" size="sm" asChild>
+          <Link to="/desktop/account">
+            {signedIn ? 'Manage account' : 'Account'}
+          </Link>
+        </Button>
+      </div>
 
       <div className="mt-8 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <MetricCard

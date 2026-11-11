@@ -106,6 +106,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   const response = await fetch(apiUrl(path), {
     ...init,
+    // Account mode authenticates terminal requests with the HttpOnly session
+    // cookie. Bearer tokens remain supported for local-only deployments.
+    credentials: 'include',
     headers,
   });
 
