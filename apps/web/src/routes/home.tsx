@@ -149,7 +149,7 @@ const FLOW = [
 
 export function HomePage() {
   return (
-    <div className="overflow-hidden">
+    <div className="overflow-hidden bg-background">
       <Hero />
       <ValueStrip />
       <PlatformSection />
@@ -163,44 +163,43 @@ export function HomePage() {
 
 function Hero() {
   return (
-    <section className="relative isolate overflow-hidden pb-20 pt-16 sm:pt-24 lg:pb-28">
-      <div className="absolute inset-0 -z-10 aurora" />
-      <div className="absolute inset-x-0 top-0 -z-10 h-[560px] shell-grid opacity-60" />
-      <div className="pointer-events-none absolute left-1/2 top-0 -z-10 h-[480px] w-[860px] -translate-x-1/2 rounded-full bg-primary/10 blur-[120px]" />
+    <section className="relative isolate overflow-hidden pb-20 pt-16 sm:pt-20 lg:pb-28">
+      <div className="absolute inset-0 -z-20 aurora" />
+      <div className="absolute inset-x-0 top-0 -z-10 h-[640px] shell-grid opacity-60" />
+      <div className="pointer-events-none absolute left-1/2 top-10 -z-10 h-[520px] w-[900px] -translate-x-1/2 rounded-full bg-primary/10 blur-[130px]" />
 
-      <div className="mx-auto grid w-full max-w-site items-center gap-14 px-4 sm:px-6 lg:grid-cols-[1.05fr_0.95fr] lg:px-8">
+      <div className="mx-auto grid w-full max-w-site items-center gap-16 px-4 sm:px-6 lg:grid-cols-[1.08fr_0.92fr] lg:px-8">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, ease: EASE }}
-          className="min-w-0 max-w-2xl"
+          className="min-w-0 max-w-[680px]"
         >
-          <div className="mb-6 flex items-center gap-3 font-mono text-[11px] uppercase tracking-[0.22em] text-primary/90">
-            <span className="h-px w-8 bg-primary/50" aria-hidden="true" />
+          <div className="mb-7 inline-flex items-center gap-3 rounded-full border border-primary/20 bg-surface/60 px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.24em] text-primary shadow-[0_0_30px_rgba(34,211,238,0.12)] backdrop-blur-sm">
+            <span className="h-2 w-2 rounded-full bg-primary shadow-[0_0_16px_rgba(34,211,238,0.8)]" aria-hidden="true" />
             Independent. Native. Engineered.
           </div>
 
-          <h1 className="text-balance text-5xl font-semibold leading-[0.98] tracking-[-0.045em] text-foreground sm:text-6xl lg:text-7xl">
+          <h1 className="text-balance text-5xl font-semibold leading-[0.92] tracking-[-0.055em] text-foreground sm:text-6xl lg:text-[5.2rem]">
             The Next Core of{' '}
-            <span className="text-primary">Computing.</span>
+            <span className="text-gradient">Computing.</span>
           </h1>
 
           <p className="mt-6 max-w-xl text-base leading-relaxed text-muted-foreground sm:text-lg">
-            An independent, Rust-powered shell engineered for developers
-            who want a consistent, capable computing experience across their
-            terminal, browser and desktop. No wrapper around Bash or
-            PowerShell.
+            KERNEXT is an independent, Rust-powered computing environment designed
+            to bring a consistent shell experience to your terminal, browser, and
+            desktop — without a wrapper around Bash, PowerShell, or CMD.
           </p>
 
           <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-            <Button asChild size="lg" className="group">
+            <Button asChild size="lg" className="group rounded-full border-primary/30 bg-primary text-primary-foreground shadow-[0_18px_42px_-18px_rgba(34,211,238,0.85)]">
               <Link to="/terminal">
                 <Play className="size-4 fill-current" />
                 Open Terminal
                 <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
               </Link>
             </Button>
-            <Button asChild variant="outline" size="lg">
+            <Button asChild variant="outline" size="lg" className="rounded-full border-border-strong bg-surface/50 backdrop-blur-sm">
               <Link to="/features">
                 Explore Features
                 <ArrowUpRight className="size-4" />
@@ -208,18 +207,18 @@ function Hero() {
             </Button>
           </div>
 
-          <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted-foreground">
-            <span className="inline-flex items-center gap-1.5">
+          <div className="mt-9 flex flex-wrap items-center gap-x-5 gap-y-3 text-xs text-muted-foreground">
+            <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface/60 px-2.5 py-1.5">
               <Check className="size-3.5 text-success" />
-              One engine, three surfaces
+              <span>One engine, three surfaces</span>
             </span>
-            <span className="inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface/60 px-2.5 py-1.5">
               <Check className="size-3.5 text-success" />
-              Real ConPTY and openpty
+              <span>Real PTY + engine modes</span>
             </span>
-            <span className="inline-flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-2 rounded-full border border-border bg-surface/60 px-2.5 py-1.5">
               <Check className="size-3.5 text-success" />
-              Local-first by default
+              <span>Local-first by default</span>
             </span>
           </div>
         </motion.div>
@@ -228,41 +227,43 @@ function Hero() {
           initial={{ opacity: 0, scale: 0.96, y: 24 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           transition={{ duration: 0.85, ease: EASE, delay: 0.08 }}
-          className="relative mx-auto w-full min-w-0 max-w-[580px]"
+          className="relative mx-auto w-full min-w-0 max-w-[620px]"
         >
-          <div className="pointer-events-none absolute -inset-10 -z-10 rounded-full bg-primary/10 blur-3xl" />
-          <OrbitalHero />
+          <div className="pointer-events-none absolute -inset-10 -z-10 rounded-full bg-primary/10 blur-[120px]" />
+          <div className="hero-panel relative overflow-hidden rounded-[2rem] border border-white/10 bg-surface/40 p-4 shadow-[0_40px_120px_-30px_rgba(2,8,23,0.9)] backdrop-blur-sm sm:p-5">
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_20%_15%,rgba(34,211,238,0.12),transparent_26%),radial-gradient(circle_at_80%_80%,rgba(168,85,247,0.12),transparent_30%)]" />
+            <OrbitalHero />
 
-          <div
-            data-terminal-preview="example"
-            className="relative mt-[-6%] overflow-hidden rounded-2xl border border-border-strong bg-[#04070c] shadow-[0_40px_120px_-40px_rgba(2,8,23,0.95)] sm:mt-[-8%]"
-          >
-            <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5">
-              <div className="flex items-center gap-1.5">
-                <span className="size-2 rounded-full bg-[#ff6b6b]/80" />
-                <span className="size-2 rounded-full bg-[#f5d76e]/80" />
-                <span className="size-2 rounded-full bg-[#5ee6a8]/80" />
+            <div
+              data-terminal-preview="example"
+              className="relative mt-[-2.5%] overflow-hidden rounded-2xl border border-border-strong bg-[#04070c] shadow-[0_32px_80px_-32px_rgba(2,8,23,0.95)]"
+            >
+              <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5">
+                <div className="flex items-center gap-1.5">
+                  <span className="size-2 rounded-full bg-[#ff6b6b]/80" />
+                  <span className="size-2 rounded-full bg-[#f5d76e]/80" />
+                  <span className="size-2 rounded-full bg-[#5ee6a8]/80" />
+                </div>
+                <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/40">
+                  Example session
+                </span>
+                <span className="font-mono text-[10px] text-white/30">local</span>
               </div>
-              <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-white/40">
-                Example session
-              </span>
-              <span className="font-mono text-[10px] text-white/30">local</span>
-            </div>
-            <div className="space-y-1 p-4 font-mono text-[11px] leading-relaxed text-[#d8e6f5] sm:text-xs">
-              <TerminalLine prompt="kernext ~ $" command="version" />
-              <div className="text-[#67e8f9]">KERNEXT v{KERNEXT_VERSION}</div>
-              <TerminalLine prompt="kernext ~ $" command="echo hello-from-kernext" />
-              <div className="text-[#c7d2fe]">hello-from-kernext</div>
-              <TerminalLine prompt="kernext ~ $" command="pwd" />
-              <div className="text-[#9fb3c8]">/home/you/Projects/kernext</div>
-              <div className="flex items-center gap-1 pt-1">
-                <span className="text-[#67e8f9]">kernext ~ $</span>
-                <span className="inline-block h-4 w-2 animate-pulse bg-[#67e8f9]" />
+              <div className="space-y-1 p-4 font-mono text-[11px] leading-relaxed text-[#d8e6f5] sm:text-xs">
+                <TerminalLine prompt="kernext ~ $" command="version" />
+                <div className="text-[#67e8f9]">KERNEXT v{KERNEXT_VERSION}</div>
+                <TerminalLine prompt="kernext ~ $" command="echo hello-from-kernext" />
+                <div className="text-[#c7d2fe]">hello-from-kernext</div>
+                <TerminalLine prompt="kernext ~ $" command="pwd" />
+                <div className="text-[#9fb3c8]">/home/you/Projects/kernext</div>
+                <div className="flex items-center gap-1 pt-1">
+                  <span className="text-[#67e8f9]">kernext ~ $</span>
+                  <span className="inline-block h-4 w-2 animate-pulse bg-[#67e8f9]" />
+                </div>
               </div>
-            </div>
-            <div className="border-t border-white/10 px-4 py-2 text-[10px] text-white/35">
-              Example session — these commands run unchanged in the web
-              terminal.
+              <div className="border-t border-white/10 px-4 py-2 text-[10px] text-white/35">
+                Example session — these commands run unchanged in the web terminal.
+              </div>
             </div>
           </div>
         </motion.div>

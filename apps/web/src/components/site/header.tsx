@@ -36,24 +36,26 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
   return (
     <header
       className={cn(
-        'sticky top-0 z-40 border-b transition-colors duration-300',
+        'sticky top-0 z-40 border-b transition-all duration-300',
         scrolled || compact
-          ? 'border-border bg-background/85 backdrop-blur-xl supports-[backdrop-filter]:bg-background/70'
+          ? 'border-border/70 bg-background/75 backdrop-blur-xl supports-[backdrop-filter]:bg-background/65'
           : 'border-transparent bg-transparent backdrop-blur-0',
       )}
     >
       <div className="mx-auto flex h-16 w-full max-w-site items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
-        <Logo />
+        <div className="flex items-center gap-3">
+          <Logo />
+        </div>
 
-        <nav className="hidden items-center gap-1 lg:flex" aria-label="Primary">
+        <nav className="hidden items-center gap-1 rounded-full border border-border/80 bg-surface/60 px-1.5 py-1 shadow-[0_10px_30px_-20px_rgba(2,8,23,0.8)] backdrop-blur-sm lg:flex" aria-label="Primary">
           {NAV_ITEMS.map((item) => (
             <Link
               key={item.label}
               to={item.to}
-              className="rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-surface-soft hover:text-foreground"
+              className="rounded-full px-3 py-2 text-sm text-muted-foreground transition-all duration-200 hover:bg-surface-soft hover:text-foreground"
               activeProps={{
                 className:
-                  'bg-surface-soft text-foreground shadow-[inset_0_-2px_0_var(--color-primary)]',
+                  'bg-primary/10 text-foreground shadow-[inset_0_0_0_1px_rgba(34,211,238,0.2)]',
               }}
               activeOptions={{ exact: true }}
             >
@@ -65,20 +67,20 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
         <div className="flex items-center gap-2">
           <ThemeToggle />
           {signedIn && user?.role === 'admin' ? (
-            <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
+            <Button asChild variant="ghost" size="sm" className="hidden rounded-full sm:inline-flex">
               <Link to="/admin">
                 <ShieldCheck className="size-4" />
                 Admin
               </Link>
             </Button>
           ) : null}
-          <Button asChild variant="ghost" size="sm" className="hidden sm:inline-flex">
+          <Button asChild variant="ghost" size="sm" className="hidden rounded-full sm:inline-flex">
             <Link to={signedIn ? '/account' : '/sign-in'}>
               <UserRound className="size-4" />
               {signedIn ? (user?.full_name.split(' ')[0] ?? 'Account') : 'Sign in'}
             </Link>
           </Button>
-          <Button asChild size="sm" className="hidden sm:inline-flex">
+          <Button asChild size="sm" className="hidden rounded-full sm:inline-flex">
             <Link to="/terminal">
               <TerminalSquare className="size-4" />
               Open terminal
@@ -89,7 +91,7 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
             type="button"
             variant="ghost"
             size="icon-sm"
-            className="lg:hidden"
+            className="rounded-full lg:hidden"
             onClick={() => setOpen((value) => !value)}
             aria-expanded={open}
             aria-label={open ? 'Close menu' : 'Open menu'}
@@ -116,20 +118,20 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
               </Link>
             ))}
             {signedIn && user?.role === 'admin' ? (
-              <Button asChild variant="secondary" className="mt-2">
+              <Button asChild variant="secondary" className="mt-2 rounded-full">
                 <Link to="/admin">
                   <ShieldCheck className="size-4" />
                   Administration
                 </Link>
               </Button>
             ) : null}
-            <Button asChild variant="secondary" className="mt-2">
+            <Button asChild variant="secondary" className="mt-2 rounded-full">
               <Link to={signedIn ? '/account' : '/sign-in'}>
                 <UserRound className="size-4" />
                 {signedIn ? 'Your account' : 'Sign in'}
               </Link>
             </Button>
-            <Button asChild className="mt-1">
+            <Button asChild className="mt-1 rounded-full">
               <Link to="/terminal">
                 <TerminalSquare className="size-4" />
                 Open terminal

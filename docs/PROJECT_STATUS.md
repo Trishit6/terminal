@@ -70,11 +70,11 @@ Node.js + npm. MariaDB is available on `127.0.0.1:3307`.
 
 ### Hero and administration (Phase 12)
 
-- Three-layer CSS 3D orbital hero: independent outer/inner ring rotation, a
-  stationary sphere and emblem, floating technology labels outside the 3D
-  transforms, and a non-rotating terminal preview. Reduced Motion stops the
-  orbits and floating; the local `usePrefersReducedMotion` hook avoids Motion's
-  development warning.
+- Cinematic 3D hero composition: a larger editorial layout, layered orbital
+  depth, a central KERNEXT emblem core, and a more integrated terminal preview.
+  The motion remains continuous, readable, and reduced-motion aware.
+- Refined navigation chrome and premium hero styling that keep the site
+  visually focused on the core object instead of generic SaaS panels.
 - Human-centered hero copy and actions: official identity, `Open Terminal`,
   `Explore Features`, and example-session labelling.
 - `users.role` (`user`/`admin`) and `users.must_change_password` migration.
