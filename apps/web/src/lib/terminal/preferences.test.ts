@@ -39,6 +39,17 @@ describe('parseTerminalPreferences', () => {
     });
   });
 
+  it('preserves a hidden output toolbar preference', () => {
+    const saved = {
+      ...DEFAULT_TERMINAL_PREFERENCES,
+      showToolbar: false,
+    };
+
+    expect(
+      parseTerminalPreferences({ version: 1, preferences: saved }),
+    ).toEqual(saved);
+  });
+
   it('reads the versioned account preference envelope', () => {
     const saved = {
       ...DEFAULT_TERMINAL_PREFERENCES,

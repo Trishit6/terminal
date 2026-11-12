@@ -1,79 +1,170 @@
-import { useRef, type PointerEvent } from 'react';
+import { useRef, useEffect, useState } from 'react';
+import { Canvas } from '@react-three/fiber';
 import { usePrefersReducedMotion } from '@/hooks/use-prefers-reduced-motion';
-import { LogoMark } from '@/components/site/logo';
 
 export function OrbitalHero() {
-  const sceneRef = useRef<HTMLDivElement>(null);
   const reducedMotion = usePrefersReducedMotion();
+  const isDark = false;
+  const sceneRef = useRef<HTMLDivElement>(null);
+  const [ready, setReady] = useState(false);
 
-  function handlePointerMove(event: PointerEvent<HTMLDivElement>) {
-    if (reducedMotion || event.pointerType !== 'mouse') {
-      return;
-    }
+  useEffect(() => {
+    setReady(true);
+  }, []);
 
-    const bounds = event.currentTarget.getBoundingClientRect();
-    if (bounds.width === 0 || bounds.height === 0) {
-      return;
-    }
+  const heroStyle = {
+    position: 'relative',
+    width: '100%',
+    height: 'calc(60vh + 200px)',
+    minHeight: '400px',
+    overflow: 'hidden',
+    background: isDark ? '#0a0a0f' : '#0d0d1a',
+  } as React.CSSProperties;
 
-    const x = ((event.clientX - bounds.left) / bounds.width - 0.5) * 2;
-    const y = ((event.clientY - bounds.top) / bounds.height - 0.5) * 2;
-
-    sceneRef.current?.style.setProperty('--pointer-x', `${(x * 7).toFixed(2)}px`);
-    sceneRef.current?.style.setProperty('--pointer-y', `${(y * 6).toFixed(2)}px`);
-    sceneRef.current?.style.setProperty('--pointer-rotate-x', `${(y * -2).toFixed(2)}deg`);
-    sceneRef.current?.style.setProperty('--pointer-rotate-y', `${(x * 3).toFixed(2)}deg`);
-    sceneRef.current?.style.setProperty('--core-light-x', `${(34 + x * 8).toFixed(2)}%`);
-    sceneRef.current?.style.setProperty('--core-light-y', `${(22 + y * 7).toFixed(2)}%`);
-  }
-
-  function resetPointer() {
-    sceneRef.current?.style.setProperty('--pointer-x', '0px');
-    sceneRef.current?.style.setProperty('--pointer-y', '0px');
-    sceneRef.current?.style.setProperty('--pointer-rotate-x', '0deg');
-    sceneRef.current?.style.setProperty('--pointer-rotate-y', '0deg');
-    sceneRef.current?.style.setProperty('--core-light-x', '34%');
-    sceneRef.current?.style.setProperty('--core-light-y', '22%');
-  }
+  const canvasStyle = {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    width: '100%',
+    height: '100%',
+  } as React.CSSProperties;
 
   return (
     <div
       ref={sceneRef}
-      className="core-scene"
+      className="orbital-hero"
       data-reduced-motion={reducedMotion ? 'true' : undefined}
-      onPointerMove={handlePointerMove}
-      onPointerLeave={resetPointer}
+      style={heroStyle}
     >
-      <span className="sr-only">
-        KERNEXT emblem on a slowly turning metallic computing core.
-      </span>
-      <div className="core-scene__depth" aria-hidden="true">
-        <div className="core-orbit core-orbit--primary">
-          <div className="core-orbit__track">
-            <span className="core-orbit__satellite" />
-          </div>
+      <Canvas
+        style={canvasStyle}
+        gl={{ antialias: true, alpha: false }}
+        onCreated={() => setReady(true)}
+      >
+        <ambientLight intensity={0.6} color={isDark ? '#88c0d0' : '#4a90d9'} />
+        <directionalLight
+          position={[5, 10, 8]}
+          intensity={0.8}
+          color={isDark ? '#6dd5fa' : '#2c5aa0'}
+          castShadow
+        />
+        <directionalLight
+          position={[-5, -10, -8]}
+          intensity={0.5}
+          color={isDark ? '#4a4a6a' : '#5a7ab0'}
+        />
+
+        {/* Central KERNEXT sphere */}
+        <mesh position={[-0.5, -0.2, 0]} receiveShadow castShadow>
+          <sphereGeometry args={[1, 64, 64]} />
+          <meshStandardMaterial
+            metalness={0.7}
+            roughness={0.3}
+            flatShading={false}
+            color={isDark ? '#1a1a2e' : '#0d0d1a'}
+          />
+        </mesh>
+
+        {/* Core logo at center */}
+        <mesh position={[0, 0, 0]}> 
+          <sphereGeometry args={[0.3, 32, 32]} /> 
+          <meshStandardMaterial
+            metalness={0.9}
+            roughness={0.1}
+            color={isDark ? '#0f0f23' : '#080810'}
+          />
+        </mesh>
+
+        {/* Orbital ring 1 - slow, wide, cyan */}
+        <mesh rotation={[-Math.PI / 2, 0, 0]} scale={1.3}>
+          <torusGeometry args={[1.5, 0.15, 32, 64]} />
+          <meshStandardMaterial
+            color={isDark ? '#00b8d9' : '#00d4ff'}
+            metalness={0.4}
+            roughness={0.6}
+            transparent
+          />
+        </mesh>
+
+        {/* Orbital ring 2 - medium, blue */}
+        <mesh rotation={[0, Math.PI / 4, 0]} scale={1.5}>
+          <torusGeometry args={[1.2, 0.12, 32, 64]} />
+          <meshStandardMaterial
+            color={isDark ? '#3b82f6' : '#3b99fc'}
+            metalness={0.5}
+            roughness={0.5}
+            transparent
+          />
+        </mesh>
+
+        {/* Orbital ring 3 - tight, violet */}
+        <mesh rotation={[Math.PI / 3, Math.PI / 6, 0]} scale={1.1}>
+          <torusGeometry args={[0.9, 0.1, 32, 64]} />
+          <meshStandardMaterial
+            color={isDark ? '#8b5cf6' : '#a78bfa'}
+            metalness={0.6}
+            roughness={0.4}
+            transparent
+          />
+        </mesh>
+
+        {/* Glowing particles along orbits */}
+        <group>
+          {Array.from({ length: 15 }).map((__, i) => {
+            const angle = (i / 15) * Math.PI * 2;
+            const radius = 1.2 + Math.random() * 0.4;
+            return (
+              <mesh
+                key={i}
+                position={[Math.cos(angle) * radius, Math.sin(angle) * 0.5, 0]}
+              >
+                <sphereGeometry args={[0.08, 8, 8]} />
+                <meshStandardMaterial
+                  color={isDark ? '#00b8d9' : '#00d4ff'}
+                  emissive={isDark ? '#006b8e' : '#0096c7'}
+                  emissiveIntensity={0.5}
+                />
+              </mesh>
+            );
+          })}
+        </group>
+      </Canvas>
+
+      {reducedMotion && !ready && (
+        <div
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            width: '100%',
+            height: '100%',
+            background: '#0a0a0f',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            color: '#334155',
+            fontFamily: 'var(--font-sans)',
+          }}
+        >
+          <span>KERNEXT — Independent. Native. Engineered.</span>
         </div>
-        <div className="core-orbit core-orbit--secondary">
-          <div className="core-orbit__track">
-            <span className="core-orbit__satellite" />
-          </div>
+      )}
+
+      {!reducedMotion && !ready && (
+        <div
+          style={{
+            position: 'absolute',
+            bottom: 20,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            color: isDark ? '#94a3b8' : '#64748b',
+            fontFamily: 'var(--font-sans)',
+            fontSize: '0.875rem',
+          }}
+        >
+          KERNEXT engine core
         </div>
-        <div className="core-object-float">
-          <div className="core-object">
-            <div className="core-object__back" />
-            <div className="core-object__face">
-              <span className="core-object__mark">
-                <LogoMark className="size-20 sm:size-24" />
-              </span>
-            </div>
-            <div className="core-object__rear">
-              <span className="core-object__mark">
-                <LogoMark className="size-20 sm:size-24" />
-              </span>
-            </div>
-          </div>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

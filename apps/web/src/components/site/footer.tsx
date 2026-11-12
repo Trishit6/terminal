@@ -1,135 +1,142 @@
 import { Link } from '@tanstack/react-router';
 import { ArrowUpRight, TerminalSquare } from 'lucide-react';
 import { Logo } from '@/components/site/logo';
-import { Badge } from '@/components/ui/badge';
-import { Separator } from '@/components/ui/separator';
 import { KERNEXT_VERSION } from '@/lib/version';
 
 export function SiteFooter() {
   return (
-    <footer className="border-t border-border bg-surface/40">
-      <div className="mx-auto w-full max-w-site px-4 py-12 sm:px-6 lg:px-8">
-        <div className="grid gap-10 lg:grid-cols-[1.5fr_1fr_1fr_1.2fr]">
-          <div className="space-y-4">
+    <footer className="site-footer">
+      <div className="site-footer__inner">
+        <div className="site-footer__masthead">
+          <div>
             <Logo />
-            <p className="max-w-xs text-sm leading-relaxed text-muted-foreground">
-              A native Rust shell engine with a real PTY, a local Axum runtime,
-              and one terminal that runs on the CLI, web, and desktop.
+            <p>
+              An independent Rust shell engine with a real PTY, a local Axum
+              runtime, and one terminal across the CLI, web, and desktop.
+              Built. Executed. Verified.
             </p>
-            <div className="flex flex-wrap gap-2">
-              <Badge variant="success">Open</Badge>
-              <Badge variant="default">Powerful</Badge>
-              <Badge variant="secondary">Independent</Badge>
-            </div>
-          </div>
-
-          <div>
-            {/* Footer column headings are `h2` so pages that go straight from
-                the page `h1` into the footer keep a valid heading outline
-                (no skipped levels). */}
-            <h2 className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              Product
-            </h2>
-            <ul className="mt-4 space-y-2.5 text-sm">
-              <li>
-                <Link to="/terminal" className="text-muted-foreground transition-colors hover:text-foreground">
-                  Web terminal
-                </Link>
-              </li>
-              <li>
-                <Link to="/features" className="text-muted-foreground transition-colors hover:text-foreground">
-                  Features
-                </Link>
-              </li>
-              <li>
-                <Link to="/downloads" className="text-muted-foreground transition-colors hover:text-foreground">
-                  Downloads
-                </Link>
-              </li>
-              <li>
-                <Link to="/docs" className="text-muted-foreground transition-colors hover:text-foreground">
-                  Documentation
-                </Link>
-              </li>
-            </ul>
-          </div>
-
-          <div>
-            <h2 className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              Project
-            </h2>
-            <ul className="mt-4 space-y-2.5 text-sm">
-              <li>
-                <Link to="/about" className="text-muted-foreground transition-colors hover:text-foreground">
-                  About
-                </Link>
-              </li>
-              <li>
-                <Link to="/contact" className="text-muted-foreground transition-colors hover:text-foreground">
-                  Contact and community
-                </Link>
-              </li>
-              <li>
-                <Link to="/docs" hash="api" className="text-muted-foreground transition-colors hover:text-foreground">
-                  HTTP API
-                </Link>
-              </li>
-              <li>
-                <Link to="/docs" hash="status" className="text-muted-foreground transition-colors hover:text-foreground">
-                  Project status
-                </Link>
-              </li>
-            </ul>
-          </div>
-
-          <div className="rounded-2xl border border-border bg-background/60 p-5">
-            <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
-              Current build
+            <p className="mt-3 font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">
+              Open · Powerful · Independent
             </p>
-            <div className="mt-3 space-y-2.5 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-muted-foreground">Version</span>
-                <Badge variant="outline">v{KERNEXT_VERSION}</Badge>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-muted-foreground">CLI</span>
-                <Badge variant="success">Reference</Badge>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-muted-foreground">Web</span>
-                <Badge variant="success">Live</Badge>
-              </div>
-              <div className="flex items-center justify-between gap-3">
-                <span className="text-muted-foreground">Desktop</span>
-                <Badge variant="success">Implemented</Badge>
-              </div>
-            </div>
-            <Separator className="my-4" />
+          </div>
+
+          <div className="site-footer__status">
+            <span>
+              Release <b>v{KERNEXT_VERSION}</b>
+            </span>
+            <span>
+              CLI <b>Reference</b>
+            </span>
+            <span>
+              Web <b>Live</b>
+            </span>
+            <span>
+              Desktop <b>Implemented</b>
+            </span>
             <Link
               to="/terminal"
-              className="inline-flex items-center gap-1.5 text-sm text-primary transition-colors hover:text-primary-strong"
+              className="mt-1 inline-flex items-center gap-1.5 text-primary normal-case tracking-normal transition-colors hover:text-foreground"
             >
-              <TerminalSquare className="size-4" />
+              <TerminalSquare className="size-3.5" aria-hidden="true" />
               Run a live command
-              <ArrowUpRight className="size-3.5" />
+              <ArrowUpRight className="size-3" aria-hidden="true" />
             </Link>
           </div>
         </div>
 
-        <Separator className="my-8" />
+        <div className="site-footer__grid">
+          <div className="site-footer__column">
+            {/* Footer column headings are `h2` so pages that go straight from
+                the page `h1` into the footer keep a valid heading outline. */}
+            <h2>Product</h2>
+            <ul>
+              <li>
+                <Link to="/terminal">Web terminal</Link>
+              </li>
+              <li>
+                <Link to="/features">Features</Link>
+              </li>
+              <li>
+                <Link to="/downloads">Downloads</Link>
+              </li>
+              <li>
+                <Link to="/docs">Documentation</Link>
+              </li>
+            </ul>
+          </div>
 
-        <div className="flex flex-col gap-4 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-          <p>
-            © {new Date().getFullYear()} KERNEXT. Build. Execute. Innovate.
-          </p>
-          <div className="flex flex-wrap items-center gap-4">
-            <span className="font-mono uppercase tracking-[0.18em]">
-              Independent · Native · Engineered
-            </span>
-            <span className="hidden h-3 w-px bg-border sm:block" />
-            <span className="font-mono uppercase tracking-[0.18em]">
-              Local-first runtime
-            </span>
+          <div className="site-footer__column">
+            <h2>Project</h2>
+            <ul>
+              <li>
+                <Link to="/about">About</Link>
+              </li>
+              <li>
+                <Link to="/contact">Contact and community</Link>
+              </li>
+              <li>
+                <Link to="/docs" hash="status">
+                  Project status
+                </Link>
+              </li>
+              <li>
+                <Link to="/docs" hash="security">
+                  Security model
+                </Link>
+              </li>
+            </ul>
+          </div>
+
+          <div className="site-footer__column">
+            <h2>Build</h2>
+            <ul>
+              <li>
+                <Link to="/docs" hash="quickstart">
+                  Quick start
+                </Link>
+              </li>
+              <li>
+                <Link to="/docs" hash="api">
+                  HTTP API
+                </Link>
+              </li>
+              <li>
+                <Link to="/downloads" hash="platforms">
+                  Platform targets
+                </Link>
+              </li>
+              <li>
+                <Link to="/docs" hash="transports">
+                  WebSocket transports
+                </Link>
+              </li>
+            </ul>
+          </div>
+
+          <div className="site-footer__column">
+            <h2>Surfaces</h2>
+            <ul>
+              <li>
+                <Link to="/">CLI runtime</Link>
+              </li>
+              <li>
+                <Link to="/terminal">Browser terminal</Link>
+              </li>
+              <li>
+                <Link to="/downloads">Tauri desktop</Link>
+              </li>
+              <li>
+                <Link to="/sign-in">Account</Link>
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <div className="site-footer__legal">
+          <p>© {new Date().getFullYear()} KERNEXT. Build. Execute. Innovate.</p>
+          <div>
+            <span>Independent · Native · Engineered</span>
+            <span>Local-first runtime</span>
           </div>
         </div>
       </div>

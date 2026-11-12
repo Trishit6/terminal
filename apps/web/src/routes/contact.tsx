@@ -4,7 +4,6 @@ import {
   Bug,
   Code2,
   ExternalLink,
-  GitBranch,
   Github,
   MessageSquare,
   ScrollText,
@@ -12,7 +11,7 @@ import {
   TerminalSquare,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { Badge } from '@/components/ui/badge';
+import { PageAsideRow, PageShell } from '@/components/site/page-shell';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -55,23 +54,37 @@ const CHANNELS = [
 
 export function ContactPage() {
   return (
-    <div className="mx-auto w-full max-w-[1100px] px-4 py-14 sm:px-6 lg:px-8 lg:py-20">
-      <div className="max-w-3xl">
-        <Badge variant="outline">Community</Badge>
-        <h1 className="mt-4 text-balance text-4xl font-semibold tracking-[-0.04em] sm:text-5xl">
-          One repository.
-          <span className="text-gradient"> Every conversation.</span>
-        </h1>
-        <p className="mt-5 text-sm leading-relaxed text-muted-foreground sm:text-base">
-          KERNEXT is developed in the open. The repository is the single
-          channel for issues, contributions, and release discussion — there
-          are no other official accounts, chat rooms, or mailing lists to
-          chase.
-        </p>
-      </div>
-
+    <PageShell
+      kicker="05 / Contact"
+      title={
+        <>
+          One repository. <em>Every conversation.</em>
+        </>
+      }
+      description="KERNEXT is developed in the open. The repository is the single channel for issues, contributions, and release discussion — there are no other official accounts, chat rooms, or mailing lists to chase."
+      actions={
+        <Button asChild>
+          <a href={`${REPOSITORY_URL}/issues`} target="_blank" rel="noreferrer">
+            <Bug className="size-4" />
+            Open the issue tracker
+            <ExternalLink className="size-3.5 opacity-70" />
+          </a>
+        </Button>
+      }
+      aside={
+        <>
+          <PageAsideRow label="Repository" value="GitHub" />
+          <PageAsideRow label="Issues" value="Official channel" />
+          <PageAsideRow label="Contributions" value="CONTRIBUTING.md" />
+          <PageAsideRow label="Status" value="Public" />
+          <p className="page-aside__note">
+            No fake channels: if it is not in the repository, it is not KERNEXT.
+          </p>
+        </>
+      }
+    >
       {/* Section heading keeps the outline valid: h1 → h2 → card h3s. */}
-      <h2 className="mt-12 font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
+      <h2 className="font-mono text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
         Official channels
       </h2>
 
@@ -162,10 +175,6 @@ export function ContactPage() {
         </div>
       </div>
 
-      <div className="mt-10 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-        <GitBranch className="size-3.5" />
-        No fake channels: if it is not in the repository, it is not KERNEXT.
-      </div>
-    </div>
+    </PageShell>
   );
 }

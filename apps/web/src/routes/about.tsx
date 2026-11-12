@@ -11,7 +11,7 @@ import {
   Terminal,
   TerminalSquare,
 } from 'lucide-react';
-import { Badge } from '@/components/ui/badge';
+import { PageShell } from '@/components/site/page-shell';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -62,32 +62,26 @@ const STACK = [
 
 export function AboutPage() {
   return (
-    <div className="mx-auto w-full max-w-[1100px] px-4 py-14 sm:px-6 lg:px-8 lg:py-20">
-      <div className="grid gap-10 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
-        <div>
-          <Badge variant="outline">About</Badge>
-          <h1 className="mt-4 text-balance text-4xl font-semibold tracking-[-0.04em] sm:text-5xl">
-            The next core of computing.
-          </h1>
-          <p className="mt-5 text-sm leading-relaxed text-muted-foreground sm:text-base">
-            KERNEXT is a native Rust shell engine with one execution path and
-            three surfaces: a CLI, a web terminal served by a local Axum
-            runtime, and a Tauri 2 desktop application. It is built as a
-            single product where every surface answers to the same dispatcher,
-            the same built-in registry, and the same configuration.
-          </p>
-          <p className="mt-4 font-mono text-xs uppercase tracking-[0.2em] text-primary">
-            Independent. Native. Engineered.
-          </p>
-        </div>
-
+    <PageShell
+      kicker="06 / About"
+      title={
+        <>
+          The next core <em>of computing.</em>
+        </>
+      }
+      description="KERNEXT is a native Rust shell engine with one execution path and three surfaces: a CLI, a web terminal served by a local Axum runtime, and a Tauri 2 desktop application. Every surface answers to the same dispatcher, built-in registry, and configuration."
+      aside={
         <div className="about-core" aria-hidden="true">
           <div className="about-core__face">
             <LogoMark className="size-16" />
           </div>
           <span className="about-core__caption">KERNEXT / RUST ENGINE</span>
+          <span className="font-sans text-[11px] normal-case tracking-normal">
+            Independent. Native. Engineered.
+          </span>
         </div>
-      </div>
+      }
+    >
 
       {/* Section heading keeps the outline valid: h1 → h2 → card h3s. */}
       <section>
@@ -119,7 +113,7 @@ export function AboutPage() {
           Project facts
         </h2>
 
-        <div className="mt-6 overflow-hidden rounded-2xl border border-border">
+        <div className="mt-6 overflow-x-auto rounded-2xl border border-border">
           <table className="w-full text-left text-xs sm:text-sm">
             <tbody className="divide-y divide-border">
               {FACTS.map((fact) => (
@@ -249,10 +243,6 @@ export function AboutPage() {
         </div>
       </div>
 
-      <div className="mt-10 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-        <Cpu className="size-3.5" />
-        KERNEXT · The Next Core of Computing.
-      </div>
-    </div>
+    </PageShell>
   );
 }

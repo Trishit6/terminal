@@ -23,13 +23,15 @@ Internal crate/package names stay `shell-*`; only user-facing names are KERNEXT.
 | `crates/shell-config` | TOML config model + validation |
 | `crates/shell-line-editor` | Reedline integration, clear helpers |
 | `crates/shell-api` | Serializable session/terminal API contracts |
-| `apps/shell-cli` | Clap args, startup renderer (`startup.rs`), REPL, `dev.rs` project commands |
+| `apps/shell-cli` | Clap args, startup renderer (`startup.rs`), REPL (`repl.rs`), `dev.rs` project commands, `worker.rs` embedded worker used by desktop PTY sessions |
 | `apps/shell-server` | Axum HTTP + engine/PTY WebSockets, MariaDB accounts, email, CSRF |
 | `apps/web` | React front end; terminal renderer in `src/lib/terminal/` and `src/components/terminal/` |
 | `apps/desktop` | Tauri 2 app; Rust runtime in `src-tauri/` |
 | `scripts/dev.mjs` | Starts backend + Vite dev stack |
 
 Execution flow: `input → shell-core lexer → parser → AST → shell-builtins evaluator → pipeline → registry OR process executor → CommandOutcome → REPL`. Never split input with `split_whitespace`; `Dispatcher` uses `lex_spanned` + `parse`.
+
+Dependency direction: `shell-cli → shell-builtins → shell-runtime → shell-config → shell-core`; `shell-server → shell-api → shell-builtins`; `shell-desktop → shell-server` (engine sessions) + `shell-cli` (embedded worker). The lexer/parser are hand-written — no pest/nom/lalrpop.
 
 ## Commands
 
@@ -114,6 +116,11 @@ Interactive shell needs a real TTY; piping stdin is rejected. Use a terminal, `s
 ### Branding
 - Constants in `crates/shell-core/src/lib.rs`: `SHELL_NAME = "kernext"`, `PRODUCT_NAME`, `TAGLINE`, `BRAND_STATEMENT`, `VALUES`, `MOTTO`, `VERSION`. Use `VERSION`, never hardcode versions. See `docs/BRANDING.md`.
 
+### Known gaps (don't describe these as implemented)
+- No asynchronous job-completion notice (user must run `jobs`/`wait`); `fg` waits instead of taking the terminal; `bg` only reports state; detached shell-expression jobs can't be interrupted from another thread.
+- No `source`/`.` script loading, no redirections on function calls, no closures or arrays, no globbing, no comments in scripts.
+- Grouped expressions are not valid pipeline stages (`(a; b) | c`), and signals/process groups aren't handled (Ctrl+C during startup animation is platform behavior).
+
 ### Tests
 - Filesystem tests use isolated temp dirs + `Session::set_working_directory`; never mutate process cwd in tests.
 - External/pipeline tests use the test binary itself as a helper (env `CUSTOM_SHELL_TEST_HELPER`, `CUSTOM_SHELL_PIPELINE_ARGS`); don't require specific external programs.
@@ -124,4 +131,4 @@ Interactive shell needs a real TTY; piping stdin is rejected. Use a terminal, `s
 - Canonical checkout: `/run/media/trishit/UBUNTU 26_0/Projects/terminal` (Linux) / `D:\projects\React-Ts\terminal` (current Windows workstation). Don't edit duplicate checkouts or create new ones.
 
 ### Docs to keep in sync
-`README.md`, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `RELEASE_NOTES.md`, and `docs/*` (`BRANDING`, `ARCHITECTURE`, `COMMANDS`, `DESKTOP`, `SECURITY`, `DEPLOYMENT`, `TROUBLESHOOTING`, `PROJECT_STATUS`). Built-in count in prose must match `DEFAULT_BUILTINS` in `registry.rs` (56).
+`README.md`, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `RELEASE_NOTES.md`, and `docs/*` (`BRANDING`, `ARCHITECTURE`, `COMMANDS`, `DESKTOP`, `SECURITY`, `DEPLOYMENT`, `TROUBLESHOOTING`, `PROJECT_STATUS`), plus the accounts/backend docs (`AUTHENTICATION`, `BACKEND_ARCHITECTURE`, `DATABASE`) and `docs/architecture/`. Built-in count in prose must match `DEFAULT_BUILTINS` in `registry.rs` (56). Trust source and tests when docs disagree.

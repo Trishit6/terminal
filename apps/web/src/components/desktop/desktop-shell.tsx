@@ -88,8 +88,9 @@ export function DesktopShell() {
           <button
             type="button"
             onClick={() => setNavigationOpen((open) => !open)}
-            className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface-soft hover:text-foreground"
+            className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-surface-soft hover:text-foreground max-sm:hidden"
             aria-label="Toggle navigation"
+            aria-expanded={navigationOpen}
           >
             <PanelLeft className="size-4" />
           </button>
@@ -119,7 +120,7 @@ export function DesktopShell() {
         <nav
           className={cn(
             'relative z-10 flex shrink-0 flex-col justify-between border-r border-border bg-surface/70 backdrop-blur transition-all',
-            navigationOpen ? 'w-56' : 'w-14',
+            navigationOpen ? 'w-56 max-sm:w-14' : 'w-14',
           )}
         >
           <div className="flex flex-col gap-1 p-2">
@@ -137,6 +138,7 @@ export function DesktopShell() {
                     active
                       ? 'bg-primary/10 text-foreground'
                       : 'text-muted-foreground hover:bg-surface-soft hover:text-foreground',
+                    'max-sm:justify-center max-sm:px-0',
                     !navigationOpen && 'justify-center px-0',
                   )}
                   title={item.label}
@@ -147,7 +149,9 @@ export function DesktopShell() {
                       active ? 'text-primary' : 'text-muted-foreground',
                     )}
                   />
-                  {navigationOpen ? <span>{item.label}</span> : null}
+                  {navigationOpen ? (
+                    <span className="max-sm:hidden">{item.label}</span>
+                  ) : null}
                 </Link>
               );
             })}
@@ -156,12 +160,14 @@ export function DesktopShell() {
           <div className="p-2">
             <div className="flex items-center gap-2 rounded-lg px-2 py-2 text-[10px] font-mono uppercase tracking-[0.16em] text-muted-foreground">
               <span className="size-1.5 rounded-full bg-success" />
-              {navigationOpen ? 'local runtime' : null}
+              {navigationOpen ? (
+                <span className="max-sm:hidden">local runtime</span>
+              ) : null}
             </div>
           </div>
         </nav>
 
-        <main className="relative min-h-0 flex-1 overflow-y-auto">
+        <main className="relative min-h-0 min-w-0 flex-1 overflow-y-auto">
           <Outlet />
         </main>
       </div>

@@ -5,12 +5,12 @@ import {
   Check,
   Download,
   ExternalLink,
-  FileArchive,
   Package,
   ShieldCheck,
   TerminalSquare,
 } from 'lucide-react';
 import { motion } from 'motion/react';
+import { PageAsideRow, PageShell } from '@/components/site/page-shell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -63,37 +63,51 @@ const PLATFORMS = [
 
 export function DownloadsPage() {
   return (
-    <div className="mx-auto w-full max-w-[1100px] px-4 py-14 sm:px-6 lg:px-8 lg:py-20">
-      <div className="max-w-3xl">
-        <Badge variant="outline">Downloads</Badge>
-        <h1 className="mt-4 text-balance text-4xl font-semibold tracking-[-0.04em] sm:text-5xl">
-          Get the engine.
-          <span className="text-gradient"> From source or release.</span>
-        </h1>
-        <p className="mt-5 text-sm leading-relaxed text-muted-foreground sm:text-base">
+    <PageShell
+      kicker="04 / Downloads"
+      title={
+        <>
+          Get the engine. <em>From source or release.</em>
+        </>
+      }
+      description={
+        <>
           KERNEXT is built by the repository&apos;s CI on Windows, Linux, and
           macOS. Release archives carry the CLI executable and desktop
           packages, each published with SHA-256 checksums. The current source
-          version is{' '}
-          <span className="font-mono text-foreground">v{KERNEXT_VERSION}</span>.
-        </p>
-      </div>
-
-      <div className="mt-8 flex flex-wrap gap-3">
-        <Button asChild>
-          <a href={`${REPOSITORY_URL}/releases`} target="_blank" rel="noreferrer">
-            <Download className="size-4" />
-            Releases on GitHub
-            <ArrowUpRight className="size-3.5 opacity-70" />
-          </a>
-        </Button>
-        <Button asChild variant="outline">
-          <Link to="/docs">
-            <TerminalSquare className="size-4" />
-            Build from source
-          </Link>
-        </Button>
-      </div>
+          version is <span className="font-mono text-foreground">v{KERNEXT_VERSION}</span>.
+        </>
+      }
+      actions={
+        <>
+          <Button asChild>
+            <a href={`${REPOSITORY_URL}/releases`} target="_blank" rel="noreferrer">
+              <Download className="size-4" />
+              Releases on GitHub
+              <ArrowUpRight className="size-3.5 opacity-70" />
+            </a>
+          </Button>
+          <Button asChild variant="outline">
+            <Link to="/docs">
+              <TerminalSquare className="size-4" />
+              Build from source
+            </Link>
+          </Button>
+        </>
+      }
+      aside={
+        <>
+          <PageAsideRow label="Version" value={`v${KERNEXT_VERSION}`} />
+          <PageAsideRow label="Targets" value="x64 / arm64" />
+          <PageAsideRow label="Checksums" value="SHA-256" />
+          <PageAsideRow label="Source" value="GitHub Releases" />
+          <p className="page-aside__note">
+            Archives, installers, and checksums are produced by CI from this
+            repository — never by hand.
+          </p>
+        </>
+      }
+    >
 
       <div className="mt-6 rounded-2xl border border-border bg-surface/40 p-5">
         <p className="text-xs leading-relaxed text-muted-foreground">
@@ -330,11 +344,6 @@ Get-FileHash kernext-x86_64-pc-windows-msvc.zip -Algorithm SHA256`}</code>
         </div>
       </div>
 
-      <div className="mt-8 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-        <FileArchive className="size-3.5" />
-        Archives, installers, and checksums are produced by CI from this
-        repository — never by hand.
-      </div>
-    </div>
+    </PageShell>
   );
 }

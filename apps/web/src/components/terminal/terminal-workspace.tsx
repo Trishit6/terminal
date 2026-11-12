@@ -135,6 +135,10 @@ export function TerminalWorkspace({
   const [fullscreenError, setFullscreenError] = useState<string | null>(null);
   const [preferenceNotice, setPreferenceNotice] = useState<string | null>(null);
   const [displaySize, setDisplaySize] = useState({ width: 0, height: 0 });
+  const [viewportLimits, setViewportLimits] = useState(() => ({
+    width: Math.max(320, window.innerWidth - 24),
+    height: Math.max(280, window.innerHeight - 264),
+  }));
   const [customWidth, setCustomWidth] = useState('');
   const [customHeight, setCustomHeight] = useState('');
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -173,7 +177,9 @@ export function TerminalWorkspace({
       return;
     }
 
-    const next = clampWorkspaceSize(remote, workspaceRef.current);
+    // Saved preferences keep their requested size; the rendered frame is
+    // clamped to the viewport separately.
+    const next = remote;
     preferencesRef.current = next;
     setTerminalPreferences(next);
     setCustomWidth(String(next.width ?? (displaySize.width || 1200)));
@@ -277,22 +283,25 @@ export function TerminalWorkspace({
         height: Math.round(rect.height),
       });
     };
-    const observer = new ResizeObserver(measure);
+    // Viewport limits are applied when rendering, never written back into the
+    // saved preferences. Otherwise narrowing the window (or rotating a phone)
+    // would permanently shrink the stored size and it could never grow again.
+    const measureLimits = () => {
+      setViewportLimits(getWorkspaceLimits(workspaceRef.current));
+    };
+    const observer = new ResizeObserver(() => {
+      measure();
+      measureLimits();
+    });
     observer.observe(element);
     measure();
+    measureLimits();
 
-    const clampToViewport = () => {
-      setTerminalPreferences((current) =>
-        clampWorkspaceSize(current, workspaceRef.current),
-      );
-    };
-    const frame = window.requestAnimationFrame(clampToViewport);
-    window.addEventListener('resize', clampToViewport);
+    window.addEventListener('resize', measureLimits);
 
     return () => {
       observer.disconnect();
-      window.cancelAnimationFrame(frame);
-      window.removeEventListener('resize', clampToViewport);
+      window.removeEventListener('resize', measureLimits);
     };
   }, [customizable]);
 
@@ -415,16 +424,19 @@ export function TerminalWorkspace({
   }, [activeId, addTab, closeTab]);
 
   const activeTab = tabs.find((tab) => tab.id === activeId) ?? tabs[0];
+  const measuredWidth = terminalPreferences.width ?? displaySize.width;
   const activePreset =
-    terminalPreferences.width !== null
-      ? 'custom'
-      : terminalPreferences.height === 320
-        ? 'compact'
-        : terminalPreferences.height === 520
-          ? 'standard'
-          : terminalPreferences.height === 720
-            ? 'large'
-            : 'custom';
+    fullscreen || windowedFullscreen
+      ? 'fullscreen'
+      : terminalPreferences.width !== null
+        ? 'custom'
+        : terminalPreferences.height === 320
+          ? 'compact'
+          : terminalPreferences.height === 520
+            ? 'standard'
+            : terminalPreferences.height === 720
+              ? 'large'
+              : 'custom';
   const settingsMaxHeight = Math.max(
     120,
     Math.min(
@@ -436,6 +448,11 @@ export function TerminalWorkspace({
   );
 
   const applyPreset = (preset: string) => {
+    if (preset === 'fullscreen') {
+      void toggleFullscreen();
+      return;
+    }
+
     if (preset === 'custom') {
       setCustomWidth(String(displaySize.width || 1200));
       setCustomHeight(String(terminalPreferences.height));
@@ -448,6 +465,7 @@ export function TerminalWorkspace({
     changePreferences((current) =>
       clampWorkspaceSize({ ...current, width: null, height }, workspaceRef.current),
     );
+    setSettingsOpen(false);
   };
 
   const fitToWindow = () => {
@@ -528,6 +546,7 @@ export function TerminalWorkspace({
         workspaceRef.current,
       ),
     );
+    setSettingsOpen(false);
   };
 
   const handleResizePointerDown = (
@@ -589,8 +608,14 @@ export function TerminalWorkspace({
               width:
                 terminalPreferences.width === null
                   ? '100%'
-                  : terminalPreferences.width,
-              height: terminalPreferences.height,
+                  : Math.min(
+                      terminalPreferences.width,
+                      viewportLimits.width,
+                    ),
+              height: Math.min(
+                terminalPreferences.height,
+                viewportLimits.height,
+              ),
               maxWidth: '100%',
               minHeight: 280,
               flex: 'none',
@@ -603,32 +628,34 @@ export function TerminalWorkspace({
         <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
           <div className="flex items-center gap-1.5">
             {tabs.map((tab) => (
-              <button
+              <div
                 key={tab.id}
-                type="button"
-                onClick={() => setActiveId(tab.id)}
                 className={cn(
-                  'group inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors',
+                  'group inline-flex shrink-0 items-center rounded-lg border text-xs font-medium transition-colors',
                   tab.id === activeId
                     ? 'border-primary/40 bg-primary/10 text-foreground'
                     : 'border-border bg-surface/70 text-muted-foreground hover:border-primary/30 hover:text-foreground',
                 )}
               >
-                <TerminalIcon className="size-3.5" />
-                {tab.label}
-                <span
-                  role="button"
-                  tabIndex={-1}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    closeTab(tab.id);
-                  }}
-                  className="rounded p-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus:opacity-100"
-                  aria-label={`Close ${tab.label}`}
+                <button
+                  type="button"
+                  onClick={() => setActiveId(tab.id)}
+                  aria-pressed={tab.id === activeId}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-l-lg py-1 pl-3 pr-1.5 sm:min-h-0 sm:py-1.5"
                 >
-                  <X className="size-3" />
-                </span>
-              </button>
+                  <TerminalIcon className="size-3.5" />
+                  {tab.label}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => closeTab(tab.id)}
+                  className="mr-1 grid size-11 place-items-center rounded-md text-muted-foreground transition-[opacity,background-color,color] hover:bg-surface hover:text-foreground sm:size-6 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
+                  aria-label={`Close ${tab.label}`}
+                  title={`Close ${tab.label}`}
+                >
+                  <X className="size-3.5" />
+                </button>
+              </div>
             ))}
           </div>
           <Button
@@ -637,7 +664,7 @@ export function TerminalWorkspace({
             size="icon"
             onClick={addTab}
             aria-label="New terminal session"
-            className="size-7 shrink-0"
+            className="size-11 shrink-0 sm:size-7"
           >
             <Plus className="size-4" />
           </Button>
@@ -663,11 +690,13 @@ export function TerminalWorkspace({
               <option value="compact">Compact · 320px</option>
               <option value="standard">Standard · 520px</option>
               <option value="large">Large · 720px</option>
+              <option value="fullscreen">Fullscreen · viewport</option>
               <option value="custom">Custom size…</option>
             </select>
 
             <span className="whitespace-nowrap font-mono text-[10px] tabular-nums text-muted-foreground">
-              {displaySize.width || '—'} × {displaySize.height || terminalPreferences.height}
+              {measuredWidth || '—'} ×{' '}
+              {displaySize.height || terminalPreferences.height}
             </span>
 
             <div className="ml-auto flex items-center gap-1">
@@ -766,12 +795,19 @@ export function TerminalWorkspace({
                     className="terminal-setting-control"
                   />
                 </label>
-                <Button type="submit" size="sm" className="col-span-2 sm:col-span-1">
+                <Button
+                  type="submit"
+                  size="sm"
+                  className="col-span-2 h-11 sm:col-span-1 sm:h-8"
+                >
                   Apply size
                 </Button>
               </form>
 
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+              <div
+                className="grid gap-3"
+                style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(7.5rem, 1fr))' }}
+              >
                 <label className="terminal-setting-label">
                   Font size · {terminalPreferences.fontSize}px
                   <input
@@ -882,6 +918,19 @@ export function TerminalWorkspace({
                   />
                 </label>
               </div>
+
+              <label className="flex min-h-11 items-center justify-between gap-3 border-t border-border pt-3 text-xs text-muted-foreground sm:min-h-0">
+                <span>Show output toolbar</span>
+                <input
+                  type="checkbox"
+                  checked={terminalPreferences.showToolbar}
+                  onChange={(event) => {
+                    const showToolbar = event.currentTarget.checked;
+                    changePreferences((current) => ({ ...current, showToolbar }));
+                  }}
+                  className="size-4 accent-[var(--primary)]"
+                />
+              </label>
             </div>
           ) : null}
           </div>
@@ -1099,7 +1148,7 @@ function TerminalPanel({
                     : 'Line-oriented commands executed by the in-process Rust engine'
                 }
                 className={cn(
-                  'inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors',
+                  'inline-flex min-h-11 items-center gap-1.5 px-3 py-2.5 text-xs font-medium transition-colors sm:min-h-0 sm:py-1.5',
                   mode === value
                     ? 'bg-primary text-primary-foreground'
                     : 'bg-surface/70 text-muted-foreground hover:bg-surface hover:text-foreground',
@@ -1123,7 +1172,7 @@ function TerminalPanel({
               variant="outline"
               size="sm"
               onClick={connection.disconnect}
-              className="gap-1.5"
+              className="h-11 gap-1.5 sm:h-8"
             >
               <Power className="size-3.5" />
               Disconnect
@@ -1133,7 +1182,7 @@ function TerminalPanel({
               type="button"
               size="sm"
               onClick={connection.connect}
-              className="gap-1.5"
+              className="h-11 gap-1.5 sm:h-8"
             >
               <RefreshCw className="size-3.5" />
               {reconnect ? 'Reconnect' : 'Connect'}
@@ -1143,13 +1192,14 @@ function TerminalPanel({
       </div>
 
       {/* Terminal toolbar: output controls and font settings. */}
+      {(appearance?.showToolbar ?? true) ? (
       <div className="flex flex-wrap items-center gap-1.5">
         <Button
           type="button"
           variant="ghost"
           size="sm"
           onClick={connection.clear}
-          className="gap-1.5"
+          className="h-11 gap-1.5 sm:h-8"
         >
           <Square className="size-3.5" />
           Clear
@@ -1159,7 +1209,7 @@ function TerminalPanel({
           variant="ghost"
           size="sm"
           onClick={handleCopy}
-          className="gap-1.5"
+          className="h-11 gap-1.5 sm:h-8"
         >
           {copied ? (
             <Copy className="size-3.5 text-success" />
@@ -1179,7 +1229,7 @@ function TerminalPanel({
               ? 'Send Ctrl+C to the running terminal process'
               : 'A running engine command cannot be interrupted yet'
           }
-          className="gap-1.5"
+          className="h-11 gap-1.5 sm:h-8"
         >
           <CircleSlash className="size-3.5" />
           Interrupt
@@ -1191,7 +1241,7 @@ function TerminalPanel({
             aria-label="Decrease terminal font size"
             title="Smaller text"
             onClick={() => adjustFontSize(-1)}
-            className="rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-surface hover:text-foreground"
+            className="min-h-11 min-w-11 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-surface hover:text-foreground sm:min-h-0 sm:min-w-0"
           >
             A−
           </button>
@@ -1203,12 +1253,13 @@ function TerminalPanel({
             aria-label="Increase terminal font size"
             title="Larger text"
             onClick={() => adjustFontSize(1)}
-            className="rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-surface hover:text-foreground"
+            className="min-h-11 min-w-11 rounded px-1.5 py-0.5 text-xs text-muted-foreground transition-colors hover:bg-surface hover:text-foreground sm:min-h-0 sm:min-w-0"
           >
             A+
           </button>
         </div>
       </div>
+      ) : null}
 
       {showConnectionError ? (
         <div className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-xs text-danger">

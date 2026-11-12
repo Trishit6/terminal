@@ -16,6 +16,7 @@ export interface TerminalPreferences {
   theme: TerminalThemeId;
   cursorStyle: TerminalCursorStyle;
   opacity: number;
+  showToolbar: boolean;
 }
 
 export const TERMINAL_PREFERENCES_STORAGE_KEY =
@@ -32,6 +33,7 @@ export const DEFAULT_TERMINAL_PREFERENCES: TerminalPreferences = {
   theme: 'kernext-dark',
   cursorStyle: 'block',
   opacity: 1,
+  showToolbar: true,
 };
 
 export const TERMINAL_FONT_FAMILIES = [
@@ -157,6 +159,7 @@ function parsePreferences(value: unknown): TerminalPreferences | null {
     theme,
     cursorStyle,
     opacity: clampNumber(value.opacity, 1, 0.75, 1),
+    showToolbar: value.showToolbar !== false,
   };
 }
 

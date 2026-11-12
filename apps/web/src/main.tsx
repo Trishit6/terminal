@@ -3,8 +3,10 @@ import { createRoot } from 'react-dom/client';
 import { RouterProvider } from '@tanstack/react-router';
 import { MotionConfig } from 'motion/react';
 import { AuthProvider } from './components/auth/auth-provider';
+import { BackendStatusIndicator } from './components/site/backend-status';
 import { router } from './router';
 import './styles.css';
+import './art-direction.css';
 
 /**
  * `index.html` carries fallback SEO tags for non-JS clients and for the
@@ -37,6 +39,7 @@ createRoot(container).render(
     <MotionConfig reducedMotion={import.meta.env.PROD ? 'user' : 'never'}>
       <AuthProvider>
         <RouterProvider router={router} />
+        <BackendStatusIndicator />
       </AuthProvider>
     </MotionConfig>
   </StrictMode>,

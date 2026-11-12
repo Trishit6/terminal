@@ -17,15 +17,8 @@ import {
   TerminalSquare,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { Badge } from '@/components/ui/badge';
+import { PageAsideRow, PageShell } from '@/components/site/page-shell';
 import { Button } from '@/components/ui/button';
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
 
 const EASE = [0.22, 1, 0.36, 1] as const;
@@ -126,34 +119,43 @@ const GROUPS = [
 
 export function FeaturesPage() {
   return (
-    <div className="mx-auto w-full max-w-site px-4 py-14 sm:px-6 lg:px-8 lg:py-20">
-      <div className="max-w-3xl">
-        <Badge variant="outline">Features</Badge>
-        <h1 className="mt-4 text-balance text-4xl font-semibold tracking-[-0.04em] sm:text-5xl">
-          Everything the engine does.
-          <span className="text-gradient"> Once, in Rust.</span>
-        </h1>
-        <p className="mt-5 text-sm leading-relaxed text-muted-foreground sm:text-base">
-          KERNEXT ships one engine behind three surfaces. Every feature below
-          is implemented in the shared crates and exercised by the automated
-          test suite that runs on Windows, Linux, and macOS.
-        </p>
-      </div>
-
-      <div className="mt-8 flex flex-wrap gap-3">
-        <Button asChild>
-          <Link to="/terminal">
-            <TerminalSquare className="size-4" />
-            Open the web terminal
-          </Link>
-        </Button>
-        <Button asChild variant="outline">
-          <Link to="/docs">
-            Read the documentation
-            <ArrowRight className="size-4" />
-          </Link>
-        </Button>
-      </div>
+    <PageShell
+      kicker="02 / Features"
+      title={
+        <>
+          Everything the engine does. <em>Once, in Rust.</em>
+        </>
+      }
+      description="KERNEXT ships one engine behind three surfaces. Every feature below is implemented in the shared crates and exercised by the automated test suite that runs on Windows, Linux, and macOS."
+      actions={
+        <>
+          <Button asChild>
+            <Link to="/terminal">
+              <TerminalSquare className="size-4" />
+              Open the web terminal
+            </Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link to="/docs">
+              Read the documentation
+              <ArrowRight className="size-4" />
+            </Link>
+          </Button>
+        </>
+      }
+      aside={
+        <>
+          <PageAsideRow label="Engine" value="Rust workspace" />
+          <PageAsideRow label="Surfaces" value="3" />
+          <PageAsideRow label="Built-ins" value="56" />
+          <PageAsideRow label="Status" value="Implemented" />
+          <p className="page-aside__note">
+            Claims map to <span className="font-mono">crates/shell-*</span> and
+            the repository test suite.
+          </p>
+        </>
+      }
+    >
 
       <div className="mt-14 space-y-16">
         {GROUPS.map((group, index) => (
@@ -183,61 +185,53 @@ export function FeaturesPage() {
               </div>
             </div>
 
-            <div className="mt-6 grid gap-4 md:grid-cols-3">
+            <ul className="mt-6 grid gap-x-8 gap-y-4 border-t border-border pt-5 md:grid-cols-3">
               {group.items.map((item) => (
-                <Card key={item} className="bg-surface/55">
-                  <CardContent className="flex items-start gap-2.5 p-5">
-                    <Check className="mt-0.5 size-4 shrink-0 text-success" />
-                    <p className="text-xs leading-relaxed text-muted-foreground">
-                      {item}
-                    </p>
-                  </CardContent>
-                </Card>
+                <li key={item} className="flex items-start gap-2.5">
+                  <Check className="mt-0.5 size-3.5 shrink-0 text-success" />
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {item}
+                  </p>
+                </li>
               ))}
-            </div>
+            </ul>
           </motion.section>
         ))}
       </div>
 
       <Separator className="my-16" />
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card className="p-6">
-          <CardHeader className="p-0">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Layers3 className="size-4 text-primary" />
-              One engine
-            </CardTitle>
-            <CardDescription>
-              The CLI, web terminal, and desktop app share the dispatcher, the
-              built-in registry, the runtime, and the configuration model.
-            </CardDescription>
-          </CardHeader>
-        </Card>
-        <Card className="p-6">
-          <CardHeader className="p-0">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <History className="size-4 text-primary" />
-              Consistent history
-            </CardTitle>
-            <CardDescription>
-              History, prompt, and exit statuses behave identically on every
-              surface because they come from the same session runtime.
-            </CardDescription>
-          </CardHeader>
-        </Card>
-        <Card className="p-6">
-          <CardHeader className="p-0">
-            <CardTitle className="flex items-center gap-2 text-base">
-              <LockKeyhole className="size-4 text-primary" />
-              No hidden shells
-            </CardTitle>
-            <CardDescription>
-              No Bash, CMD, or PowerShell is invoked to parse KERNEXT syntax.
-              The only interpreter use is launching Windows command scripts.
-            </CardDescription>
-          </CardHeader>
-        </Card>
+      <div className="grid gap-6 border-t border-border pt-6 lg:grid-cols-3">
+        {[
+          {
+            icon: Layers3,
+            title: 'One engine',
+            detail:
+              'The CLI, web terminal, and desktop app share the dispatcher, the built-in registry, the runtime, and the configuration model.',
+          },
+          {
+            icon: History,
+            title: 'Consistent history',
+            detail:
+              'History, prompt, and exit statuses behave identically on every surface because they come from the same session runtime.',
+          },
+          {
+            icon: LockKeyhole,
+            title: 'No hidden shells',
+            detail:
+              'No Bash, CMD, or PowerShell is invoked to parse KERNEXT syntax. The only interpreter use is launching Windows command scripts.',
+          },
+        ].map((item) => (
+          <div key={item.title} className="max-w-sm">
+            <h3 className="flex items-center gap-2 text-sm font-semibold">
+              <item.icon className="size-4 text-primary" />
+              {item.title}
+            </h3>
+            <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+              {item.detail}
+            </p>
+          </div>
+        ))}
       </div>
 
       <div className="mt-14 grid gap-4 rounded-2xl border border-border bg-surface/40 p-6 sm:grid-cols-3">
@@ -310,6 +304,6 @@ export function FeaturesPage() {
           </Button>
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }

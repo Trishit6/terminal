@@ -101,6 +101,20 @@ There is no asynchronous completion notice. Run `jobs` to see it
 - PTY sessions need the `kernext` binary discoverable: a sibling of the
   server executable or `KERNEXT_BIN`.
 
+### Vite logs `ECONNREFUSED 127.0.0.1:7878` or `ws proxy error: read ECONNRESET`
+
+- The dev proxy could not reach the Axum backend. Expected outages are now
+  handled: API requests answer `503` with
+  `{"error":"backend_unavailable"}`, and Vite prints one concise warning per
+  outage instead of a stack trace for every request or socket reset.
+- Run `npm run dev`, not `npm run web:dev`, for the combined stack. It waits
+  for `/api/v1/health` before starting Vite, reuses a healthy backend that is
+  already running, and refuses to start when port 5173 is occupied or port
+  7878 belongs to something that is not KERNEXT.
+- A `503` in the browser means the backend is down; it is not a front-end
+  error. Start the backend (or the full dev stack) and the same page recovers
+  on refresh.
+
 ### Sessions disappear after half an hour
 
 Idle sessions are cleaned up by a background sweeper (60-second cadence,

@@ -11,6 +11,7 @@ import {
   TerminalSquare,
 } from 'lucide-react';
 import { useState } from 'react';
+import { PageAsideRow, PageShell } from '@/components/site/page-shell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -31,34 +32,43 @@ import { cn } from '@/lib/utils';
 
 export function DocsPage() {
   return (
-    <div className="mx-auto w-full max-w-[1100px] px-4 py-14 sm:px-6 lg:px-8 lg:py-20">
-      <div className="max-w-3xl">
-        <Badge variant="outline">Documentation</Badge>
-        <h1 className="mt-4 text-balance text-4xl font-semibold tracking-[-0.04em] sm:text-5xl">
-          One runtime. Three surfaces.
-          <span className="text-gradient"> No simulated shell.</span>
-        </h1>
-        <p className="mt-5 text-sm leading-relaxed text-muted-foreground sm:text-base">
-          KERNEXT runs a native Rust engine on your machine. This page covers
-          the local server, both WebSocket transports, the HTTP API, the
-          security model, and the current verification status.
-        </p>
-      </div>
-
-      <div className="mt-10 flex flex-wrap gap-3">
-        <Button asChild>
-          <Link to="/terminal">
-            <TerminalSquare className="size-4" />
-            Open the web terminal
-          </Link>
-        </Button>
-        <Button asChild variant="outline">
-          <Link to="/" hash="architecture">
-            Architecture overview
-            <ArrowUpRight className="size-4" />
-          </Link>
-        </Button>
-      </div>
+    <PageShell
+      kicker="03 / Documentation"
+      title={
+        <>
+          One runtime. Three surfaces. <em>No simulated shell.</em>
+        </>
+      }
+      description="KERNEXT runs a native Rust engine on your machine. This page covers the local server, both WebSocket transports, the HTTP API, the security model, and the current verification status."
+      actions={
+        <>
+          <Button asChild>
+            <Link to="/terminal">
+              <TerminalSquare className="size-4" />
+              Open the web terminal
+            </Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link to="/" hash="architecture">
+              Architecture overview
+              <ArrowUpRight className="size-4" />
+            </Link>
+          </Button>
+        </>
+      }
+      aside={
+        <>
+          <PageAsideRow label="Runtime" value="Axum + Tokio" />
+          <PageAsideRow label="Transports" value="Engine / PTY" />
+          <PageAsideRow label="Database" value="MariaDB (optional)" />
+          <PageAsideRow label="Status" value="Implemented" />
+          <p className="page-aside__note">
+            Commands, limits, and security boundaries documented here match the
+            current source and tests.
+          </p>
+        </>
+      }
+    >
 
       <Separator className="my-12" />
 
@@ -137,7 +147,7 @@ KERNEXT_BIN=/absolute/path/to/kernext`}
           description="Every endpoint below is served by the local Axum runtime. Mutating routes require a bearer token when KERNEXT_SERVER_TOKEN is configured."
         />
 
-        <div className="mt-6 overflow-hidden rounded-2xl border border-border">
+        <div className="mt-6 overflow-x-auto rounded-2xl border border-border">
           <table className="w-full text-left text-xs sm:text-sm">
             <thead className="bg-surface-soft text-muted-foreground">
               <tr>
@@ -376,7 +386,7 @@ KERNEXT_BIN=/absolute/path/to/kernext`}
           description="Status labels are deliberately conservative. A feature is only marked verified after a real build or test run."
         />
 
-        <div className="mt-6 overflow-hidden rounded-2xl border border-border">
+        <div className="mt-6 overflow-x-auto rounded-2xl border border-border">
           <table className="w-full text-left text-xs sm:text-sm">
             <thead className="bg-surface-soft text-muted-foreground">
               <tr>
@@ -443,7 +453,7 @@ KERNEXT_BIN=/absolute/path/to/kernext`}
           </Link>
         </Button>
       </div>
-    </div>
+    </PageShell>
   );
 }
 

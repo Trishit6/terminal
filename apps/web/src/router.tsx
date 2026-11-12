@@ -8,7 +8,7 @@ import {
 } from '@tanstack/react-router';
 import { AdminLayout } from './components/admin/admin-shell';
 import { DesktopShell } from './components/desktop/desktop-shell';
-import { SiteLayout, TerminalLayout } from './components/site/site-layout';
+import { SiteFrame, SiteLayout, TerminalLayout } from './components/site/site-layout';
 import { NotFoundPage } from './routes/not-found';
 import {
   breadcrumbSchema,
@@ -162,7 +162,11 @@ const rootRoute = createRootRoute({
       <Outlet />
     </>
   ),
-  notFoundComponent: NotFoundPage,
+  notFoundComponent: () => (
+    <SiteFrame>
+      <NotFoundPage />
+    </SiteFrame>
+  ),
   // Fallback title for anything that declares no head of its own.
   head: () => ({ meta: [{ title: 'KERNEXT — The Next Core of Computing.' }] }),
 });
