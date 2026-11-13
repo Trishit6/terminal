@@ -1,3 +1,4 @@
+import { Suspense, lazy } from 'react';
 import { Link } from '@tanstack/react-router';
 import {
   ArrowRight,
@@ -10,12 +11,62 @@ import {
   TerminalSquare,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { OrbitalHero } from '@/components/site/orbital-hero';
+import { CoreSceneFallback } from '@/components/site/core-fallback';
 import { PlatformMark } from '@/components/site/platform-mark';
 import { Button } from '@/components/ui/button';
 import { KERNEXT_VERSION } from '@/lib/version';
 
+/**
+ * The core scene pulls in `three`, `@react-three/fiber`, and `gsap` (~1 MB raw,
+ * ~280 kB gzipped). Loading it lazily keeps that weight off the critical path:
+ * the hero copy paints first, then the 3D chunk streams in behind a static
+ * fallback that shares the scene's layout.
+ */
+const OrbitalHero = lazy(() =>
+  import('@/components/site/orbital-hero').then((module) => ({
+    default: module.OrbitalHero,
+  })),
+);
+
 const EASE = [0.22, 1, 0.36, 1] as const;
+
+/**
+ * Documentation entries. Each `hash` targets a real section id on `/docs`
+ * (`quickstart`, `api`, `websocket`, `security`, `status`) — verified against
+ * `routes/docs.tsx`.
+ */
+const DOC_ENTRIES = [
+  {
+    index: '01',
+    title: 'Quick start',
+    hash: 'quickstart',
+    description: 'Install the CLI, launch the shell, and run the first command.',
+  },
+  {
+    index: '02',
+    title: 'HTTP session API',
+    hash: 'api',
+    description: 'Session lifecycle, request shapes, and error codes for the local server.',
+  },
+  {
+    index: '03',
+    title: 'WebSocket transports',
+    hash: 'websocket',
+    description: 'The engine and real-PTY streams the browser terminal connects to.',
+  },
+  {
+    index: '04',
+    title: 'Security model',
+    hash: 'security',
+    description: 'Accounts, HttpOnly sessions, CSRF, rate limits, and token hashing.',
+  },
+  {
+    index: '05',
+    title: 'Project status',
+    hash: 'status',
+    description: 'What is implemented, what is verified, and what is still open.',
+  },
+] as const;
 
 const CAPABILITIES = [
   {
@@ -92,6 +143,7 @@ export function HomePage() {
       <PlatformSection />
       <ArchitectureSection />
       <TerminalSection />
+      <DocumentationSection />
       <CallToAction />
     </div>
   );
@@ -153,7 +205,15 @@ function Hero() {
           transition={{ duration: 0.8, ease: EASE, delay: 0.08 }}
         >
           <div className="hero__stage-grid" aria-hidden="true" />
-          <OrbitalHero />
+          <Suspense
+            fallback={
+              <div className="orbital-hero">
+                <CoreSceneFallback />
+              </div>
+            }
+          >
+            <OrbitalHero />
+          </Suspense>
           <span className="hero__tag hero__tag--a" aria-hidden="true">
             <i /> Rust engine
           </span>
@@ -602,6 +662,40 @@ function TerminalSection() {
             </p>
           </div>
         </div>
+      </div>
+    </section>
+  );
+}
+
+function DocumentationSection() {
+  return (
+    <section id="documentation" className="home-section home-section--ruled">
+      <SectionHead
+        index="06 / Documentation"
+        eyebrow="Read the engineering notes"
+        title="The engine, documented from the source."
+        description="Every page describes behaviour that exists in this repository: the command language, the HTTP session API, the WebSocket transports, the security model, and the current project status."
+      />
+
+      <div className="docs-band">
+        {DOC_ENTRIES.map((entry) => (
+          <Link key={entry.title} to="/docs" hash={entry.hash} className="docs-band__item">
+            <span>{entry.index}</span>
+            <b>{entry.title}</b>
+            <ArrowUpRight className="size-4" aria-hidden="true" />
+            <p>{entry.description}</p>
+          </Link>
+        ))}
+      </div>
+
+      <div className="docs-band__footer">
+        <Button asChild variant="outline">
+          <Link to="/docs">
+            Read the documentation
+            <ArrowRight className="size-4" />
+          </Link>
+        </Button>
+        <p>Markdown sources live in the repository under <code>docs/</code>.</p>
       </div>
     </section>
   );

@@ -3,6 +3,57 @@
    Runtime tokens are overridden here so every existing utility follows the
    same palette in both themes. */
 
+/* ── Typeface ──────────────────────────────────────────────────────────────
+   The three faces are self-hosted under `apps/web/public/fonts`. The server
+   ships `font-src 'self' data:` in its Content-Security-Policy, so no remote
+   font host (Google Fonts, jsDelivr, …) may be used at runtime. Files come
+   from the Fontsource distribution of each family: Manrope and Inter are
+   variable (weight axis), IBM Plex Mono is served as static 400/500 cuts. */
+
+@font-face {
+  font-family: "Manrope";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("/fonts/manrope-latin-wght-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-latin-wght-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-latin-500-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 :root {
   --background: #f1f3f6;
   --surface: #ffffff;
@@ -27,10 +78,10 @@
   --term-selection: rgba(8, 124, 136, 0.2);
   --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont,
     "Helvetica Neue", Arial, sans-serif;
-  --font-display: "Segoe UI Variable Display", "Inter", "SF Pro Display",
-    "Segoe UI", system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", "Cascadia Code", "SFMono-Regular", "SF Mono",
-    Menlo, Consolas, "Liberation Mono", monospace;
+  --font-display: "Manrope", "Inter", "Segoe UI Variable Display", "Segoe UI",
+    system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", "JetBrains Mono", "Cascadia Code",
+    "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --signal-line: rgba(12, 20, 32, 0.08);
 }
 
@@ -626,6 +677,80 @@ h3,
   width: 100%;
   max-width: none;
   aspect-ratio: 1;
+}
+
+/* Three.js core scene. The canvas is transparent, so the stage grid and
+   gradient read through behind the sphere and its rings. */
+.orbital-hero {
+  position: absolute;
+  inset: 0.9rem;
+  overflow: hidden;
+  border-radius: 0.6rem;
+  pointer-events: none;
+}
+
+.orbital-hero__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: auto;
+  touch-action: pan-y;
+}
+
+.orbital-hero canvas {
+  display: block;
+  outline: none;
+}
+
+/* Shown when WebGL is unavailable or the scene throws. */
+.orbital-fallback {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.9rem;
+  width: 100%;
+  height: 100%;
+  color: var(--muted-foreground);
+}
+
+.orbital-fallback__glow {
+  position: absolute;
+  width: 62%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--primary) 26%, transparent),
+    transparent 68%
+  );
+  filter: blur(8px);
+}
+
+.orbital-fallback__ring {
+  position: absolute;
+  width: 74%;
+  height: 30%;
+  border: 1px solid color-mix(in srgb, var(--primary) 40%, transparent);
+  border-radius: 50%;
+}
+
+.orbital-fallback__ring--a {
+  transform: rotate(-14deg);
+}
+
+.orbital-fallback__ring--b {
+  border-color: color-mix(in srgb, var(--violet) 45%, transparent);
+  transform: rotate(18deg);
+}
+
+.orbital-fallback__caption {
+  position: relative;
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
 }
 
 .hero__tag {
@@ -1457,6 +1582,93 @@ h3,
 
 .home-terminal-window__content .terminal-ok {
   color: #55d3a4;
+}
+
+/* Documentation index — hairline rows, no card chrome. */
+
+.docs-band {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 clamp(2rem, 5vw, 4.5rem);
+  margin-top: 2.2rem;
+}
+
+.docs-band__item {
+  display: grid;
+  grid-template-columns: 2.2rem minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 0 0.9rem;
+  border-top: 1px solid var(--border);
+  padding: 1.15rem 0 1.3rem;
+  color: inherit;
+  transition: border-color 160ms ease;
+}
+
+.docs-band__item:hover {
+  border-color: color-mix(in srgb, var(--primary) 45%, var(--border));
+}
+
+.docs-band__item > span {
+  grid-row: 1 / 3;
+  padding-top: 0.15rem;
+  color: var(--faint);
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.1em;
+}
+
+.docs-band__item > b {
+  font-family: var(--font-display);
+  font-size: 1.02rem;
+  font-weight: 560;
+  letter-spacing: -0.02em;
+}
+
+.docs-band__item > p {
+  grid-column: 2;
+  margin: 0.35rem 0 0;
+  color: var(--muted-foreground);
+  font-size: 0.86rem;
+  line-height: 1.6;
+}
+
+.docs-band__item > svg {
+  grid-row: 1 / 3;
+  grid-column: 3;
+  align-self: center;
+  color: var(--faint);
+  transition: color 160ms ease, transform 160ms ease;
+}
+
+.docs-band__item:hover > svg {
+  color: var(--primary);
+  transform: translate(2px, -2px);
+}
+
+.docs-band__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem 1.5rem;
+  margin-top: 2rem;
+}
+
+.docs-band__footer p {
+  margin: 0;
+  color: var(--faint);
+  font-size: 0.82rem;
+}
+
+.docs-band__footer code {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  color: var(--muted-foreground);
+}
+
+@media (max-width: 900px) {
+  .docs-band {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 /* Closing band */

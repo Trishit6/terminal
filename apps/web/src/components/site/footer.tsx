@@ -106,7 +106,7 @@ export function SiteFooter() {
                 </Link>
               </li>
               <li>
-                <Link to="/docs" hash="transports">
+                <Link to="/docs" hash="websocket">
                   WebSocket transports
                 </Link>
               </li>

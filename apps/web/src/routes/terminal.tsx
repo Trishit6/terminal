@@ -107,7 +107,7 @@ export function TerminalPage() {
           </code>
           <Link
             to="/docs"
-            hash="quick-start"
+            hash="quickstart"
             className="inline-flex items-center gap-1 text-[11px] text-muted-foreground transition-colors hover:text-primary"
           >
             Setup notes

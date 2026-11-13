@@ -1,1 +1,0 @@
-import{i as e,l as t,n,r}from"./dist-LceywMZV.js";var i=t(e(),1),a=r(),o=i.forwardRef(({className:e,orientation:t=`horizontal`,decorative:r=!0,...i},o)=>(0,a.jsx)(`div`,{ref:o,role:r?`none`:`separator`,"aria-orientation":r?void 0:t,className:n(`shrink-0 bg-border`,t===`horizontal`?`h-px w-full`:`h-full w-px`,e),...i}));o.displayName=`Separator`;export{o as t};
