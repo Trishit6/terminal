@@ -43,11 +43,17 @@ function resolveSiteUrl() {
     return fromEnv;
   }
 
-  const envFile = readFileSync(`${ROOT}/.env`, 'utf8');
-  for (const line of envFile.split(/\r?\n/)) {
-    const match = line.match(/^\s*VITE_PUBLIC_SITE_URL\s*=\s*(.*)\s*$/);
-    if (match && match[1] && !match[1].startsWith('"')) {
-      return match[1].trim();
+  // The workspace `.env` is gitignored (it holds local secrets such as
+  // DATABASE_URL), so it only exists on a developer machine and never in CI.
+  // Reading it unconditionally made the production build throw `ENOENT` on a
+  // clean checkout. Only consult it when it is actually present.
+  if (existsSync(`${ROOT}/.env`)) {
+    const envFile = readFileSync(`${ROOT}/.env`, 'utf8');
+    for (const line of envFile.split(/\r?\n/)) {
+      const match = line.match(/^\s*VITE_PUBLIC_SITE_URL\s*=\s*(.*)\s*$/);
+      if (match && match[1] && !match[1].startsWith('"')) {
+        return match[1].trim();
+      }
     }
   }
 

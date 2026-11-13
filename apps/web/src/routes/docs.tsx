@@ -10,7 +10,7 @@ import {
   ShieldCheck,
   TerminalSquare,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { PageAsideRow, PageShell } from '@/components/site/page-shell';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -29,6 +29,71 @@ import {
   TabsTrigger,
 } from '@/components/ui/tabs';
 import { cn } from '@/lib/utils';
+
+const DOC_NAV = [
+  { id: 'quickstart', index: '01', label: 'Quick start' },
+  { id: 'terminal', index: '02', label: 'Web terminal' },
+  { id: 'api', index: '03', label: 'HTTP API' },
+  { id: 'websocket', index: '04', label: 'WebSocket protocol' },
+  { id: 'security', index: '05', label: 'Security' },
+  { id: 'status', index: '06', label: 'Status' },
+] as const;
+
+function DocsNav() {
+  const [active, setActive] = useState<string>('quickstart');
+
+  useEffect(() => {
+    if (typeof IntersectionObserver === 'undefined') {
+      return;
+    }
+
+    const sections = DOC_NAV.map(({ id }) => document.getElementById(id)).filter(
+      (element): element is HTMLElement => element !== null,
+    );
+
+    if (sections.length === 0) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort(
+            (a, b) => a.boundingClientRect.top - b.boundingClientRect.top,
+          );
+
+        if (visible[0]?.target.id) {
+          setActive(visible[0].target.id);
+        }
+      },
+      { rootMargin: '-18% 0px -65% 0px', threshold: [0, 1] },
+    );
+
+    for (const section of sections) {
+      observer.observe(section);
+    }
+
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <nav className="docs-nav" aria-label="Documentation sections">
+      <p className="docs-nav__title">On this page</p>
+      {DOC_NAV.map((item) => (
+        <a
+          key={item.id}
+          href={`#${item.id}`}
+          className={active === item.id ? 'is-active' : undefined}
+          aria-current={active === item.id ? 'location' : undefined}
+        >
+          <span>{item.index}</span>
+          {item.label}
+        </a>
+      ))}
+    </nav>
+  );
+}
 
 export function DocsPage() {
   return (
@@ -68,6 +133,7 @@ export function DocsPage() {
           </p>
         </>
       }
+      sidebar={<DocsNav />}
     >
 
       <Separator className="my-12" />

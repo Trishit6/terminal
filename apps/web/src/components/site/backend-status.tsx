@@ -20,7 +20,7 @@ export function BackendStatusIndicator() {
     <div
       role="status"
       aria-live="polite"
-      className="fixed bottom-3 left-3 z-[60] flex max-w-[calc(100vw-1.5rem)] items-center gap-2 rounded-full border border-danger/40 bg-surface/95 py-1 pl-3 pr-1 text-[11px] text-foreground shadow-2xl backdrop-blur"
+      className="fixed bottom-4 right-4 z-50 flex max-w-[calc(100vw-1.5rem)] items-center gap-2 rounded-full border border-danger/40 bg-surface/95 py-1 pl-3 pr-1 text-[11px] text-foreground shadow-2xl backdrop-blur"
     >
       <ServerOff className="size-3.5 shrink-0 text-danger" aria-hidden="true" />
       <span className="shrink-0 font-medium">Backend offline</span>

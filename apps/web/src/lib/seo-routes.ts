@@ -83,6 +83,13 @@ export const ROUTE_SEO: readonly RouteSeo[] = [
     indexable: false,
   },
   {
+    path: '/orbital/render-test',
+    title: 'Orbital render test — KERNEXT',
+    description:
+      'Visual regression fixtures for the KERNEXT orbital hero: emblem placement, exactly three orbits, metal shading, and reduced-motion rendering.',
+    indexable: false,
+  },
+  {
     path: '/sign-in',
     title: 'Sign in — KERNEXT',
     description: 'Sign in to your KERNEXT account to open the web terminal.',

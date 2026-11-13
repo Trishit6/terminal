@@ -6,6 +6,7 @@ export function PageShell({
   description,
   actions,
   aside,
+  sidebar,
   children,
 }: {
   kicker: string;
@@ -13,6 +14,7 @@ export function PageShell({
   description: ReactNode;
   actions?: ReactNode;
   aside?: ReactNode;
+  sidebar?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -26,7 +28,10 @@ export function PageShell({
         </div>
         {aside ? <aside className="page-aside">{aside}</aside> : null}
       </header>
-      <div className="page-body">{children}</div>
+      <div className={sidebar ? 'page-body page-body--sidebar' : 'page-body'}>
+        {sidebar ? <aside className="page-sidebar">{sidebar}</aside> : null}
+        <div className="page-body__main">{children}</div>
+      </div>
     </div>
   );
 }

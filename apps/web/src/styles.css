@@ -31,8 +31,8 @@
 }
 
 .dark {
-  --background: #080d14;
-  --surface: #111c28;
+  --background: #08111b;
+  --surface: #0d1826;
   --surface-soft: #0d1520;
   --foreground: #edf3fa;
   --muted-foreground: #a4b1c0;
@@ -44,7 +44,7 @@
   --success: #46c39a;
   --warning: #e5ad5d;
   --danger: #ed7881;
-  --term-bg: #080d14;
+  --term-bg: #070c15;
   --term-fg: #dbe5ef;
   --term-cursor: #23c6df;
   --term-selection: rgba(35, 198, 223, 0.2);
@@ -71,8 +71,8 @@
 @theme {
   --font-sans: "Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont,
     "Helvetica Neue", Arial, sans-serif;
-  --font-display: "Manrope", "Inter", "Segoe UI Variable Display", "Segoe UI",
-    system-ui, sans-serif;
+  --font-display: "Space Grotesk", "Manrope", "Inter", "Segoe UI Variable Display",
+    "Segoe UI", system-ui, sans-serif;
   --font-mono: "IBM Plex Mono", "JetBrains Mono", "Cascadia Code",
     "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --radius-4xl: 2rem;

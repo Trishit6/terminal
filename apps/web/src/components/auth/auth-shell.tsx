@@ -43,10 +43,10 @@ export function AuthShell({
           className={cn('w-full', wide ? 'max-w-3xl' : 'max-w-[26rem]')}
         >
           <div className="mb-7 flex flex-col items-center text-center">
-            <span className="inline-flex size-11 items-center justify-center rounded-2xl border border-border bg-surface shadow-[0_18px_50px_-30px_rgba(34,211,238,0.55)]">
+            <span className="inline-flex size-11 items-center justify-center rounded-2xl border border-border bg-surface shadow-[0_18px_50px_-30px_rgba(94,220,236,0.35)]">
               <LogoMark className="size-7" />
             </span>
-            <span className="mt-4 font-mono text-[10px] uppercase tracking-[0.28em] text-muted-foreground">
+            <span className="mt-4 font-mono text-[11px] uppercase tracking-[0.14em] text-muted-foreground">
               KERNEXT Account
             </span>
             <h1 className="mt-2 text-2xl font-semibold tracking-[-0.02em] sm:text-[1.7rem]">
@@ -57,7 +57,7 @@ export function AuthShell({
             </p>
           </div>
 
-          <div className="rounded-2xl border border-border bg-surface/85 p-6 shadow-[0_30px_100px_-50px_rgba(2,8,23,0.95)] backdrop-blur-sm sm:p-7">
+          <div className="rounded-2xl border border-border bg-surface p-6 shadow-[0_30px_100px_-50px_rgba(2,7,13,0.9)] sm:p-7">
             {children}
           </div>
 

@@ -414,7 +414,7 @@ export function AdminLayout() {
           <button
             type="button"
             aria-label="Close navigation"
-            className="absolute inset-0 bg-[#02040a]/70 backdrop-blur-sm"
+            className="absolute inset-0 bg-[#040a12]/75"
             onClick={() => setMobileOpen(false)}
           />
           <div

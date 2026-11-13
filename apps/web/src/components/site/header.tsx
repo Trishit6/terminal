@@ -1,5 +1,5 @@
 import { Link, useRouterState } from '@tanstack/react-router';
-import { ArrowUpRight, Menu, ShieldCheck, TerminalSquare, UserRound, X } from 'lucide-react';
+import { ArrowUpRight, Menu, ShieldCheck, TerminalSquare, UserRound, X, ChevronDown } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/components/auth/auth-provider';
@@ -20,8 +20,11 @@ const NAV_ITEMS = [
 export function SiteHeader({ compact = false }: { compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const menuButtonRef = useRef<HTMLButtonElement>(null);
   const menuDialogRef = useRef<HTMLDivElement>(null);
+  const profileButtonRef = useRef<HTMLDivElement>(null);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
   const { signedIn, user } = useAuth();
   const reducedMotion = usePrefersReducedMotion();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
@@ -63,6 +66,20 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
+  // Click outside to close profile menu
+  useEffect(() => {
+    const onClickOutside = (event: MouseEvent) => {
+      if (profileOpen && profileButtonRef.current && profileMenuRef.current) {
+        if (!profileButtonRef.current.contains(event.target as Node) &&
+            !profileMenuRef.current.contains(event.target as Node)) {
+          setProfileOpen(false);
+        }
+      }
+    };
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, [profileOpen]);
+
   return (
     <>
       <header
@@ -82,7 +99,7 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
                 to={item.to}
                 className="nav-link"
                 activeProps={{ className: 'is-active' }}
-                activeOptions={{ exact: true }}
+                activeOptions={{ exact: false }}
               >
                 {item.label}
               </Link>
@@ -91,25 +108,109 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
 
           <div className="site-header__actions">
             <ThemeToggle />
-            {signedIn && user?.role === 'admin' ? (
-              <Button asChild variant="ghost" size="sm" className="hidden lg:inline-flex">
-                <Link to="/admin">
-                  <ShieldCheck className="size-4" />
-                  Admin
-                </Link>
+
+            {/* Profile dropdown */}
+            <div className="relative" ref={profileButtonRef}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="hidden lg:inline-flex gap-2"
+                onClick={() => setProfileOpen(!profileOpen)}
+                aria-expanded={profileOpen}
+                aria-haspopup="true"
+              >
+                {signedIn ? (
+                  <>
+                    <UserRound className="size-4" />
+                    <span className="font-medium text-sm">{user?.full_name.split(' ')[0] ?? 'Account'}</span>
+                    <ChevronDown className="size-3.5 opacity-60" />
+                  </>
+                ) : (
+                  <>
+                    <UserRound className="size-4" />
+                    <span className="font-medium text-sm">Sign in</span>
+                    <ChevronDown className="size-3.5 opacity-60" />
+                  </>
+                )}
               </Button>
-            ) : null}
-            <Button asChild variant="ghost" size="sm" className="hidden md:inline-flex">
-              <Link to={signedIn ? '/account' : '/sign-in'}>
-                <UserRound className="size-4" />
-                {signedIn ? (user?.full_name.split(' ')[0] ?? 'Account') : 'Sign in'}
-              </Link>
-            </Button>
+
+              <AnimatePresence>
+                {profileOpen && (
+                  <motion.div
+                    key="profile-menu"
+                    ref={profileMenuRef}
+                    initial={reducedMotion ? false : { opacity: 0, y: -8, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: -4, scale: 0.95 }}
+                    transition={{ duration: reducedMotion ? 0 : 0.15, ease: 'easeOut' }}
+                    className="absolute right-0 top-full mt-2 w-56 origin-top-right"
+                    role="menu"
+                  >
+                    <div className="bg-surface-raised/95 backdrop-blur-md border border-border rounded-lg shadow-xl p-1">
+                      {signedIn ? (
+                        <>
+                          <div className="px-3 py-2 border-b border-border">
+                            <p className="text-sm font-medium text-foreground">{user?.full_name}</p>
+                            <p className="text-xs text-muted-foreground truncate">{user?.email}</p>
+                          </div>
+                          <Link
+                            to="/account"
+                            className="flex items-center gap-3 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-surface-soft rounded-md transition-colors"
+                            onClick={() => setProfileOpen(false)}
+                          >
+                            <UserRound className="size-4 shrink-0" />
+                            Your account
+                          </Link>
+                          {user?.role === 'admin' && (
+                            <Link
+                              to="/admin"
+                              className="flex items-center gap-3 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-surface-soft rounded-md transition-colors"
+                              onClick={() => setProfileOpen(false)}
+                            >
+                              <ShieldCheck className="size-4 shrink-0" />
+                              Administration
+                            </Link>
+                          )}
+                          <hr className="my-1 border-border" />
+                          <button
+                            className="flex items-center gap-3 w-full px-3 py-2 text-sm text-danger hover:text-danger hover:bg-surface-soft rounded-md transition-colors"
+                          >
+                            <span>Sign out</span>
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <Link
+                            to="/sign-in"
+                            className="flex items-center gap-3 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-surface-soft rounded-md transition-colors"
+                            onClick={() => setProfileOpen(false)}
+                          >
+                            <UserRound className="size-4 shrink-0" />
+                            Sign in
+                          </Link>
+                          <Link
+                            to="/create-account"
+                            className="flex items-center gap-3 px-3 py-2 text-sm text-muted-foreground hover:text-foreground hover:bg-surface-soft rounded-md transition-colors"
+                            onClick={() => setProfileOpen(false)}
+                          >
+                            <UserRound className="size-4 shrink-0" />
+                            Create account
+                          </Link>
+                        </>
+                      )}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
             <Link to="/terminal" className="site-header__terminal">
               <TerminalSquare className="size-4" aria-hidden="true" />
               <span>Open terminal</span>
               <ArrowUpRight className="size-3.5 opacity-65" aria-hidden="true" />
             </Link>
+
             <Button
               type="button"
               variant="ghost"
@@ -174,7 +275,7 @@ export function SiteHeader({ compact = false }: { compact?: boolean }) {
                     onClick={() => setOpen(false)}
                     className="site-mobile__link"
                     activeProps={{ className: 'is-active' }}
-                    activeOptions={{ exact: true }}
+                    activeOptions={{ exact: false }}
                   >
                     <span>{String(index + 1).padStart(2, '0')}</span>
                     <span className="flex-1">{item.label}</span>

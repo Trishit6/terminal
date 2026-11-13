@@ -61,7 +61,7 @@ export function ContactPage() {
           One repository. <em>Every conversation.</em>
         </>
       }
-      description="KERNEXT is developed in the open. The repository is the single channel for issues, contributions, and release discussion — there are no other official accounts, chat rooms, or mailing lists to chase."
+      description="KERNEXT is developed in the open. The repository is the single channel for issues, contributions, and release discussion — there are no other official accounts, chat rooms, or mailing lists to chase. There is no contact-form endpoint, so this page deliberately provides working links rather than a form that would silently discard a message."
       actions={
         <Button asChild>
           <a href={`${REPOSITORY_URL}/issues`} target="_blank" rel="noreferrer">

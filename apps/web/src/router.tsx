@@ -57,6 +57,10 @@ const TerminalFixturesPage = lazyRouteComponent(
   () => import('./routes/terminal-fixtures'),
   'TerminalFixturesPage',
 );
+const OrbitalFixturesPage = lazyRouteComponent(
+  () => import('./routes/orbital-fixtures'),
+  'OrbitalFixturesPage',
+);
 const DesktopDashboardPage = lazyRouteComponent(
   () => import('./routes/desktop/dashboard'),
   'DesktopDashboardPage',
@@ -303,6 +307,14 @@ const terminalFixturesRoute = createRoute({
   head: () => headFor('/terminal/render-test'),
 });
 
+/** Backend-free visual regression fixture for the homepage orbital scene. */
+const orbitalFixturesRoute = createRoute({
+  getParentRoute: () => publicRoute,
+  path: '/orbital/render-test',
+  component: OrbitalFixturesPage,
+  head: () => headFor('/orbital/render-test'),
+});
+
 const adminRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/admin',
@@ -435,6 +447,7 @@ const routeTree = rootRoute.addChildren([
     verifyEmailRoute,
     accountRoute,
     signOutRoute,
+    orbitalFixturesRoute,
   ]),
   terminalLayoutRoute.addChildren([terminalRoute, terminalFixturesRoute]),
   adminRoute.addChildren([

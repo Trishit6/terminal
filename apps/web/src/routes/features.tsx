@@ -157,6 +157,17 @@ export function FeaturesPage() {
       }
     >
 
+      <nav className="section-index" aria-label="Feature categories">
+        <span className="section-index__label">Categories</span>
+        <div className="section-index__scroller">
+          {GROUPS.map((group) => (
+            <a key={group.id} href={`#${group.id}`}>
+              {group.eyebrow}
+            </a>
+          ))}
+        </div>
+      </nav>
+
       <div className="mt-14 space-y-16">
         {GROUPS.map((group, index) => (
           <motion.section
