@@ -42,7 +42,7 @@ function reportBackendDown(guard: BackendProxyGuardState, target: string): void 
 
   guard.down = true;
   guard.logger?.warn(
-    `[kernext] backend not reachable at ${target}; API requests return 503. Start the full stack with \`npm run dev\`.`,
+    `[kernext] backend not reachable at ${target}; API requests return 503. Start the full stack with \`pnpm dev\`.`,
   );
 }
 
@@ -73,7 +73,7 @@ export function createApiProxy(
             response.end(
               JSON.stringify({
                 error: 'backend_unavailable',
-                message: `The KERNEXT backend is not running at ${target}. Start the full stack with \`npm run dev\`.`,
+                message: `The KERNEXT backend is not running at ${target}. Start the full stack with \`pnpm dev\`.`,
               }),
             );
           }

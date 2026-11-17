@@ -4,7 +4,7 @@ use crate::auth::{allowed_origins, authorize_request};
 use crate::auth_routes;
 use crate::db::AuthUser;
 use crate::error::ApiError;
-use crate::releases::LatestRelease;
+use crate::releases::{LatestRelease, ReleaseList};
 use crate::spa;
 use crate::state::{AppState, MAX_COMMAND_BYTES, ShellSession};
 use crate::ws;
@@ -45,6 +45,7 @@ pub fn router_with_static(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::admin::router())
         .route("/api/v1/health", get(health))
         .route("/api/v1/health/database", get(health_database))
+        .route("/api/v1/releases", get(list_releases))
         .route("/api/v1/releases/latest", get(latest_release))
         .route("/api/v1/sessions", get(list_sessions).post(create_session))
         .route(
@@ -197,6 +198,14 @@ async fn health_database(
 /// `available: false` so the page can explain itself instead of erroring.
 async fn latest_release(State(state): State<AppState>) -> Json<LatestRelease> {
     Json(state.releases().latest().await)
+}
+
+/// Published release history for the downloads page's previous-versions list.
+///
+/// Served from the same cached GitHub lookup as [`latest_release`], so the
+/// page's two requests never produce two API calls.
+async fn list_releases(State(state): State<AppState>) -> Json<ReleaseList> {
+    Json(state.releases().list().await)
 }
 
 async fn create_session(

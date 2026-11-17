@@ -5,6 +5,22 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
 
 ## v0.1.0 (Current)
 
+### Build and release tooling
+- The repository is pnpm-only. `package-lock.json` was removed and
+  `pnpm-lock.yaml` is the single authoritative lockfile; npm, yarn, and bun are
+  not supported. pnpm settings live in `pnpm-workspace.yaml`.
+- `scripts/build-web.mjs` is pnpm-only and fails with a clear message when pnpm
+  is missing; `KERNEXT_PACKAGE_MANAGER` was removed. `kernext doctor` now checks
+  for pnpm and `pnpm-lock.yaml` instead of npm and `package-lock.json`.
+- A single release workflow, `.github/workflows/release.yaml`, builds the CLI
+  archives and the desktop bundles and publishes one non-draft GitHub Release
+  marked Latest. `.github/workflows/desktop-release.yaml` was removed.
+- Desktop releases now cover Linux arm64 and produce RPM packages; canonical
+  installer names embed the architecture.
+- The server exposes `GET /api/v1/releases/latest` (newest stable release plus
+  classified assets) and `GET /api/v1/releases` (release history for the
+  previous-releases list), both served from one cached GitHub lookup.
+
 ### Brand and experience
 - Official product identity: **KERNEXT**.
 - Tagline: **The Next Core of Computing.**
@@ -77,13 +93,15 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
   is verified on the development host.
 
 ### Desktop distribution
-- `.github/workflows/desktop-release.yaml` publishes desktop installers for
-  Windows x64 (`kernext-desktop-windows-x64.msi`,
-  `kernext-desktop-windows-x64-setup.exe`), Linux x64
-  (`kernext-desktop-linux-x64.AppImage`, `kernext-desktop-linux-x64.deb`), and
-  macOS (`kernext-desktop-macos-arm64.dmg`, `kernext-desktop-macos-x64.dmg`).
-  It runs on a `v*` tag push or manual dispatch, verifies the workspace first,
-  and attaches a `.sha256` checksum to every installer.
+- `.github/workflows/release.yaml` publishes desktop installers for Windows x64
+  (`kernext-desktop-windows-x64.msi`,
+  `kernext-desktop-windows-x64-setup.exe`), Linux x64 and arm64
+  (`kernext-desktop-linux-x64.AppImage`, `kernext-desktop-linux-x64.deb`,
+  `kernext-desktop-linux-x64.rpm`, and the `arm64` equivalents), and macOS
+  (`kernext-desktop-macos-arm64.dmg`, `kernext-desktop-macos-x64.dmg`). It runs
+  on a `v*` tag push or manual dispatch, verifies the workspace first, publishes
+  a non-draft GitHub Release marked Latest, and attaches a `.sha256` checksum to
+  every installer (plus a minisign `.sig` beside a signed installer).
 - A release tag must match the workspace `Cargo.toml`, `tauri.conf.json`, and
   `package.json` versions; `scripts/check-release-version.mjs` enforces this
   before anything is built.
@@ -91,9 +109,11 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
   SmartScreen and macOS Gatekeeper may warn on first launch; see
   `docs/RELEASING.md` for the optional signing setup.
 - The website's downloads page reads the real release metadata from
-  `GET /api/v1/releases/latest` and only shows files that exist.
-- npm and pnpm are both supported; `package-lock.json` and `pnpm-lock.yaml` are
-  both tracked and authoritative.
+  `GET /api/v1/releases/latest` and only shows files that exist; the
+  previous-releases list reads `GET /api/v1/releases`. Both are served from one
+  cached GitHub lookup.
+- pnpm is the only supported package manager; `pnpm-lock.yaml` is the single
+  lockfile.
 
 ### Security
 - No command injection through a shell wrapper.
@@ -128,10 +148,10 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
 - No comments in scripts.
 - No flag/option completion.
 - Grouped expressions are not supported as pipeline stages.
-- Release workflows are configured for every platform but have not yet been
-  executed on GitHub. `desktop-release.yaml` publishes a real release for a
-  version tag; `release.yaml` is manual and draft-only. No hosted run has been
-  observed, and no installer has been produced by a hosted runner yet.
+- The release workflow covers every platform but has not yet been executed on
+  GitHub. `release.yaml` is the single workflow: it publishes a real, non-draft
+  release for a version tag. No hosted run has been observed, and no installer
+  has been produced by a hosted runner yet.
 
 ---
 
@@ -163,9 +183,9 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
 - Desktop commands execute through the local Rust runtime only — never the
   public web server, never a JavaScript shell simulation.
 - Windows release bundles (MSI and NSIS installers) build successfully through
-  `npm run desktop:build`; the release binary passes a launch smoke test.
-- Desktop installers for Windows, Linux, and macOS are built and published by
-  `.github/workflows/desktop-release.yaml`; see `docs/RELEASING.md`.
+  `pnpm run desktop:build`; the release binary passes a launch smoke test.
+- Desktop installers for Windows, Linux (x64 and arm64), and macOS are built and
+  published by `.github/workflows/release.yaml`; see `docs/RELEASING.md`.
 - Verified on Windows; interactive Linux/macOS verification, a first hosted
   release run, and macOS bundle verification remain open. See
   `docs/PROJECT_STATUS.md`.
@@ -184,12 +204,12 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
   (absent tools are skipped, never assumed).
 - **CI**: lint, web, test, and desktop-bundle matrices across Windows x64,
   Linux x64, and macOS (Apple Silicon + Intel) on Node 24 action versions.
-- **Releases**: manual, draft-only workflow covering CLI archives (GNU, musl,
-  Windows, macOS both architectures, each including `kernext-server`), desktop
-  bundles, and SHA-256 checksums for every artifact.
+- **Releases**: a single tag-triggered workflow covering CLI archives (GNU,
+  musl, Windows, macOS both architectures, each including `kernext-server`),
+  desktop bundles, and SHA-256 checksums for every artifact.
 - **Documentation**: command reference (`docs/COMMANDS.md`), security model
   (`docs/SECURITY.md`), deployment guide (`docs/DEPLOYMENT.md`),
   troubleshooting (`docs/TROUBLESHOOTING.md`), and contribution guide
   (`CONTRIBUTING.md`).
-- **Fixed**: the root `npm run desktop:dev` / `npm run desktop:build` scripts, which
+- **Fixed**: the root `pnpm run desktop:dev` / `pnpm run desktop:build` scripts, which
   previously failed with "None of the selected packages has a 'tauri' script".

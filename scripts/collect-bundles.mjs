@@ -9,12 +9,17 @@
  * not have to parse).
  *
  * Canonical names:
- *   kernext-desktop-windows-x64.msi
- *   kernext-desktop-windows-x64-setup.exe
- *   kernext-desktop-linux-x64.AppImage
- *   kernext-desktop-linux-x64.deb
+ *   kernext-desktop-windows-<x64|arm64>.msi
+ *   kernext-desktop-windows-<x64|arm64>-setup.exe
+ *   kernext-desktop-linux-<x64|arm64>.AppImage
+ *   kernext-desktop-linux-<x64|arm64>.deb
+ *   kernext-desktop-linux-<x64|arm64>.rpm
  *   kernext-desktop-macos-<x64|arm64>.dmg
  *   kernext-desktop-macos-<x64|arm64>.app.tar.gz   (when produced)
+ *
+ * A Tauri minisign signature (`<bundle>.sig`) is copied next to the installer
+ * under the same base name when signing is enabled. Signing is optional, so
+ * its absence is not an error.
  *
  * Usage:
  *   node scripts/collect-bundles.mjs \
@@ -37,15 +42,22 @@ import {
 } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 
-/** Installer matchers per platform, in priority order. */
+/**
+ * Installer matchers per platform, in priority order.
+ *
+ * Every canonical name embeds the architecture: the release workflow builds
+ * both Linux x64 and Linux arm64, and a filename without the architecture
+ * would make the two indistinguishable in the same GitHub Release.
+ */
 const INSTALLERS = {
   windows: [
-    { suffix: '.msi', name: () => 'kernext-desktop-windows-x64.msi' },
-    { suffix: '-setup.exe', name: () => 'kernext-desktop-windows-x64-setup.exe' },
+    { suffix: '.msi', name: (arch) => `kernext-desktop-windows-${arch}.msi` },
+    { suffix: '-setup.exe', name: (arch) => `kernext-desktop-windows-${arch}-setup.exe` },
   ],
   linux: [
-    { suffix: '.AppImage', name: () => 'kernext-desktop-linux-x64.AppImage' },
-    { suffix: '.deb', name: () => 'kernext-desktop-linux-x64.deb' },
+    { suffix: '.AppImage', name: (arch) => `kernext-desktop-linux-${arch}.AppImage` },
+    { suffix: '.deb', name: (arch) => `kernext-desktop-linux-${arch}.deb` },
+    { suffix: '.rpm', name: (arch) => `kernext-desktop-linux-${arch}.rpm` },
   ],
   macos: [
     { suffix: '.dmg', name: (arch) => `kernext-desktop-macos-${arch}.dmg` },
@@ -133,6 +145,16 @@ function main() {
     copyFileSync(source, destination);
     writeFileSync(`${destination}.sha256`, `${sha256(destination)}  ${name}\n`);
     written.push(name);
+
+    // Tauri emits a detached minisign signature next to a bundle it signed.
+    // Publish it under the canonical name so the website can offer it beside
+    // the matching installer. Unsigned builds simply have no signature.
+    const signatureSource = `${source}.sig`;
+    if (existsSync(signatureSource)) {
+      const signatureName = `${name}.sig`;
+      copyFileSync(signatureSource, join(outDir, signatureName));
+      written.push(signatureName);
+    }
   }
 
   if (written.length === 0) {

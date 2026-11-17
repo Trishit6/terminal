@@ -26,7 +26,7 @@ export function BackendStatusIndicator() {
       <span className="shrink-0 font-medium">Backend offline</span>
       {import.meta.env.DEV ? (
         <span className="hidden truncate text-muted-foreground sm:inline">
-          · start it with <code className="font-mono">npm run dev</code>
+          · start it with <code className="font-mono">pnpm dev</code>
         </span>
       ) : (
         <span className="hidden truncate text-muted-foreground sm:inline">

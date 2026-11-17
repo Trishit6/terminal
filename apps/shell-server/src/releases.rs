@@ -1,10 +1,17 @@
 //! GitHub release metadata for the public downloads page.
 //!
-//! The website never guesses a download URL. It asks this endpoint for the
-//! latest published release and renders only the assets that actually exist.
+//! The website never guesses a download URL. It asks these endpoints for the
+//! published releases and renders only the assets that actually exist.
 //! Successful lookups are cached in memory, so a burst of page loads produces
 //! a single GitHub API call and a GitHub outage serves the last good payload
 //! instead of an error.
+//!
+//! Endpoints:
+//!
+//! - `GET /api/v1/releases/latest` — the newest stable release plus its
+//!   classified assets.
+//! - `GET /api/v1/releases` — the release history, newest first, so the page
+//!   can offer previous versions.
 //!
 //! Configuration:
 //!
@@ -32,6 +39,13 @@ const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// GitHub requires a `User-Agent` on every request.
 const USER_AGENT: &str = "kernext-server";
 
+/// How many releases to request per page. The history endpoint is served from
+/// this single page.
+const PAGE_SIZE: u32 = 30;
+
+/// How many previous releases the history payload returns.
+const HISTORY_LIMIT: usize = 12;
+
 /// One published asset, classified for the download page.
 #[derive(Debug, Clone, Serialize)]
 pub struct ReleaseAsset {
@@ -40,6 +54,8 @@ pub struct ReleaseAsset {
     pub download_url: String,
     /// Direct link to the matching `.sha256` asset, when the release has one.
     pub checksum_url: Option<String>,
+    /// Direct link to the matching `.sig` asset, when the release has one.
+    pub signature_url: Option<String>,
     pub platform: Option<String>,
     pub arch: Option<String>,
     pub format: String,
@@ -47,7 +63,7 @@ pub struct ReleaseAsset {
     pub kind: String,
 }
 
-/// The latest release, or an explanation of why none could be read.
+/// The latest stable release, or an explanation of why none could be read.
 #[derive(Debug, Clone, Serialize)]
 pub struct LatestRelease {
     pub available: bool,
@@ -85,9 +101,43 @@ impl LatestRelease {
     }
 }
 
+/// One entry in the release history.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReleaseSummary {
+    pub tag: String,
+    pub version: String,
+    pub name: Option<String>,
+    pub published_at: Option<String>,
+    pub html_url: Option<String>,
+    pub prerelease: bool,
+    pub asset_count: usize,
+}
+
+/// The release history, newest first.
+#[derive(Debug, Clone, Serialize)]
+pub struct ReleaseList {
+    pub available: bool,
+    pub repository: String,
+    pub releases: Vec<ReleaseSummary>,
+    pub cached: bool,
+    pub error: Option<String>,
+}
+
+impl ReleaseList {
+    fn unavailable(repository: &str, reason: &str) -> Self {
+        Self {
+            available: false,
+            repository: repository.to_owned(),
+            releases: Vec::new(),
+            cached: false,
+            error: Some(reason.to_owned()),
+        }
+    }
+}
+
 struct Cached {
     at: Instant,
-    release: LatestRelease,
+    releases: Vec<GithubRelease>,
 }
 
 /// Cached GitHub release lookups shared by the HTTP handlers.
@@ -142,66 +192,107 @@ impl ReleaseFeed {
         &self.repository
     }
 
-    /// Latest release, from cache when fresh.
+    /// Latest stable release, from cache when fresh.
     pub async fn latest(&self) -> LatestRelease {
+        match self.releases().await {
+            Ok((releases, cached)) => match releases.iter().find(|release| !release.prerelease) {
+                Some(release) => {
+                    let mut payload = map_release(&self.repository, release);
+                    payload.cached = cached;
+                    payload
+                }
+                None => LatestRelease::unavailable(
+                    &self.repository,
+                    "the repository has no published stable release yet",
+                ),
+            },
+            Err(error) => LatestRelease::unavailable(&self.repository, &error),
+        }
+    }
+
+    /// Release history, newest first, from cache when fresh.
+    pub async fn list(&self) -> ReleaseList {
+        match self.releases().await {
+            Ok((releases, cached)) => {
+                let summaries: Vec<ReleaseSummary> = releases
+                    .iter()
+                    .take(HISTORY_LIMIT)
+                    .map(summary_of)
+                    .collect();
+
+                if summaries.is_empty() {
+                    return ReleaseList::unavailable(
+                        &self.repository,
+                        "the repository has no published release yet",
+                    );
+                }
+
+                ReleaseList {
+                    available: true,
+                    repository: self.repository.clone(),
+                    releases: summaries,
+                    cached,
+                    error: None,
+                }
+            }
+            Err(error) => ReleaseList::unavailable(&self.repository, &error),
+        }
+    }
+
+    /// Fetched releases, served from the in-memory cache when it is fresh and
+    /// from the last good payload when GitHub cannot be reached. The flag
+    /// reports whether the payload came from the cache rather than a fresh
+    /// request.
+    async fn releases(&self) -> Result<(Vec<GithubRelease>, bool), String> {
         if !self.enabled {
-            return LatestRelease::unavailable(
-                &self.repository,
-                "release lookups are disabled in this environment",
-            );
+            return Err("release lookups are disabled in this environment".to_owned());
         }
 
         if let Some(cached) = self.fresh() {
-            return cached;
+            return Ok((cached, true));
         }
 
         match self.fetch().await {
-            Ok(release) => {
-                self.store(&release);
-                release
+            Ok(releases) => {
+                self.store(&releases);
+                Ok((releases, false))
             }
             Err(error) => match self.stale() {
-                Some(mut stale) => {
-                    stale.cached = true;
-                    stale.error = Some(format!("showing the last successful lookup: {error}"));
-                    stale
-                }
-                None => LatestRelease::unavailable(&self.repository, &error),
+                Some(releases) => Ok((releases, true)),
+                None => Err(error),
             },
         }
     }
 
-    fn fresh(&self) -> Option<LatestRelease> {
+    fn fresh(&self) -> Option<Vec<GithubRelease>> {
         let cache = self.cache.lock().ok()?;
         let cached = cache.as_ref()?;
         if cached.at.elapsed() >= self.ttl {
             return None;
         }
-        let mut release = cached.release.clone();
-        release.cached = true;
-        Some(release)
+        Some(cached.releases.clone())
     }
 
-    fn stale(&self) -> Option<LatestRelease> {
+    fn stale(&self) -> Option<Vec<GithubRelease>> {
         self.cache
             .lock()
             .ok()?
             .as_ref()
-            .map(|cached| cached.release.clone())
+            .map(|cached| cached.releases.clone())
     }
 
-    fn store(&self, release: &LatestRelease) {
+    fn store(&self, releases: &[GithubRelease]) {
         if let Ok(mut cache) = self.cache.lock() {
             *cache = Some(Cached {
                 at: Instant::now(),
-                release: release.clone(),
+                releases: releases.to_vec(),
             });
         }
     }
 
-    async fn fetch(&self) -> Result<LatestRelease, String> {
+    async fn fetch(&self) -> Result<Vec<GithubRelease>, String> {
         let url = format!(
-            "https://api.github.com/repos/{}/releases/latest",
+            "https://api.github.com/repos/{}/releases?per_page={PAGE_SIZE}",
             self.repository
         );
 
@@ -221,22 +312,33 @@ impl ReleaseFeed {
 
         let status = response.status();
         if status == reqwest::StatusCode::NOT_FOUND {
-            return Err("the repository has no published release yet".to_owned());
+            return Err("the repository was not found, or it is private".to_owned());
+        }
+        if status == reqwest::StatusCode::FORBIDDEN
+            || status == reqwest::StatusCode::TOO_MANY_REQUESTS
+        {
+            return Err(
+                "the GitHub API rate limit was reached; set KERNEXT_GITHUB_TOKEN to raise it"
+                    .to_owned(),
+            );
         }
         if !status.is_success() {
             return Err(format!("the GitHub API returned {status}"));
         }
 
-        let release: GithubRelease = response
+        let releases: Vec<GithubRelease> = response
             .json()
             .await
             .map_err(|error| format!("the GitHub API response could not be read: {error}"))?;
 
-        Ok(map_release(&self.repository, release))
+        Ok(releases
+            .into_iter()
+            .filter(|release| !release.draft)
+            .collect())
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct GithubRelease {
     tag_name: String,
     #[serde(default)]
@@ -248,10 +350,14 @@ struct GithubRelease {
     #[serde(default)]
     body: Option<String>,
     #[serde(default)]
+    prerelease: bool,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default)]
     assets: Vec<GithubAsset>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct GithubAsset {
     name: String,
     #[serde(default)]
@@ -265,7 +371,14 @@ struct AssetClass {
     arch: Option<&'static str>,
     format: &'static str,
     kind: &'static str,
-    checksum: bool,
+}
+
+impl AssetClass {
+    /// Assets that exist only to accompany another file: they are linked from
+    /// their target instead of being listed as downloads.
+    fn is_companion(&self) -> bool {
+        self.kind == "checksum" || self.kind == "signature"
+    }
 }
 
 fn desktop(platform: &'static str, arch: Option<&'static str>, format: &'static str) -> AssetClass {
@@ -274,7 +387,6 @@ fn desktop(platform: &'static str, arch: Option<&'static str>, format: &'static 
         arch: Some(arch.unwrap_or("x64")),
         format,
         kind: "desktop",
-        checksum: false,
     }
 }
 
@@ -292,6 +404,20 @@ fn detect_arch(lower: &str) -> Option<&'static str> {
     }
 }
 
+/// Platform of a CLI archive, whose name carries a Rust target triple rather
+/// than the `kernext-desktop-<platform>` prefix.
+fn detect_platform(lower: &str) -> Option<&'static str> {
+    if lower.contains("windows") || lower.contains("pc-windows") {
+        Some("windows")
+    } else if lower.contains("linux") || lower.contains("musl") {
+        Some("linux")
+    } else if lower.contains("darwin") || lower.contains("apple") || lower.contains("macos") {
+        Some("macos")
+    } else {
+        None
+    }
+}
+
 /// Classifies an asset by its file name.
 ///
 /// Only formats the project actually produces are mapped to a platform;
@@ -300,13 +426,20 @@ fn classify_asset(name: &str) -> AssetClass {
     let lower = name.to_ascii_lowercase();
     let arch = detect_arch(&lower);
 
-    if lower.ends_with(".sha256") {
+    if lower.ends_with(".sha256") || lower.ends_with(".sha512") {
         return AssetClass {
             platform: None,
             arch,
-            format: "sha256",
+            format: "checksum",
             kind: "checksum",
-            checksum: true,
+        };
+    }
+    if lower.ends_with(".sig") {
+        return AssetClass {
+            platform: None,
+            arch,
+            format: "signature",
+            kind: "signature",
         };
     }
     if lower.ends_with(".msi") {
@@ -324,19 +457,21 @@ fn classify_asset(name: &str) -> AssetClass {
     if lower.ends_with(".deb") {
         return desktop("linux", arch, "deb");
     }
+    if lower.ends_with(".rpm") {
+        return desktop("linux", arch, "rpm");
+    }
     if lower.ends_with(".dmg") {
         return desktop("macos", arch, "dmg");
     }
     if lower.ends_with(".app.tar.gz") {
         return desktop("macos", arch, "app");
     }
-    if lower.ends_with(".tar.gz") || lower.ends_with(".zip") {
+    if lower.ends_with(".tar.gz") || lower.ends_with(".tar.xz") || lower.ends_with(".zip") {
         return AssetClass {
-            platform: None,
+            platform: detect_platform(&lower),
             arch,
             format: "archive",
             kind: "cli",
-            checksum: false,
         };
     }
 
@@ -345,12 +480,32 @@ fn classify_asset(name: &str) -> AssetClass {
         arch,
         format: "other",
         kind: "other",
-        checksum: false,
+    }
+}
+
+/// Strips the leading `v` from a tag.
+fn version_of(tag: &str) -> String {
+    tag.strip_prefix('v').unwrap_or(tag).to_owned()
+}
+
+fn summary_of(release: &GithubRelease) -> ReleaseSummary {
+    ReleaseSummary {
+        tag: release.tag_name.clone(),
+        version: version_of(&release.tag_name),
+        name: release.name.clone(),
+        published_at: release.published_at.clone(),
+        html_url: release.html_url.clone(),
+        prerelease: release.prerelease,
+        asset_count: release
+            .assets
+            .iter()
+            .filter(|asset| !classify_asset(&asset.name).is_companion())
+            .count(),
     }
 }
 
 /// Converts a GitHub payload into the response the website consumes.
-fn map_release(repository: &str, release: GithubRelease) -> LatestRelease {
+fn map_release(repository: &str, release: &GithubRelease) -> LatestRelease {
     let urls: HashMap<&str, &str> = release
         .assets
         .iter()
@@ -361,20 +516,23 @@ fn map_release(repository: &str, release: GithubRelease) -> LatestRelease {
 
     for asset in &release.assets {
         let class = classify_asset(&asset.name);
-        if class.checksum {
+        if class.is_companion() {
             continue;
         }
 
         let checksum_name = format!("{}.sha256", asset.name);
-        let checksum_url = urls
-            .get(checksum_name.as_str())
-            .map(|url| (*url).to_owned());
+        let signature_name = format!("{}.sig", asset.name);
 
         assets.push(ReleaseAsset {
             name: asset.name.clone(),
             size: asset.size,
             download_url: asset.browser_download_url.clone(),
-            checksum_url,
+            checksum_url: urls
+                .get(checksum_name.as_str())
+                .map(|url| (*url).to_owned()),
+            signature_url: urls
+                .get(signature_name.as_str())
+                .map(|url| (*url).to_owned()),
             platform: class.platform.map(ToOwned::to_owned),
             arch: class.arch.map(ToOwned::to_owned),
             format: class.format.to_owned(),
@@ -382,21 +540,15 @@ fn map_release(repository: &str, release: GithubRelease) -> LatestRelease {
         });
     }
 
-    let version = release
-        .tag_name
-        .strip_prefix('v')
-        .unwrap_or(&release.tag_name)
-        .to_owned();
-
     LatestRelease {
         available: true,
         repository: repository.to_owned(),
-        tag: Some(release.tag_name),
-        version: Some(version),
-        name: release.name,
-        published_at: release.published_at,
-        html_url: release.html_url,
-        notes: release.body.filter(|body| !body.trim().is_empty()),
+        version: Some(version_of(&release.tag_name)),
+        tag: Some(release.tag_name.clone()),
+        name: release.name.clone(),
+        published_at: release.published_at.clone(),
+        html_url: release.html_url.clone(),
+        notes: release.body.clone().filter(|body| !body.trim().is_empty()),
         assets,
         cached: false,
         fetched_at: Some(chrono::Utc::now().to_rfc3339()),
@@ -413,6 +565,19 @@ mod tests {
             name: name.to_owned(),
             size: 1024,
             browser_download_url: url.to_owned(),
+        }
+    }
+
+    fn release(tag: &str, assets: Vec<GithubAsset>) -> GithubRelease {
+        GithubRelease {
+            tag_name: tag.to_owned(),
+            name: Some(format!("KERNEXT {tag}")),
+            published_at: Some("2026-01-01T00:00:00Z".to_owned()),
+            html_url: Some(format!("https://example.test/releases/tag/{tag}")),
+            body: Some("  ".to_owned()),
+            prerelease: false,
+            draft: false,
+            assets,
         }
     }
 
@@ -433,6 +598,14 @@ mod tests {
                 "appimage",
             ),
             ("kernext-desktop-linux-x64.deb", "linux", "x64", "deb"),
+            ("kernext-desktop-linux-x64.rpm", "linux", "x64", "rpm"),
+            (
+                "kernext-desktop-linux-arm64.AppImage",
+                "linux",
+                "arm64",
+                "appimage",
+            ),
+            ("kernext-desktop-linux-arm64.deb", "linux", "arm64", "deb"),
             ("kernext-desktop-macos-arm64.dmg", "macos", "arm64", "dmg"),
             ("kernext-desktop-macos-x64.dmg", "macos", "x64", "dmg"),
         ];
@@ -447,21 +620,30 @@ mod tests {
     }
 
     #[test]
-    fn cli_archives_are_not_desktop_installers() {
-        let class = classify_asset("kernext-x86_64-pc-windows-gnu.zip");
-        assert_eq!(class.kind, "cli");
-        assert_eq!(class.platform, None);
-        assert_eq!(class.arch, Some("x64"));
+    fn cli_archives_carry_their_platform_and_architecture() {
+        let cases = [
+            ("kernext-x86_64-pc-windows-gnu.zip", "windows", "x64"),
+            ("kernext-x86_64-unknown-linux-gnu.tar.gz", "linux", "x64"),
+            ("kernext-x86_64-unknown-linux-musl.tar.gz", "linux", "x64"),
+            ("kernext-aarch64-unknown-linux-gnu.tar.gz", "linux", "arm64"),
+            ("kernext-aarch64-apple-darwin.tar.gz", "macos", "arm64"),
+            ("kernext-x86_64-apple-darwin.tar.gz", "macos", "x64"),
+        ];
 
-        let class = classify_asset("kernext-aarch64-apple-darwin.tar.gz");
-        assert_eq!(class.kind, "cli");
-        assert_eq!(class.arch, Some("arm64"));
+        for (name, platform, arch) in cases {
+            let class = classify_asset(name);
+            assert_eq!(class.kind, "cli", "{name}");
+            assert_eq!(class.platform, Some(platform), "{name}");
+            assert_eq!(class.arch, Some(arch), "{name}");
+        }
     }
 
     #[test]
-    fn checksums_are_detected() {
-        assert!(classify_asset("kernext-desktop-linux-x64.deb.sha256").checksum);
-        assert!(!classify_asset("kernext-desktop-linux-x64.deb").checksum);
+    fn companions_are_detected() {
+        assert!(classify_asset("kernext-desktop-linux-x64.deb.sha256").is_companion());
+        assert!(classify_asset("kernext-desktop-linux-x64.deb.sig").is_companion());
+        assert!(!classify_asset("kernext-desktop-linux-x64.deb").is_companion());
+        assert!(!classify_asset("kernext-desktop-linux-x64.app.tar.gz").is_companion());
     }
 
     #[test]
@@ -472,39 +654,64 @@ mod tests {
     }
 
     #[test]
-    fn mapping_links_installers_to_their_checksums() {
-        let release = GithubRelease {
-            tag_name: "v0.2.0".to_owned(),
-            name: Some("KERNEXT v0.2.0".to_owned()),
-            published_at: Some("2026-01-01T00:00:00Z".to_owned()),
-            html_url: Some("https://example.test/releases/tag/v0.2.0".to_owned()),
-            body: Some("  ".to_owned()),
-            assets: vec![
+    fn mapping_links_installers_to_their_checksums_and_signatures() {
+        let release = release(
+            "v0.2.0",
+            vec![
                 asset("kernext-desktop-linux-x64.deb", "https://example.test/deb"),
                 asset(
                     "kernext-desktop-linux-x64.deb.sha256",
                     "https://example.test/deb.sha256",
                 ),
                 asset(
+                    "kernext-desktop-linux-x64.deb.sig",
+                    "https://example.test/deb.sig",
+                ),
+                asset(
                     "kernext-desktop-macos-arm64.dmg",
                     "https://example.test/dmg",
                 ),
             ],
-        };
+        );
 
-        let mapped = map_release("owner/repo", release);
+        let mapped = map_release("owner/repo", &release);
 
         assert!(mapped.available);
         assert_eq!(mapped.version.as_deref(), Some("0.2.0"));
         assert_eq!(mapped.tag.as_deref(), Some("v0.2.0"));
         assert_eq!(mapped.notes, None, "blank release notes are dropped");
-        // The `.sha256` asset is folded into its installer, not listed alone.
+        // The `.sha256` and `.sig` assets are folded into their installer.
         assert_eq!(mapped.assets.len(), 2);
         assert_eq!(
             mapped.assets[0].checksum_url.as_deref(),
             Some("https://example.test/deb.sha256")
         );
+        assert_eq!(
+            mapped.assets[0].signature_url.as_deref(),
+            Some("https://example.test/deb.sig")
+        );
         assert_eq!(mapped.assets[1].checksum_url, None);
+        assert_eq!(mapped.assets[1].signature_url, None);
+    }
+
+    #[test]
+    fn history_summaries_count_only_real_artifacts() {
+        let entry = release(
+            "v0.1.0",
+            vec![
+                asset("kernext-desktop-linux-x64.deb", "https://example.test/deb"),
+                asset(
+                    "kernext-desktop-linux-x64.deb.sha256",
+                    "https://example.test/deb.sha256",
+                ),
+            ],
+        );
+
+        let summary = summary_of(&entry);
+        assert_eq!(summary.tag, "v0.1.0");
+        assert_eq!(summary.version, "0.1.0");
+        assert_eq!(summary.asset_count, 1, "the checksum is not counted");
+        assert!(!summary.prerelease);
     }
 
     #[test]
@@ -514,5 +721,10 @@ mod tests {
         assert!(payload.assets.is_empty());
         assert_eq!(payload.error.as_deref(), Some("no release yet"));
         assert_eq!(payload.repository, "owner/repo");
+
+        let history = ReleaseList::unavailable("owner/repo", "rate limited");
+        assert!(!history.available);
+        assert!(history.releases.is_empty());
+        assert_eq!(history.error.as_deref(), Some("rate limited"));
     }
 }

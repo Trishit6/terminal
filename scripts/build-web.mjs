@@ -1,20 +1,20 @@
 #!/usr/bin/env node
 /**
- * Builds the web front end for the Tauri desktop bundler.
+ * Runs the web front end's script for the Tauri desktop bundler.
  *
- * `tauri.conf.json` calls this from `beforeBuildCommand` instead of a
- * hard-coded package manager. The repository supports both npm
- * (`package-lock.json`) and pnpm (`pnpm-lock.yaml`); a checkout may only have
- * one of the two installed, so the command is resolved at run time:
+ * `tauri.conf.json` calls this from `beforeBuildCommand` and
+ * `beforeDevCommand` instead of hard-coding a package manager. pnpm is the
+ * only supported package manager for this repository: there is exactly one
+ * lockfile (`pnpm-lock.yaml`), and `package-lock.json` is deliberately absent.
  *
- *   1. `KERNEXT_PACKAGE_MANAGER` (`npm` or `pnpm`) when set explicitly.
- *   2. pnpm when `pnpm-lock.yaml` exists and the pnpm binary is runnable.
- *   3. npm (which ships with Node, so it is always present).
+ * Usage:
  *
- * The web package's own `build` script is reused, so this adds no build logic.
+ *   node scripts/build-web.mjs         # `pnpm run build` — production bundle
+ *   node scripts/build-web.mjs --dev   # `pnpm run dev`   — long-running server
+ *
+ * The web package's own scripts are reused, so this adds no build logic.
  */
-import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,34 +22,54 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const webDir = join(repoRoot, 'apps', 'web');
 const useShell = process.platform === 'win32';
 
-function runnable(command) {
-  const probe = spawnSync(command, ['--version'], { stdio: 'ignore', shell: useShell });
+const dev = process.argv.slice(2).includes('--dev');
+const script = dev ? 'dev' : 'build';
+
+function pnpmRunnable() {
+  const probe = spawnSync('pnpm', ['--version'], { stdio: 'ignore', shell: useShell });
   return probe.status === 0;
 }
 
-function chooseManager() {
-  const requested = (process.env.KERNEXT_PACKAGE_MANAGER ?? '').trim().toLowerCase();
-  if (requested === 'pnpm' || requested === 'npm') {
-    return requested;
-  }
-  if (existsSync(join(repoRoot, 'pnpm-lock.yaml')) && runnable('pnpm')) {
-    return 'pnpm';
-  }
-  return 'npm';
-}
-
-const manager = chooseManager();
-process.stdout.write(`[kernext] building the web front end with ${manager}\n`);
-
-const result = spawnSync(manager, ['run', 'build'], {
-  cwd: webDir,
-  stdio: 'inherit',
-  shell: useShell,
-});
-
-if (result.error) {
-  process.stderr.write(`[kernext] failed to run ${manager}: ${result.error.message}\n`);
+if (!pnpmRunnable()) {
+  process.stderr.write(
+    '[kernext] pnpm is required to build the web front end. Install it with ' +
+      '`npm install -g pnpm` or `corepack enable`, then retry.\n',
+  );
   process.exit(1);
 }
 
-process.exit(result.status ?? 1);
+process.stdout.write(`[kernext] pnpm run ${script} (apps/web)\n`);
+
+if (dev) {
+  // Long-running: Tauri starts this for `tauri dev` and stops it when the
+  // window closes, so the child keeps the terminal and stays alive.
+  const child = spawn('pnpm', ['run', script], {
+    cwd: webDir,
+    stdio: 'inherit',
+    shell: useShell,
+  });
+
+  const stop = () => {
+    child.kill();
+  };
+
+  process.on('SIGINT', stop);
+  process.on('SIGTERM', stop);
+
+  child.on('exit', (code, signal) => {
+    process.exit(signal ? 1 : (code ?? 1));
+  });
+} else {
+  const result = spawnSync('pnpm', ['run', script], {
+    cwd: webDir,
+    stdio: 'inherit',
+    shell: useShell,
+  });
+
+  if (result.error) {
+    process.stderr.write(`[kernext] failed to run pnpm: ${result.error.message}\n`);
+    process.exit(1);
+  }
+
+  process.exit(result.status ?? 1);
+}

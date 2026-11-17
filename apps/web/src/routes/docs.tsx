@@ -160,8 +160,8 @@ cargo run -p shell-server`}
             />
             <CodeBlock
               title="Terminal 2 — start the Vite client"
-              code={`npm install
-npm run web:dev`}
+              code={`pnpm install --frozen-lockfile
+pnpm run web:dev`}
             />
             <p className="text-xs leading-relaxed text-muted-foreground">
               Open <span className="font-mono text-foreground">http://127.0.0.1:5173/terminal</span>.

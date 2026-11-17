@@ -30,23 +30,23 @@ kernext help           # branded command reference
 ```
 All project commands accept `--dry-run`, print the underlying command, and propagate exit code. `kernext` with no args starts the interactive shell (needs real TTY).
 
-### Front End (npm workspaces, lockfile is `package-lock.json`)
+### Front End (pnpm workspaces, lockfile is `pnpm-lock.yaml`)
 ```bash
-npm ci                     # install apps/web and apps/desktop
-npm run dev                # full stack: shell-server on 7878 + vite on 5173
-npm run typecheck          # web typecheck
-npm test                   # web Vitest tests
-npm run build              # web production build
-npm run web:dev            # vite dev server only (http://127.0.0.1:5173)
-npm run web:build          # web production build
-npm run web:preview        # preview built web
-npm run web:typecheck      # web typecheck
-npm run web:test           # web tests
-npm run desktop:dev        # tauri dev (vite + debug window)
-npm run desktop:build      # tauri build (production bundle)
+pnpm install --frozen-lockfile  # install apps/web and apps/desktop
+pnpm dev                   # full stack: shell-server on 7878 + vite on 5173
+pnpm run typecheck         # web typecheck
+pnpm test                  # web Vitest tests
+pnpm run build             # web production build
+pnpm run web:dev           # vite dev server only (http://127.0.0.1:5173)
+pnpm run web:build         # web production build
+pnpm run web:preview       # preview built web
+pnpm run web:typecheck     # web typecheck
+pnpm run web:test          # web tests
+pnpm run desktop:dev       # tauri dev (vite + debug window)
+pnpm run desktop:build     # tauri build (production bundle)
 cargo run -p shell-server  # web API server only
 ```
-Root `desktop:*` scripts delegate to `apps/desktop/package.json` scripts. Tauri hooks use `npm --prefix ../web run …`.
+Root `desktop:*` scripts delegate to `apps/desktop/package.json` scripts. Tauri hooks run `node ../../scripts/build-web.mjs` (`--dev` for the dev hook).
 
 ### Focused Cargo Tests
 ```bash
@@ -117,8 +117,8 @@ shell-desktop ─> shell-server (engine sessions) + shell-cli (embedded worker)
 6. **`$?`** updated after every command/pipeline/assignment: 0 success, external exit code, 1 built-in failure, 2 syntax/lex errors, 128+signal for signal termination
 7. **Background `&`** spawns real detached work tracked by job table (`crates/shell-runtime/src/jobs.rs`); job IDs are shell numbers, never OS PIDs
 8. **Desktop executes locally** — commands run through local Tauri Rust runtime only; never public web server, never JS simulation. `apps/desktop/src-tauri/build.rs` must keep shadowing MinGW `default-manifest.o` on `*-pc-windows-gnu`; removing it causes `STATUS_ENTRYPOINT_NOT_FOUND` at startup
-9. **Front end supports npm and pnpm** — workspaces in root `package.json` and `pnpm-workspace.yaml`; both `package-lock.json` and `pnpm-lock.yaml` are tracked and authoritative; `ci.yml` runs `npm ci`, `desktop-release.yaml` runs `pnpm install --frozen-lockfile`; never yarn/bun, never delete a lockfile
-10. **Root desktop scripts delegate** — `desktop:dev`/`desktop:build` call `dev`/`build` in `apps/desktop/package.json` with `npm run … -w @kernext/desktop`; the Tauri build hook is the package-manager-neutral `node ../../scripts/build-web.mjs` (dev hook stays `npm --prefix ../web run dev`)
+9. **Front end is pnpm-only** — workspaces in root `package.json` and `pnpm-workspace.yaml`; `pnpm-lock.yaml` is the only lockfile and pnpm is the only supported package manager; `ci.yml` and `release.yaml` both run `pnpm install --frozen-lockfile`; never npm/yarn/bun, never add a second lockfile
+10. **Root desktop scripts delegate** — `desktop:dev`/`desktop:build` call `dev`/`build` in `apps/desktop/package.json` with `pnpm --filter @kernext/desktop run …`; the Tauri hooks run the pnpm-only `node ../../scripts/build-web.mjs` (`--dev` for dev)
 11. **`kernext` project commands wrap Cargo** (`apps/shell-cli/src/dev.rs`); they never build shell command strings and always propagate child exit code
 
 ## Git Discipline

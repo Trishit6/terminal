@@ -101,10 +101,9 @@ platform-specific code isolated:
 - Rust 1.85 or newer (Rust 2024 edition).
 - A working platform linker (a C toolchain on Linux/macOS, MSVC Build Tools or
   MinGW-w64 on Windows).
-- Node.js 22+ and either npm 10+ or pnpm 12+ for the Web front end and Desktop
-  shell (declared in `package.json` under `engines`; workspaces live in
-  `apps/web` and `apps/desktop` and both `package-lock.json` and
-  `pnpm-lock.yaml` are tracked).
+- Node.js 22+ and pnpm 10+ for the Web front end and Desktop shell (declared in
+  `package.json` under `engines`; workspaces live in `apps/web` and
+  `apps/desktop`, and `pnpm-lock.yaml` is the single lockfile).
 - A real terminal for the interactive shell. Piping input into KERNEXT reports
   that standard input is not a terminal.
 
@@ -139,8 +138,8 @@ starts the interactive shell.
 ### KERNEXT Web
 
 ```sh
-npm ci
-npm run web:dev          # vite dev server on http://127.0.0.1:5173
+pnpm install --frozen-lockfile
+pnpm run web:dev         # vite dev server on http://127.0.0.1:5173
 cargo run -p shell-server   # local API server (default http://127.0.0.1:7878)
 ```
 
@@ -149,19 +148,19 @@ The browser terminal talks to the server over
 (real pseudoterminal). The web front end builds with:
 
 ```sh
-npm run web:typecheck
-npm run web:build
+pnpm run web:typecheck
+pnpm run web:build
 ```
 
 ### KERNEXT Desktop
 
 ```sh
-npm run desktop:dev      # tauri dev: vite + debug desktop window
-npm run desktop:build    # tauri build: production bundle
+pnpm run desktop:dev     # tauri dev: vite + debug desktop window
+pnpm run desktop:build   # tauri build: production bundle
 ```
 
-pnpm works too: `pnpm install --frozen-lockfile` followed by
-`pnpm --filter @kernext/desktop run dev` or `run build`.
+pnpm is the only supported package manager. The root scripts delegate to the
+workspaces with `pnpm --filter`; `pnpm-lock.yaml` is the single lockfile.
 
 The desktop application embeds the same React front end and executes commands
 through the local Tauri runtime only — it never calls the public web server and
@@ -176,16 +175,20 @@ Prebuilt desktop installers are published as GitHub Releases:
 | Platform | Installer |
 | --- | --- |
 | Windows x64 | `kernext-desktop-windows-x64.msi`, `kernext-desktop-windows-x64-setup.exe` |
-| Linux x64 | `kernext-desktop-linux-x64.AppImage`, `kernext-desktop-linux-x64.deb` |
+| Linux x64 | `kernext-desktop-linux-x64.AppImage`, `kernext-desktop-linux-x64.deb`, `kernext-desktop-linux-x64.rpm` |
+| Linux arm64 | `kernext-desktop-linux-arm64.AppImage`, `kernext-desktop-linux-arm64.deb`, `kernext-desktop-linux-arm64.rpm` |
 | macOS Apple Silicon | `kernext-desktop-macos-arm64.dmg` |
 | macOS Intel | `kernext-desktop-macos-x64.dmg` |
 
-Every installer ships with a matching `.sha256` checksum. Download the latest
+The same release also carries the command-line shell as per-platform archives
+(`kernext-<rust-target-triple>.tar.gz` or `.zip`), each containing `kernext` and
+`kernext-server`.
+
+Every artifact ships with a matching `.sha256` checksum. Download the latest
 release from <https://github.com/Trishit6/terminal/releases>, or use the site's
-[downloads page](https://github.com/Trishit6/terminal/blob/main/apps/web/src/routes/downloads.tsx),
-which reads the real release metadata from the server's
-`GET /api/v1/releases/latest` endpoint and never shows a button for a file that
-does not exist.
+downloads page, which reads the real release metadata from the server's
+`GET /api/v1/releases/latest` and `GET /api/v1/releases` endpoints and never
+shows a button for a file that does not exist.
 
 Builds are unsigned unless the optional signing secrets are configured. An
 unsigned installer still runs; Windows SmartScreen and macOS Gatekeeper may
@@ -204,15 +207,15 @@ desktop shell work without any database.
 Exact development sequence from the workspace root:
 
 ```sh
-npm ci          # install web/desktop workspaces
-npm run dev     # Axum on 127.0.0.1:7878 + Vite on 127.0.0.1:5173
+pnpm install --frozen-lockfile   # install web/desktop workspaces
+pnpm dev                         # Axum on 127.0.0.1:7878 + Vite on 127.0.0.1:5173
 ```
 
 Then open <http://127.0.0.1:5173/sign-in>. To run the halves separately, use
-`cargo run -p shell-server` (Axum) and `npm run web:dev` (Vite). The backend
+`cargo run -p shell-server` (Axum) and `pnpm run web:dev` (Vite). The backend
 reads `./.env`, then the workspace-root `.env`, so the launch directory does
 not decide whether accounts load. Stop any existing Vite process before
-`npm run dev`; it stops the stack when either service fails to start.
+`pnpm dev`; it stops the stack when either service fails to start.
 
 Development configuration (workspace-root `.env`, placeholders in
 `.env.example`):
@@ -275,18 +278,17 @@ automatically for piped output, `NO_COLOR`, and `TERM=dumb`. Set
 `KERNEXT_VERSION` (or pass `-Version` on Windows) to install a different
 release.
 
-Two workflows produce release artifacts:
+There is one release workflow:
 
-- `.github/workflows/desktop-release.yaml` is the public path. Pushing a
-  version tag (`v*`) or running it manually verifies the workspace, builds the
-  Windows, Linux, and macOS desktop installers, checks every SHA-256, and
-  publishes a GitHub Release marked Latest. See
-  [`docs/RELEASING.md`](docs/RELEASING.md).
-- `.github/workflows/release.yaml` builds CLI archives for Linux (GNU and musl),
-  Windows, and macOS (Apple Silicon and Intel), plus desktop bundles, and
-  attaches a SHA-256 checksum for every artifact. It creates only a **draft**
-  GitHub Release, is triggered manually through `workflow_dispatch`, and never
-  publishes or tags on its own.
+- `.github/workflows/release.yaml` is the public path. Pushing a version tag
+  (`v*`) or running it manually verifies the workspace, builds the CLI archives
+  for Windows, Linux (glibc, musl, and arm64), and macOS (Apple Silicon and
+  Intel), builds the Windows, Linux (x64 and arm64), and macOS desktop
+  installers, checks every SHA-256, and publishes a GitHub Release marked
+  Latest. See [`docs/RELEASING.md`](docs/RELEASING.md).
+- `.github/workflows/ci.yml` is the pull-request pipeline. It runs the format,
+  Clippy, Rust test, web, account/database, and desktop build jobs across
+  Windows x64, Linux x64, and both macOS architectures, and never publishes.
 
 Until a release is published, download from
 <https://github.com/Trishit6/terminal/releases> or
@@ -452,8 +454,8 @@ input
 terminal/
 ├── Cargo.toml
 ├── Cargo.lock
-├── package.json               # npm workspaces + scripts (web:*, desktop:*)
-├── package-lock.json          # npm lockfile for apps/web and apps/desktop
+├── package.json               # workspaces + scripts (web:*, desktop:*)
+├── pnpm-lock.yaml             # pnpm lockfile for apps/web and apps/desktop
 ├── README.md
 ├── AGENTS.md
 ├── RELEASE_NOTES.md
@@ -971,10 +973,10 @@ kernext build
 kernext test
 kernext lint
 kernext doctor
-npm ci
-npm run typecheck
-npm test
-npm run build
+pnpm install --frozen-lockfile
+pnpm run typecheck
+pnpm test
+pnpm run build
 ```
 
 The same checks through Cargo, which the KERNEXT commands call:
@@ -987,15 +989,16 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-The `npm` scripts are defined at the workspace root: `web:dev`, `web:build`,
-`web:preview`, `web:typecheck`, `web:test` (Vitest logic tests for the terminal
-engine), `desktop:dev`, `desktop:build`, plus the short aliases `typecheck`,
-`build`, and `test`. `npm ci` installs both workspaces from
-`package-lock.json`.
+The root scripts are defined in the workspace root `package.json`: `web:dev`,
+`web:build`, `web:preview`, `web:typecheck`, `web:test` (Vitest logic tests for
+the terminal engine), `desktop:dev`, `desktop:build`, plus the short aliases
+`typecheck`, `build`, and `test`. They delegate to the workspaces with
+`pnpm --filter`.
 
-pnpm is supported as an alternative: `pnpm install --frozen-lockfile`, then the
-same root scripts (`pnpm run typecheck`, `pnpm test`, `pnpm run build`). Both
-lockfiles are tracked and must both stay valid when dependencies change.
+pnpm is the only supported package manager: `pnpm install --frozen-lockfile`
+installs both workspaces from `pnpm-lock.yaml`, which is the single lockfile.
+`package-lock.json` was removed; do not reintroduce npm, yarn, or bun, and do
+not add a second lockfile.
 
 Focused test commands:
 
@@ -1019,9 +1022,10 @@ installed on the host.
 
 CI (`.github/workflows/ci.yml`) runs fmt, clippy, and tests on Windows x64,
 Linux x64, and macOS (Apple Silicon and Intel), a web job (typecheck, Vitest,
-production build), and a desktop bundling job across the same operating systems.
-Releases are produced by `.github/workflows/desktop-release.yaml`
-(tag-triggered) and `.github/workflows/release.yaml` (manual draft).
+production build), an account/database job against MariaDB, and a desktop
+bundling job across the same operating systems. Releases are produced by
+`.github/workflows/release.yaml` (tag-triggered, or manual against an existing
+tag); it is the only workflow that publishes.
 
 ### Further documentation
 
@@ -1085,15 +1089,16 @@ Releases are produced by `.github/workflows/desktop-release.yaml`
   with per-artifact checksums; fixed the broken root `desktop:*` scripts.
 - **Developer experience (Phase 7):** `kernext build`/`check`/`test`/`fmt`/
   `lint`/`run`/`clean`/`doctor`/`version`/`help` project commands, a branded
-  doctor report, npm workspaces with a committed `package-lock.json`, and
-  npm-based CI and release workflows.
-- **Desktop distribution (Phase 8):** tag-triggered `desktop-release.yaml`
-  publishing Windows (MSI + NSIS), Linux (AppImage + deb), and macOS
-  (Apple Silicon + Intel dmg) installers with SHA-256 checksums; canonical
-  installer naming (`scripts/collect-bundles.mjs`); a tag/manifest version
-  guard (`scripts/check-release-version.mjs`); a package-manager-neutral Tauri
-  front-end build hook (`scripts/build-web.mjs`); and a live downloads page
-  backed by `GET /api/v1/releases/latest`.
+  doctor report, pnpm workspaces with a single committed `pnpm-lock.yaml`, and
+  pnpm-based CI and release workflows.
+- **Desktop distribution (Phase 8):** tag-triggered `release.yaml` publishing
+  the CLI archives plus Windows (MSI + NSIS), Linux (AppImage + deb + rpm for
+  x64 and arm64), and macOS (Apple Silicon + Intel dmg) installers with SHA-256
+  checksums; canonical installer naming (`scripts/collect-bundles.mjs`); a
+  tag/manifest version guard (`scripts/check-release-version.mjs`); a
+  pnpm-only Tauri front-end build hook (`scripts/build-web.mjs`); and a live
+  downloads page backed by `GET /api/v1/releases/latest` and
+  `GET /api/v1/releases`.
 
 ## Roadmap
 
@@ -1122,10 +1127,10 @@ session caps, and idle cleanup, all documented in
 The native desktop application runs on Tauri 2 (`apps/desktop`) and reuses the
 web front end. It offers a multi-tab interactive terminal (engine or PTY
 modes), dashboard, command explorer, file explorer, sessions, settings, and
-about screens. Installers for Windows, Linux, and macOS are built and published
-by `.github/workflows/desktop-release.yaml`. Remaining work: interactive
-verification on Linux and macOS hosts, and a first successful hosted run of the
-release workflow.
+about screens. Installers for Windows, Linux (x64 and arm64), and macOS are
+built and published by `.github/workflows/release.yaml`. Remaining work:
+interactive verification on Linux and macOS hosts, and a first successful
+hosted run of the release workflow.
 
 ## License
 

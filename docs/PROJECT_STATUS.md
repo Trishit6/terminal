@@ -1,11 +1,11 @@
 # KERNEXT Project Status
 
-Status snapshot after the Phase 19 desktop-distribution work, which builds on
-Phase 18 (typography, core scene, navigation systems), Phase 17 (premium
-redesign), Phase 16 (Three.js hero), Phase 15 (visual redesign), Phase 14
-(responsive hardening), and Phase 13 (responsive Web Terminal and site layouts).
-The CLI, Web, and Desktop
-surfaces share one Rust engine. MariaDB-backed accounts,
+Status snapshot after the Phase 20 download-and-release work, which builds on
+Phase 19 (desktop distribution and release automation), Phase 18 (typography,
+core scene, navigation systems), Phase 17 (premium redesign), Phase 16
+(Three.js hero), Phase 15 (visual redesign), Phase 14 (responsive hardening),
+and Phase 13 (responsive Web Terminal and site layouts). The CLI, Web, and
+Desktop surfaces share one Rust engine. MariaDB-backed accounts,
 authentication, and per-account web-terminal ownership are implemented. This
 document separates what is **implemented**, **tested**, **partially tested**,
 and still **unverified**. It is the authoritative completion snapshot;
@@ -14,7 +14,8 @@ and still **unverified**. It is the authoritative completion snapshot;
 `docs/AUTHENTICATION.md` describe the system.
 
 Verification host: Windows 11, Rust GNU toolchain (WinLibs MinGW-w64),
-Node.js + npm. MariaDB is available on `127.0.0.1:3307`.
+Node.js 24 + pnpm 12.18.0 (pnpm is the only supported package manager; npm,
+yarn, and bun are not). MariaDB is available on `127.0.0.1:3307`.
 
 ## Implemented
 
@@ -133,8 +134,8 @@ Node.js + npm. MariaDB is available on `127.0.0.1:3307`.
   font stepper, mode, and apply-size controls meet a 40–44px touch target.
 - The Desktop route's navigation rail collapses to icons below 640px and its
   content column may shrink, removing the clipped heading at 360px.
-- The development stack no longer produces proxy stack-trace spam. `npm run
-  dev` preflights ports 5173/7878, reuses a healthy backend, and waits for
+- The development stack no longer produces proxy stack-trace spam. `pnpm dev`
+  preflights ports 5173/7878, reuses a healthy backend, and waits for
   `/api/v1/health` before starting Vite. While the backend is down, the Vite
   proxy answers `503` with `{"error":"backend_unavailable"}` and logs one
   warning per outage; expected `ECONNREFUSED`/`ECONNRESET` proxy errors are
@@ -329,55 +330,72 @@ Node.js + npm. MariaDB is available on `127.0.0.1:3307`.
   column, sidebar column, and `.docs-nav` now set `min-width: 0`, so code blocks
   and the chip row scroll inside their own containers.
 
-### Desktop distribution and release automation (Phase 19)
+### Desktop distribution and release automation (Phases 19–20)
 
-- **Tag-triggered release workflow**
-  (`.github/workflows/desktop-release.yaml`): pushing a `v*` tag (or a manual
-  `workflow_dispatch` with a tag) runs a `verify` job, then a four-leg
-  `desktop` matrix (`fail-fast: false`), then a `release` job that publishes a
-  GitHub Release marked Latest. `verify` installs the Linux desktop build
-  dependencies, Rust with `clippy`/`rustfmt`, pnpm, and Node, installs the front
-  end with `pnpm install --frozen-lockfile`, and runs `cargo fmt --check`,
+- **One tag-triggered release workflow**
+  (`.github/workflows/release.yaml`): pushing a `v*` tag (or a manual
+  `workflow_dispatch` with a tag) runs `verify`, then a six-leg `cli` matrix and
+  a five-leg `desktop` matrix (`fail-fast: false` on both), then a `release` job
+  that publishes a non-draft GitHub Release marked Latest. `verify` installs the
+  Linux desktop build dependencies, Rust with `clippy`/`rustfmt`, pnpm, and
+  Node, installs the front end with `pnpm install --frozen-lockfile`, checks the
+  tag against every manifest, and runs `cargo fmt --check`,
   `cargo clippy --workspace --all-targets -- -D warnings`,
   `cargo test --workspace`, and the web typecheck, tests, and production build.
-  No step uses `continue-on-error`; a failed platform leg fails `desktop`, which
-  skips `release`, so no partial release is published.
-- **Platforms and formats:** Windows x64 (`msi,nsis`), Linux x64
-  (`appimage,deb` on `ubuntu-22.04`), macOS Apple Silicon (`dmg`,
-  `aarch64-apple-darwin`), and macOS Intel (`dmg`, `x86_64-apple-darwin`).
+  No step uses `continue-on-error`; a failed platform leg fails its matrix job,
+  which skips `release`, so no partial release is published. The older
+  `desktop-release.yaml` (desktop-only, draft-era) was deleted.
+- **CLI matrix (six legs):** Windows x64 GNU
+  (`x86_64-pc-windows-gnu`), Linux x64 glibc, Linux x64 musl
+  (`x86_64-unknown-linux-musl`), Linux arm64 (`aarch64-unknown-linux-gnu` on
+  `ubuntu-24.04-arm`), macOS Apple Silicon (`aarch64-apple-darwin`), and macOS
+  Intel (`x86_64-apple-darwin`). Each leg builds `-p shell-cli -p shell-server`
+  with `--locked`; `release` archives them as
+  `kernext-<rust-target-triple>.tar.gz` (or `.zip` on Windows), each containing
+  `kernext` and `kernext-server`.
+- **Desktop matrix (five legs):** Windows x64 (`msi,nsis`), Linux x64
+  (`appimage,deb,rpm` on `ubuntu-22.04`), Linux arm64 (`appimage,deb,rpm` on
+  `ubuntu-24.04-arm`), macOS Apple Silicon (`dmg`, `aarch64-apple-darwin`), and
+  macOS Intel (`dmg`, `x86_64-apple-darwin`).
 - **Canonical installer names and checksums**
-  (`scripts/collect-bundles.mjs`): `kernext-desktop-windows-x64.msi`,
-  `kernext-desktop-windows-x64-setup.exe`, `kernext-desktop-linux-x64.AppImage`,
-  `kernext-desktop-linux-x64.deb`, `kernext-desktop-macos-arm64.dmg`, and
-  `kernext-desktop-macos-x64.dmg`, each with a sha256sum-compatible `.sha256`
-  file. The script fails when a platform produced no installer, and the
-  `release` job re-verifies every checksum before publishing.
+  (`scripts/collect-bundles.mjs`): the name always embeds the architecture —
+  `kernext-desktop-windows-x64.msi`,
+  `kernext-desktop-windows-x64-setup.exe`,
+  `kernext-desktop-linux-<x64|arm64>.AppImage`, `…​.deb`, `…​.rpm`,
+  `kernext-desktop-macos-<arm64|x64>.dmg` — each with a sha256sum-compatible
+  `.sha256` file. A Tauri minisign `.sig` is published beside an installer when
+  it was signed. The script exits non-zero when a platform produced no
+  installer, and the `release` job re-verifies every checksum before publishing.
 - **Version guard** (`scripts/check-release-version.mjs`): the tag must match
   `Cargo.toml` `[workspace.package] version`, `tauri.conf.json` `version`, and
   the three `package.json` versions. It exits `1` with the mismatching files and
   `2` when called without a tag, and runs in the `verify` job so a mistyped tag
   cannot publish installers whose embedded version disagrees with the release.
-- **Package-manager-neutral desktop build**: `tauri.conf.json`
-  `beforeBuildCommand` now runs `node ../../scripts/build-web.mjs`, which picks
-  the manager from `KERNEXT_PACKAGE_MANAGER`, else pnpm (when `pnpm-lock.yaml`
-  exists and pnpm runs), else npm. The workflow sets the variable to pnpm; local
-  npm builds still work. Both `package-lock.json` and `pnpm-lock.yaml` remain
-  tracked and valid.
-- **Live downloads page**: `GET /api/v1/releases/latest`
-  (`apps/shell-server/src/releases.rs`) reads the latest GitHub release, caches
-  it for 600 s, serves the last good payload during an outage, and returns
-  `200` with `available: false` and a reason rather than an error when it cannot
-  read one. Assets are classified server-side (`desktop`/`cli`/`other`, with
-  platform, arch, and format, and a link to the matching `.sha256`). The
-  `apps/web` downloads route renders only assets that exist, distinguishes the
-  latest stable release from development builds and unsupported targets, and
-  has loading, error, and no-release states. It never fabricates a download URL.
-  Configuration: `KERNEXT_REPOSITORY` (default `Trishit6/terminal`),
-  `KERNEXT_GITHUB_TOKEN` (optional rate-limit raise, never logged), and
-  `KERNEXT_RELEASES_DISABLED=1` for offline work.
+- **pnpm-only desktop build**: `tauri.conf.json` `beforeBuildCommand` runs
+  `node ../../scripts/build-web.mjs` and `beforeDevCommand` runs
+  `node ../../scripts/build-web.mjs --dev`. The helper runs the web package's
+  own `build`/`dev` script through pnpm and fails with a clear message when pnpm
+  is missing. `KERNEXT_PACKAGE_MANAGER` was removed; `package-lock.json` was
+  deleted and `pnpm-lock.yaml` is the single lockfile.
+- **Live downloads page**: `apps/shell-server/src/releases.rs` backs
+  `GET /api/v1/releases/latest` (newest stable release plus its classified
+  assets) and `GET /api/v1/releases` (release history for the
+  previous-releases list). Both are derived from one cached GitHub lookup
+  (`GET /releases?per_page=30`), cached for 600 s, serving the last good payload
+  during an outage and returning `200` with `available: false` plus a reason
+  rather than an error. Assets are classified server-side
+  (`desktop`/`cli`/`other`, with platform, arch, and format); a `.sha256` or
+  `.sig` asset is folded into its target as `checksum_url`/`signature_url`
+  instead of being listed as a download. The `apps/web` downloads route renders
+  only assets that exist, distinguishes the latest stable release from
+  development builds and unsupported targets, and has loading, error, and
+  no-release states. It never fabricates a download URL. Configuration:
+  `KERNEXT_REPOSITORY` (default `Trishit6/terminal`), `KERNEXT_GITHUB_TOKEN`
+  (optional rate-limit raise, never logged), and `KERNEXT_RELEASES_DISABLED=1`
+  for offline work.
 - **Documentation**: `docs/RELEASING.md` is the maintainer runbook (version
   bumping, tagging, verification, signing); `docs/DESKTOP.md` documents the
-  installer names and both package managers.
+  installer names and the pnpm-only build.
 - **Unsigned builds by default.** The workflow ships unsigned installers, which
   run normally; Windows SmartScreen and macOS Gatekeeper may warn on first
   launch. Enabling signing requires the corresponding secrets and is documented
@@ -385,36 +403,50 @@ Node.js + npm. MariaDB is available on `127.0.0.1:3307`.
 
 ## Tested
 
-- **Phase 19 Rust gates (Windows 11, Rust 1.100 toolchain):**
+- **Phase 20 Rust gates (Windows 11, Rust GNU toolchain):**
   `cargo fmt --all -- --check` — clean; `cargo clippy --workspace --all-targets
-  -- -D warnings` — clean; `cargo test --workspace` — **535 passed, 0 failed**,
-  including the 6 new `releases::tests` cases (installer classification,
-  checksum linking, CLI-vs-desktop kind, unknown-file handling, and unavailable
-  payloads). One pre-existing `clippy::needless_bool` lint in
-  `crates/shell-runtime/src/history.rs` was fixed with a behavior-preserving
-  simplification so the documented workspace clippy gate passes on the current
-  toolchain.
-- **Phase 19 web checks:** `npm run typecheck` — ok; `npm test` (Vitest) —
-  **72 passed in 10 files**, including 11 new tests for the release-matching
-  helpers in `apps/web/src/lib/releases.test.ts`; `npm run build` — ok
-  (`tsc --noEmit`, `vite build`, index build, and SEO generation; `[seo] wrote
-  routes.json (30 routes)`).
-- **Phase 19 script checks:** `node scripts/build-web.mjs` exits 0 and selects
-  pnpm when `pnpm-lock.yaml` is present; `node scripts/collect-bundles.mjs`
-  was exercised against a synthetic bundle tree for Windows, Linux, and macOS
-  and renamed only installer files (raw binaries excluded); `node
+  -- -D warnings` — clean (0 compiler diagnostics); `cargo test --workspace` —
+  **536 passed, 0 failed**, including the 7 `releases::tests` cases (installer
+  classification, CLI-vs-desktop kind, checksum and signature linking, unknown
+  files, unavailable payloads, and release-history summaries). One pre-existing
+  `clippy::needless_bool` lint in `crates/shell-runtime/src/history.rs` was fixed
+  with a behavior-preserving simplification so the documented workspace clippy
+  gate passes on the current toolchain.
+- **Phase 20 web checks:** `pnpm run typecheck` — ok; `pnpm test` (Vitest) —
+  **86 passed in 10 files**, including 25 tests for the release helpers in
+  `apps/web/src/lib/releases.test.ts` (asset matching, Linux arm64 ordering, CLI
+  grouping, recommendation rules, platform detection, release history,
+  formatting, and the notes excerpt); `pnpm run build` — ok (`tsc --noEmit`,
+  `vite build`, index build, and SEO generation; `[seo] wrote routes.json
+  (30 routes)`).
+- **Phase 20 script checks:** `node scripts/build-web.mjs` is pnpm-only and
+  fails clearly when pnpm is missing; `node scripts/collect-bundles.mjs` was
+  exercised against a synthetic bundle tree for Windows x64, Linux x64, Linux
+  arm64, macOS arm64, and macOS x64, producing the arch-qualified canonical
+  names, `.rpm` packages, a minisign `.sig` beside the installer that had one,
+  and a `.sha256` for every file; it exits non-zero for a platform with no
+  installer and `2` for an unknown platform. `node
   scripts/check-release-version.mjs v0.1.0` exits 0, `v9.9.9` exits 1 and names
   all five mismatching manifests, and no argument exits 2.
-- **Phase 19 lockfile check:** `pnpm install --frozen-lockfile` (pnpm 12.18.0,
-  `lockfileVersion: '9.0'`) reports "Lockfile is up to date", so the release
-  workflow's install step works from the committed lockfile.
+- **Phase 20 workflow checks:** both `.github/workflows/ci.yml` and
+  `.github/workflows/release.yaml` parse as YAML; every `needs:` reference
+  resolves; the `cli` matrix has six consistent legs and the `desktop` matrix
+  five. `cargo metadata --locked` exits 0, so the release jobs' `--locked`
+  builds match the committed `Cargo.lock`.
+- **Phase 20 lockfile check:** `pnpm install --frozen-lockfile` (pnpm 12.18.0,
+  `lockfileVersion: '9.0'`) reports "Lockfile is up to date" after
+  `package-lock.json` was deleted, so the workflows' install step works from the
+  single committed lockfile.
 - `cargo fmt --all -- --check` — clean.
 - `cargo check --workspace --all-targets` — clean.
 - `cargo test --workspace` — 470 workspace tests passed before Phase 11
   hardening; the shell-server suite now also contains 7 MariaDB integration
   tests (see below).
 - `cargo clippy --workspace --all-targets -- -D warnings` — clean.
-- `npm run typecheck` — ok.
+- `npm run typecheck` — ok. (These four web lines and the later Phase 15–18
+  build-check bullets were recorded while npm was still the documented package
+  manager; the equivalent commands are now `pnpm run typecheck`, `pnpm test`,
+  and `pnpm run build`.)
 - `npm test` (Vitest) — 61 passed in 9 files.
 - `npm run build` — ok.
 - **Live MariaDB integration** (`cargo test -p shell-server --test auth_db`
@@ -669,17 +701,21 @@ Node.js + npm. MariaDB is available on `127.0.0.1:3307`.
 - **Account preference sync for the terminal.** Local-storage persistence was
   exercised; the signed-in `user_preferences` sync path was left unchanged but
   not re-tested because no account database was configured in this run.
-- **Hosted CI.** The workflow now includes a MariaDB service container and the
-  `auth_db` job, but a hosted run after this change has not been observed.
-- **Desktop release workflow.** `desktop-release.yaml` has been validated
-  locally (YAML parses, `pnpm install --frozen-lockfile` succeeds, the version
-  guard and bundle collector were exercised, and every Rust/web gate it runs
-  passes on Windows), but it has **not** been executed on GitHub Actions. No
-  tag has been pushed, no installer has been produced by a hosted runner, and
-  no GitHub Release has been published from it. Windows bundles are verified
-  locally; Linux and macOS bundles are unverified because no such host is
-  available here.
-- **Downloads page data.** The endpoint, classification, and matching helpers
+- **Hosted CI.** `ci.yml` now runs pnpm, includes a MariaDB service container,
+  and adds the `auth-db` job, but a hosted run after these changes has not been
+  observed.
+- **Release workflow.** `release.yaml` has been validated locally (both
+  workflows parse as YAML, every `needs:` reference resolves, the matrices are
+  consistent, `cargo metadata --locked` matches the committed `Cargo.lock`,
+  `pnpm install --frozen-lockfile` succeeds, the version guard and bundle
+  collector were exercised, and every Rust/web gate it runs passes on Windows),
+  but it has **not** been executed on GitHub Actions. No tag has been pushed, no
+  CLI archive or installer has been produced by a hosted runner, and no GitHub
+  Release has been published from it. Windows bundles are verified locally;
+  Linux (including the `ubuntu-24.04-arm` legs) and macOS bundles are unverified
+  because no such host is available here. The Linux arm64 and RPM legs are
+  therefore the least-proven part of the matrix.
+- **Downloads page data.** The endpoints, classification, and matching helpers
   are unit-tested, and the page renders loading/error/no-release states, but the
   page has not been viewed in a browser against a repository that has a
   published release (none exists yet).
@@ -718,10 +754,10 @@ cargo fmt --all -- --check
 cargo check --workspace --all-targets
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
-npm ci
-npm run typecheck
-npm test
-npm run build
+pnpm install --frozen-lockfile
+pnpm run typecheck
+pnpm test
+pnpm run build
 ```
 
 Release tooling (no secrets required):
@@ -758,9 +794,10 @@ curl -s http://127.0.0.1:7878/api/auth/status
   `SMTP_PASSWORD`, `SMTP_FROM`) for real verification/reset email.
 - A production `APP_PUBLIC_URL` and `KERNEXT_ALLOWED_ORIGINS` for deployment.
 - A disposable test database or CI service container (CI provides one).
-- Push a version tag (`v0.1.0`) to run the desktop release workflow for the
-  first time and publish the installers. Optionally add the signing secrets
-  described in `docs/RELEASING.md`; unsigned installers are the default and
-  work without them.
+- Push a version tag (`v0.1.0`) to run `.github/workflows/release.yaml` for the
+  first time and publish the CLI archives and installers. Optionally add the
+  signing secrets described in `docs/RELEASING.md`; unsigned installers are the
+  default and work without them.
 - Optionally set `KERNEXT_GITHUB_TOKEN` on the deployed server to raise the
-  GitHub API rate limit for `/api/v1/releases/latest`.
+  GitHub API rate limit for `/api/v1/releases/latest` and
+  `/api/v1/releases`.

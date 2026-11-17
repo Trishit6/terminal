@@ -112,7 +112,7 @@ export function SignInPage() {
             <FormNotice tone="warning">
               The KERNEXT server is not reachable. Start it with
               <code className="mx-1 rounded bg-surface-soft px-1 font-mono text-[11px]">
-                npm run dev
+                pnpm dev
               </code>
               and reload this page.
             </FormNotice>

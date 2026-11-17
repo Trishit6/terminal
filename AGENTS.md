@@ -326,6 +326,31 @@ without explicit permission.
 A source tree on vfat can still be inspected, edited, diffed, formatted, and
 used by `cargo metadata --no-deps`.
 
+## Editing Rust files: keep every revision compilable
+
+Rust Analyzer's `cargo check` diagnostics are refreshed only on the **editor's
+own save event**. A file written by an external tool (a script, an agent, a
+`git checkout`) updates the snapshot but does not re-run the check, so the last
+recorded result stays pinned in the Problems panel at the position the symbol
+occupied in the revision that was checked.
+
+That is how the recurring phantom error
+`cannot find value \`latest_release\` in this scope` at `routes.rs` appeared: a
+route was registered one edit *before* its handler was defined, the check ran
+against that transient revision, and the later fix was never re-checked.
+
+- **Never leave a revision that references a symbol before it is defined.**
+  When a change both registers a route (or a call site) and defines its target,
+  replace the whole file in one write, or define the target first. Do not do it
+  as two sequential edits.
+- When a Rust Analyzer error survives a fix, confirm it against the real
+  compiler before changing code: `cargo check --workspace --all-targets`
+  reporting `0` compiler messages means the diagnostic is stale, not real.
+- `.vscode/settings.json` sets `rust-analyzer.files.watcher` to `server` so
+  out-of-editor writes are detected. Stale check output is cached under
+  `<target-dir>/flycheck0`; deleting that directory, or running
+  **rust-analyzer: Restart Server**, forces a fresh check.
+
 ## Desktop build notes (Windows GNU)
 
 - `apps/desktop/src-tauri/build.rs` must keep shadowing the MinGW
@@ -363,12 +388,17 @@ used by `cargo metadata --no-deps`.
   version in `Cargo.toml` `[workspace.package]`, `tauri.conf.json`, and the
   three `package.json` files. Do not remove this guard; it is what prevents
   installers whose embedded version disagrees with the release tag.
-- `apps/shell-server/src/releases.rs` backs `GET /api/v1/releases/latest`. It
-  caches for 600 s, serves the last good payload during an outage, and returns
-  `200` with `available: false` plus a reason instead of an error. Asset
-  classification lives here, not in the front end. Env: `KERNEXT_REPOSITORY`
-  (default `Trishit6/terminal`), `KERNEXT_GITHUB_TOKEN` (optional, never
-  logged), `KERNEXT_RELEASES_DISABLED=1`.
+- `apps/shell-server/src/releases.rs` backs `GET /api/v1/releases/latest` (the
+  newest stable release plus its classified assets) and `GET /api/v1/releases`
+  (the history the previous-releases list renders). Both are served from one
+  cached GitHub lookup that fetches `GET /releases?per_page=30`. It caches for
+  600 s, serves the last good payload during an outage, and returns `200` with
+  `available: false` plus a reason instead of an error. Asset classification
+  lives here, not in the front end; a `.sha256` or `.sig` asset is folded into
+  its target as `checksum_url`/`signature_url` instead of being listed as a
+  download. Env: `KERNEXT_REPOSITORY` (default `Trishit6/terminal`),
+  `KERNEXT_GITHUB_TOKEN` (optional, never logged),
+  `KERNEXT_RELEASES_DISABLED=1`.
 - `apps/web/src/routes/downloads.tsx` renders only assets the endpoint reports.
   Never fabricate a download URL, never render a button for a file that does not
   exist, and keep the loading, error, and no-release states. The same-origin
@@ -417,57 +447,56 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p shell-cli
 ```
 
-Front end and desktop (npm and pnpm workspaces, Node.js 22+, npm 10+ or pnpm
-12+; both `package-lock.json` and `pnpm-lock.yaml` are tracked):
+Front end and desktop (pnpm only, Node.js 22+, pnpm 10+; `pnpm-lock.yaml` is
+the single lockfile):
 
 ```bash
-npm ci                     # install apps/web and apps/desktop from the lockfile
-npm run dev                # full stack: shell-server on 7878 + vite on 5173
-npm run typecheck          # web typecheck (alias of web:typecheck)
-npm test                   # web Vitest suite (alias of web:test)
-npm run build              # web production build (alias of web:build)
-npm run web:dev            # vite dev server only (http://127.0.0.1:5173)
-npm run desktop:dev        # tauri dev (web + desktop window)
-npm run desktop:build      # tauri build (production bundle)
+pnpm install --frozen-lockfile  # install apps/web and apps/desktop from the lockfile
+pnpm dev                # full stack: shell-server on 7878 + vite on 5173
+pnpm run typecheck      # web typecheck (alias of web:typecheck)
+pnpm test               # web Vitest suite (alias of web:test)
+pnpm run build          # web production build (alias of web:build)
+pnpm run web:dev        # vite dev server only (http://127.0.0.1:5173)
+pnpm run desktop:dev    # tauri dev (web + desktop window)
+pnpm run desktop:build  # tauri build (production bundle)
 cargo run -p shell-server  # local web API server
 ```
 
-`npm run dev` runs `scripts/dev.mjs`, which starts `cargo run -p shell-server`
+`pnpm dev` runs `scripts/dev.mjs`, which starts `cargo run -p shell-server`
 (with `.env` if present — see "Accounts, database, and email") and the Vite dev
 server; the dev server proxies `/api` and WebSocket upgrades to
 `127.0.0.1:7878`. `shell-server` also serves the built web client from
 `apps/web/dist` (`router_with_static`), with SPA fallback to `index.html`.
 
 The root `desktop:*` scripts delegate to the `dev`/`build` scripts inside
-`apps/desktop/package.json`. Workspaces are declared in both the root
-`package.json` and `pnpm-workspace.yaml`.
+`apps/desktop/package.json` with `pnpm --filter`. Workspaces are declared in
+both the root `package.json` and `pnpm-workspace.yaml`; pnpm reads the latter.
 
-**Both package managers are supported and both lockfiles are authoritative.**
-`package-lock.json` drives `npm ci` and `.github/workflows/ci.yml`;
-`pnpm-lock.yaml` drives `pnpm install --frozen-lockfile` and
-`.github/workflows/desktop-release.yaml`. When a dependency changes, update
-both lockfiles (`npm install` and `pnpm install`) and commit them together. Do
-not delete either lockfile, and do not introduce `yarn` or `bun`.
+**pnpm is the only supported package manager.** `pnpm-lock.yaml` is the single
+authoritative lockfile and drives both `.github/workflows/ci.yml` and
+`.github/workflows/release.yaml`; `package-lock.json` was removed. Do not
+reintroduce `npm`, `yarn`, or `bun`, and do not add a second lockfile. When a
+dependency changes, run `pnpm install` and commit `pnpm-lock.yaml`.
+`pnpm-workspace.yaml` holds pnpm settings such as `onlyBuiltDependencies` —
+pnpm 12 no longer reads a `pnpm` field from `package.json`.
 
-The Tauri build hook is package-manager-neutral:
-`tauri.conf.json` `beforeBuildCommand` is
-`node ../../scripts/build-web.mjs`, which selects the manager from
-`KERNEXT_PACKAGE_MANAGER`, else pnpm (when `pnpm-lock.yaml` exists and pnpm
-runs), else npm. `beforeDevCommand` stays `npm --prefix ../web run dev` because
-npm ships with Node. Do not hardcode a single package manager back into
-`tauri.conf.json`. `apps/desktop/package.json` keeps its `web:dev`/`web:build`
-npm scripts for the same reason.
+The Tauri hooks run `node ../../scripts/build-web.mjs` (`beforeBuildCommand`)
+and `node ../../scripts/build-web.mjs --dev` (`beforeDevCommand`). That helper
+is pnpm-only: it runs `pnpm run build` / `pnpm run dev` inside `apps/web` and
+fails with a clear message when pnpm is missing. `apps/desktop/package.json`
+`web:dev`/`web:build` call the same helper.
 
-`npm run build` runs `tsc --noEmit && vite build && node scripts/build-index.mjs
+`pnpm run build` runs `tsc --noEmit && vite build && node scripts/build-index.mjs
 && node scripts/seo.mjs`; the last two regenerate `dist/index.html` and the SEO
 files. `apps/web/dist` is **tracked in Git** — never hand-edit it, run the
 build. `apps/web/package.json`'s dev script forces `--port 5173` even though
-`vite.config.ts` says 5175 (the CLI flag wins); `preview` serves the built
-bundle on 4173 and also proxies `/api` to 7878.
+`vite.config.ts` says 5175 (the CLI flag wins), and `scripts/dev.mjs` preflights
+that same port; `preview` serves the built bundle on 4173 and also proxies
+`/api` to 7878.
 
 `scripts/e2e-browser.mjs` (CDP headless-Chrome terminal acceptance) and
 `scripts/e2e-terminal.mjs` (engine + PTY acceptance against the real backend)
-are run manually; they are not part of `npm test`.
+are run manually; they are not part of `pnpm test`.
 
 Focused tests:
 
@@ -492,23 +521,24 @@ particular program. `external_tools.rs` checks common developer tools
 CI lives in `.github/workflows/ci.yml` (jobs: `lint`, `web`, `auth-db`, `test`
 across Windows x64, Linux x64, macOS Apple Silicon + Intel, and `desktop`). The
 Linux legs install WebKitGTK/GTK/appindicator/librsvg/dbus dev packages before
-building the Tauri crate — that is why `--workspace` works there.
+building the Tauri crate — that is why `--workspace` works there. CI is
+pull-request only and never publishes.
 
-Two release workflows exist and both must keep working:
+There is exactly one release workflow,
+`.github/workflows/release.yaml`. A `v*` tag push (or a manual dispatch with a
+tag) runs `verify` → a six-leg `cli` matrix (Windows x64 GNU; Linux x64 glibc;
+Linux x64 musl; Linux arm64; macOS arm64; macOS x64) and a five-leg `desktop`
+matrix (Windows `msi,nsis`; Linux `appimage,deb,rpm` for x64 and arm64; macOS
+`dmg` for arm64 and x64) → `release`, which publishes a non-draft GitHub
+Release marked Latest with the CLI archives, the installers, and a `.sha256`
+for every file. It uses pnpm exclusively. No step may use `continue-on-error`,
+and a failed platform leg must keep failing its matrix job so no partial
+release is published. `scripts/collect-bundles.mjs` produces the canonical
+installer names and checksums; `scripts/check-release-version.mjs` guards the
+tag against every manifest.
 
-- `.github/workflows/desktop-release.yaml` is the public path. A `v*` tag push
-  (or a manual dispatch with a tag) runs `verify` → a four-leg `desktop` matrix
-  (Windows `msi,nsis`; Linux `appimage,deb`; macOS `dmg` for arm64 and x64) →
-  `release`, which publishes a non-draft GitHub Release marked Latest with the
-  installers and their checksums. It uses pnpm exclusively and sets
-  `KERNEXT_PACKAGE_MANAGER=pnpm`. No step may use `continue-on-error`, and a
-  failed platform leg must keep failing `desktop` so no partial release is
-  published.
-- `.github/workflows/release.yaml` is `workflow_dispatch` only, draft-only, and
-  builds CLI archives plus desktop bundles with SHA-256 checksums per artifact.
-
-Do not trigger either workflow without explicit authorization, and do not claim
-a workflow passed unless its run completed. The maintainer runbook is
+Do not trigger the workflow without explicit authorization, and do not claim a
+workflow passed unless its run completed. The maintainer runbook is
 `docs/RELEASING.md`.
 
 The interactive shell requires a real TTY. Piping input directly into

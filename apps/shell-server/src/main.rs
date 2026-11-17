@@ -5,7 +5,7 @@ use tracing_subscriber::EnvFilter;
 ///
 /// Order:
 /// 1. `KERNEXT_ENV_FILE` (explicit path; must exist).
-/// 2. `.env` in the current directory (the documented `npm run dev` path).
+/// 2. `.env` in the current directory (the documented `pnpm dev` path).
 /// 3. The workspace-root `.env` next to this crate (`../../.env`), so running
 ///    the binary or `cargo run -p shell-server` from another directory still
 ///    finds the development configuration.

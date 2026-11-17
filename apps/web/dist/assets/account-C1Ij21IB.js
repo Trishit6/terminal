@@ -1,0 +1,1 @@
+import{AccountPage as e}from"./account-BTgNLq4N.js";import{r as t}from"./utils-BO6ygQzV.js";var n=t();function r(){return(0,n.jsx)(e,{})}export{r as DesktopAccountPage};

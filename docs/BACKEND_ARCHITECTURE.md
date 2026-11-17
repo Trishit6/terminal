@@ -130,4 +130,4 @@ and CLI keep working in local mode.
 - MariaDB integration tests: `cargo test -p shell-server --test auth_db`
   with `KERNEXT_TEST_DATABASE_URL` pointing at a disposable database.
 - CI runs the MariaDB suite against a `mariadb:11.4` service container.
-- Web: `npm run typecheck`, `npm test`, `npm run build`.
+- Web: `pnpm run typecheck`, `pnpm test`, `pnpm run build`.

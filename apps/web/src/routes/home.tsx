@@ -670,7 +670,7 @@ kernext check
 kernext test
 
 # run the full local stack
-npm run dev`}</code>
+pnpm dev`}</code>
           </pre>
           <dl className="benefits__facts">
             <div>

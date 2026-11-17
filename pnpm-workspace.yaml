@@ -1,3 +1,10 @@
 packages:
   - apps/web
   - apps/desktop
+
+# pnpm 10+ blocks dependency lifecycle scripts unless they are allow-listed.
+# esbuild's postinstall resolves the platform binary; without it Vite still
+# works (esbuild falls back to a runtime lookup) but the first build is slower
+# and prints a warning.
+onlyBuiltDependencies:
+  - esbuild

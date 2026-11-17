@@ -5,7 +5,7 @@
   "description": "KERNEXT — The Next Core of Computing.",
   "engines": {
     "node": ">=22",
-    "npm": ">=10"
+    "pnpm": ">=10"
   },
   "workspaces": [
     "apps/web",
@@ -14,19 +14,16 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:server": "cargo run -p shell-server",
-    "web:dev": "npm run dev -w @kernext/web",
-    "web:build": "npm run build -w @kernext/web",
-    "web:preview": "npm run preview -w @kernext/web",
-    "web:typecheck": "npm run typecheck -w @kernext/web",
-    "web:test": "npm run test -w @kernext/web",
-    "desktop:dev": "npm run dev -w @kernext/desktop",
-    "desktop:build": "npm run build -w @kernext/desktop",
-    "typecheck": "npm run web:typecheck",
-    "build": "npm run web:build",
-    "test": "npm run web:test"
-  },
-  "allowScripts": {
-    "esbuild": true
+    "web:dev": "pnpm --filter @kernext/web run dev",
+    "web:build": "pnpm --filter @kernext/web run build",
+    "web:preview": "pnpm --filter @kernext/web run preview",
+    "web:typecheck": "pnpm --filter @kernext/web run typecheck",
+    "web:test": "pnpm --filter @kernext/web run test",
+    "desktop:dev": "pnpm --filter @kernext/desktop run dev",
+    "desktop:build": "pnpm --filter @kernext/desktop run build",
+    "typecheck": "pnpm run web:typecheck",
+    "build": "pnpm run web:build",
+    "test": "pnpm run web:test"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.9",

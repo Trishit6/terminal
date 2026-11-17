@@ -2,10 +2,10 @@
 /**
  * Starts the local KERNEXT development stack with one command:
  *
- *   npm run dev
+ *   pnpm dev
  *
  * - the Axum backend (`cargo run -p shell-server`) on http://127.0.0.1:7878
- * - the Vite web client (`npm run web:dev`) on http://127.0.0.1:5173
+ * - the Vite web client (`pnpm web:dev`) on http://127.0.0.1:5173
  *
  * The web client proxies `/api` and WebSocket upgrades to the backend, so
  * both processes are needed for the web terminal to work. This script
@@ -28,7 +28,10 @@ const RED = '\u001b[31m';
 const RESET = '\u001b[0m';
 
 const API_PORT = 7878;
-const WEB_PORT = 5175;
+// The web package's `dev` script forces `--port 5173`, which wins over the
+// 5175 in `vite.config.ts`. This must match what actually listens, or the
+// preflight check inspects the wrong port.
+const WEB_PORT = 5173;
 const HEALTH_URL = `http://127.0.0.1:${API_PORT}/api/v1/health`;
 const BACKEND_START_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -55,7 +58,7 @@ function shutdown(code = 0) {
 }
 
 function start(name, color, command, args) {
-  // On Windows `npm` is a .cmd shim, so both commands need a shell to
+  // On Windows `pnpm` is a .cmd shim, so both commands need a shell to
   // resolve. Pass one pre-joined command string instead of an args array to
   // avoid Node's DEP0190 warning about unescaped shell arguments. These
   // commands are fixed literals with no spaces.
@@ -181,7 +184,7 @@ console.log(`${CYAN}[dev]${RESET} Ctrl+C stops both processes.\n`);
 
 if (await portInUse(WEB_PORT)) {
   console.error(
-    `${RED}[dev]${RESET} Port ${WEB_PORT} is already in use. Stop the existing Vite dev server, then run \`npm run dev\` again.`,
+    `${RED}[dev]${RESET} Port ${WEB_PORT} is already in use. Stop the existing Vite dev server, then run \`pnpm dev\` again.`,
   );
   process.exit(1);
 }
@@ -190,7 +193,7 @@ const existingBackend = await backendHealthy();
 
 if (!existingBackend && (await portInUse(API_PORT))) {
   console.error(
-    `${RED}[dev]${RESET} Port ${API_PORT} is in use, but ${HEALTH_URL} did not answer as a KERNEXT backend. Stop that process, then run \`npm run dev\` again.`,
+    `${RED}[dev]${RESET} Port ${API_PORT} is in use, but ${HEALTH_URL} did not answer as a KERNEXT backend. Stop that process, then run \`pnpm dev\` again.`,
   );
   process.exit(1);
 }
@@ -205,11 +208,11 @@ if (existingBackend) {
   if (!(await waitForBackend(BACKEND_START_TIMEOUT_MS))) {
     if (!shuttingDown) {
       console.error(
-        `${RED}[dev]${RESET} The backend did not become healthy at ${HEALTH_URL}. Check the [server] output above, then run \`npm run dev\` again.`,
+        `${RED}[dev]${RESET} The backend did not become healthy at ${HEALTH_URL}. Check the [server] output above, then run \`pnpm dev\` again.`,
       );
       shutdown(1);
     }
   }
 }
 
-start('web', BLUE, 'npm', ['run', 'web:dev']);
+start('web', BLUE, 'pnpm', ['run', 'web:dev']);

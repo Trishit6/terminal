@@ -25,8 +25,8 @@ pub const PROJECT_ROOT_ENV: &str = "KERNEXT_PROJECT_ROOT";
 /// Minimum Node.js major version assumed by the front-end toolchain.
 const MIN_NODE_MAJOR: u64 = 22;
 
-/// Minimum npm major version that supports the workspace scripts used here.
-const MIN_NPM_MAJOR: u64 = 10;
+/// Minimum pnpm major version that supports the workspace scripts used here.
+const MIN_PNPM_MAJOR: u64 = 10;
 
 /// Developer subcommands exposed by the `kernext` executable.
 #[derive(Debug, Subcommand)]
@@ -534,7 +534,7 @@ fn version() -> i32 {
             probe(cargo_program().to_string_lossy().as_ref(), &["--version"]),
         ),
         ("Node.js", probe("node", &["--version"])),
-        ("npm", probe("npm", &["--version"])),
+        ("pnpm", probe("pnpm", &["--version"])),
     ];
 
     for (label, value) in rows {
@@ -689,23 +689,26 @@ fn doctor() -> i32 {
         }
     }
 
-    match probe("npm", &["--version"]) {
+    match probe("pnpm", &["--version"]) {
         Some(version) => {
             let status = match major_version(&version) {
-                Some(major) if major >= MIN_NPM_MAJOR => Status::Available,
+                Some(major) if major >= MIN_PNPM_MAJOR => Status::Available,
                 Some(_) => Status::Warning,
                 None => Status::Warning,
             };
-            report.finding(status, "npm", version);
+            report.finding(status, "pnpm", version);
             if status == Status::Warning {
                 report.suggest(format!(
-                    "Update npm to {MIN_NPM_MAJOR} or newer with `npm install -g npm@latest`."
+                    "Update pnpm to {MIN_PNPM_MAJOR} or newer with `npm install -g pnpm@latest`."
                 ));
             }
         }
         None => {
-            report.finding(Status::Missing, "npm", "not found on PATH".into());
-            report.suggest("Install Node.js, which ships npm, from https://nodejs.org.");
+            report.finding(Status::Missing, "pnpm", "not found on PATH".into());
+            report.suggest(
+                "Install pnpm with `npm install -g pnpm` or `corepack enable`; it is the only \
+                 supported package manager for the web and desktop workspaces.",
+            );
         }
     }
 
@@ -714,7 +717,7 @@ fn doctor() -> i32 {
             report.finding(
                 Status::Available,
                 "Lockfile",
-                relative_check(&root, "package-lock.json"),
+                relative_check(&root, "pnpm-lock.yaml"),
             );
             let installed = root.join("node_modules").is_dir();
             report.finding(
@@ -731,7 +734,7 @@ fn doctor() -> i32 {
                 },
             );
             if !installed {
-                report.suggest("Run `npm install` to install the front-end dependencies.");
+                report.suggest("Run `pnpm install` to install the front-end dependencies.");
             }
         }
         Err(_) => {
@@ -937,7 +940,7 @@ fn cargo_target_directory() -> Option<PathBuf> {
 /// Runs a program and returns the first line of its version output.
 ///
 /// Probing goes through the shell's own external executor so Windows command
-/// scripts such as `npm.cmd` resolve the same way they do inside KERNEXT.
+/// scripts such as `pnpm.cmd` resolve the same way they do inside KERNEXT.
 fn probe(program: &str, arguments: &[&str]) -> Option<String> {
     let report = shell_builtins::ExternalCommand::new(program)
         .args(arguments.iter().copied())

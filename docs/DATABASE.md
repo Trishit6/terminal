@@ -29,15 +29,15 @@ The workspace-root `.env` is already expected at this point. From the
 workspace root, the exact sequence is:
 
 ```sh
-npm ci          # install the web and desktop workspaces from package-lock.json
-npm run dev     # Axum on 127.0.0.1:7878 + Vite on 127.0.0.1:5173
+pnpm install --frozen-lockfile   # install web + desktop from pnpm-lock.yaml
+pnpm dev                         # Axum on 127.0.0.1:7878 + Vite on 127.0.0.1:5173
 ```
 
 Open <http://127.0.0.1:5173/sign-in>. Vite proxies `/api` and WebSocket
 upgrades to the Axum server, so the browser never needs a database address.
 To run the services separately, use `cargo run -p shell-server` and
-`npm run web:dev`. If port 5173 is already occupied, stop the existing dev
-server first; `npm run dev` intentionally stops the stack when either half
+`pnpm run web:dev`. If port 5173 is already occupied, stop the existing dev
+server first; `pnpm dev` intentionally stops the stack when either half
 fails.
 
 For a fresh local database, the dedicated development account (never `root`)

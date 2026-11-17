@@ -60,17 +60,17 @@ cargo test -p shell-server
 cargo test -p shell-desktop
 ```
 
-### Front end / desktop (npm workspaces, Node 22+, npm 10+)
+### Front end / desktop (pnpm workspaces, Node 22+, pnpm 10+)
 
 ```sh
-npm ci                  # install apps/web + apps/desktop from lockfile
-npm run dev             # scripts/dev.mjs: shell-server (7878) + Vite (5173)
-npm run typecheck       # web typecheck
-npm test                # web Vitest suite
-npm run build           # web production build
-npm run web:dev         # Vite only
-npm run desktop:dev     # tauri dev
-npm run desktop:build   # tauri build
+pnpm install --frozen-lockfile  # install apps/web + apps/desktop from lockfile
+pnpm dev                # scripts/dev.mjs: shell-server (7878) + Vite (5173)
+pnpm run typecheck      # web typecheck
+pnpm test               # web Vitest suite
+pnpm run build          # web production build
+pnpm run web:dev        # Vite only
+pnpm run desktop:dev    # tauri dev
+pnpm run desktop:build  # tauri build
 cargo run -p shell-server
 ```
 
@@ -84,7 +84,7 @@ Interactive shell needs a real TTY; piping stdin is rejected. Use a terminal, `s
 - Keep Rust `tauri` crate and npm `@tauri-apps/api` on the same major/minor. `tauri.conf.json` `frontendDist` is `../../web/dist`.
 
 ### Front end conventions
-- npm and pnpm are both supported; both `package-lock.json` and `pnpm-lock.yaml` are tracked and authoritative. Update both when dependencies change; never yarn, bun, or a single-lockfile-only change. Root scripts: `npm run dev`, `npm run build`, `npm test`, `npm run typecheck` (pnpm runs the same scripts).
+- pnpm is the only supported package manager; `pnpm-lock.yaml` is the only lockfile. Update it when dependencies change; never npm, yarn, or bun. Root scripts: `pnpm dev`, `pnpm run build`, `pnpm test`, `pnpm run typecheck`.
 - Design tokens/base styles: `apps/web/src/styles.css`; art direction and layout: `apps/web/src/art-direction.css`. `DESIGN.md` and `PRODUCT.md` hold the design brief.
 - Home hero 3D scene: `apps/web/src/components/site/orbital-hero.tsx` (React Three Fiber + Three.js). Keep the live scene; the WebGL fallback is only for missing/broken WebGL.
 - Backend-free visual fixtures: `/terminal/render-test` (DOM terminal) and `/orbital/render-test` (homepage core, motion frozen with size/backdrop controls). Check the emblem, exactly three orbits, and metal shading there before changing the hero.

@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "tauri dev",
     "build": "tauri build",
-    "web:dev": "npm --prefix ../web run dev",
-    "web:build": "npm --prefix ../web run build",
+    "web:dev": "node ../../scripts/build-web.mjs --dev",
+    "web:build": "node ../../scripts/build-web.mjs",
     "typecheck": "cargo check --workspace --all-targets"
   },
   "devDependencies": {

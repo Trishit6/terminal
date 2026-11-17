@@ -37,9 +37,9 @@ The CI workflow installs exactly this set.
 ### No desktop installer for my platform
 
 Desktop installers are published by the
-`.github/workflows/desktop-release.yaml` workflow on version tags. If the
+`.github/workflows/release.yaml` workflow on version tags. If the
 [releases page](https://github.com/Trishit6/terminal/releases) has no installer
-for your platform, build it from source (`npm run desktop:build` or
+for your platform, build it from source (`pnpm run desktop:build` or
 `pnpm --filter @kernext/desktop run build`); macOS and Linux bundles must be
 built on their own operating system. See `docs/RELEASING.md` and
 `docs/DESKTOP.md`.
@@ -52,22 +52,20 @@ on macOS use Control-click → Open, or allow the app in
 System Settings → Privacy & Security. Verify the download against its
 `.sha256` file first — see `docs/RELEASING.md`.
 
-### npm says "Missing script: tauri"
+### pnpm says "Missing script: tauri"
 
-The front-end workspace is npm-based. Run the desktop app through the package
-scripts — `npm run desktop:dev` and `npm run desktop:build` from the repository
-root, or `npm run dev` / `npm run build` from `apps/desktop`. Tauri is a
-*bin*ary, not a package script, so `npm run tauri …` cannot work.
+The front-end workspace is pnpm-based. Run the desktop app through the package
+scripts — `pnpm run desktop:dev` and `pnpm run desktop:build` from the repository
+root, or `pnpm dev` / `pnpm run build` from `apps/desktop`. Tauri is a
+*bin*ary, not a package script, so `pnpm run tauri …` cannot work.
 
-### Node/npm version problems
+### Node/pnpm version problems
 
-`npm ci` requires the committed `package-lock.json` and a Node.js version that
-satisfies the `engines` field in `package.json` (Node.js 22+ and npm 10+).
-Check yours with `kernext doctor`, then install a supported Node.js release
-from <https://nodejs.org>. pnpm 12+ is supported too: run
-`pnpm install --frozen-lockfile` against the committed `pnpm-lock.yaml`. Keep
-the two lockfiles in sync when dependencies change; do not add a yarn or bun
-lockfile.
+`pnpm install --frozen-lockfile` requires the committed `pnpm-lock.yaml` and a
+Node.js version that satisfies the `engines` field in `package.json` (Node.js
+22+ and pnpm 10+). Check yours with `kernext doctor`, then install a supported
+Node.js release from <https://nodejs.org>. pnpm is the only supported package
+manager; do not add an npm, yarn, or bun lockfile.
 
 ## Running the shell
 
@@ -127,7 +125,7 @@ There is no asynchronous completion notice. Run `jobs` to see it
   handled: API requests answer `503` with
   `{"error":"backend_unavailable"}`, and Vite prints one concise warning per
   outage instead of a stack trace for every request or socket reset.
-- Run `npm run dev`, not `npm run web:dev`, for the combined stack. It waits
+- Run `pnpm dev`, not `pnpm run web:dev`, for the combined stack. It waits
   for `/api/v1/health` before starting Vite, reuses a healthy backend that is
   already running, and refuses to start when port 5173 is occupied or port
   7878 belongs to something that is not KERNEXT.
@@ -145,13 +143,13 @@ Idle sessions are cleaned up by a background sweeper (60-second cadence,
 Desktop commands run through the local Rust runtime, never the web server —
 a server not running does not matter for the desktop app. If the PTY terminal
 fails, the desktop spawns its own executable as the worker
-(`KERNEXT_DESKTOP_WORKER=1`); run `npm run desktop:build` again so the binary and
+(`KERNEXT_DESKTOP_WORKER=1`); run `pnpm run desktop:build` again so the binary and
 front end match.
 
 ### Desktop build aborts with a `@tauri-apps/api` version mismatch
 
 The Rust `tauri` crate and the npm `@tauri-apps/api` package must stay on the
-same major/minor. `npm ci` after changing either.
+same major/minor. `pnpm install --frozen-lockfile` after changing either.
 
 ### STATUS_ENTRYPOINT_NOT_FOUND at desktop startup on MinGW
 

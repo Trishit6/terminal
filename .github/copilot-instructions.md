@@ -49,14 +49,14 @@ cargo clippy --workspace --all-targets -- -D warnings
 Web/desktop commands:
 
 ```bash
-npm ci
-npm run dev                # Axum server + Vite frontend
-npm run web:dev            # Vite frontend only
-npm run web:typecheck      # web typecheck
-npm run web:test           # web Vitest suite
-npm run web:build          # web production build
-npm run desktop:dev        # Tauri dev
-npm run desktop:build      # Tauri production build
+pnpm install --frozen-lockfile
+pnpm run dev                # Axum server + Vite frontend
+pnpm run web:dev            # Vite frontend only
+pnpm run web:typecheck      # web typecheck
+pnpm run web:test           # web Vitest suite
+pnpm run web:build          # web production build
+pnpm run desktop:dev        # Tauri dev
+pnpm run desktop:build      # Tauri production build
 cargo run -p shell-server  # server only
 ```
 

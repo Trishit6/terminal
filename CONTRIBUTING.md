@@ -30,9 +30,10 @@ the authoritative engineering contract.
 ## Development setup
 
 - Rust 1.85+ (Rust 2024 edition).
-- Node.js 22+ and npm 10+ (`package.json` declares `engines` and the npm
-  workspaces). `npm ci` installs `apps/web` and `apps/desktop` from
-  `package-lock.json`. Do not introduce another package manager.
+- Node.js 22+ and pnpm 10+ (`package.json` declares `engines`; workspaces are
+  declared in `pnpm-workspace.yaml`). `pnpm install --frozen-lockfile` installs
+  `apps/web` and `apps/desktop` from `pnpm-lock.yaml`. pnpm is the only
+  supported package manager.
 - A real terminal for interactive verification.
 
 On the VFAT/`showexec` checkout, cargo artifacts automatically route to an
@@ -49,10 +50,10 @@ kernext test
 kernext lint
 
 # Web
-npm ci
-npm run typecheck
-npm test
-npm run build
+pnpm install --frozen-lockfile
+pnpm run typecheck
+pnpm test
+pnpm run build
 
 # Anything unclear about your machine?
 kernext doctor
@@ -63,8 +64,8 @@ kernext doctor
 `cargo test --workspace`, and
 `cargo clippy --workspace --all-targets -- -D warnings`.
 
-If you changed a dependency, regenerate the front-end lockfile with
-`npm install` and commit the updated `package-lock.json`.
+If you changed a dependency, run `pnpm install` and commit the updated
+`pnpm-lock.yaml`.
 
 Focused suites are listed in [`README.md`](README.md#development). Filesystem
 tests use isolated temp directories and `Session::set_working_directory` —
@@ -83,7 +84,7 @@ on a particular external program.
 - Desktop changes must keep `apps/desktop/src-tauri/build.rs` MinGW manifest
   shadowing intact (see [`docs/DESKTOP.md`](docs/DESKTOP.md)).
 - Do not commit build artifacts (any `target/` directory) or
-  `node_modules/`; do not hand-edit `package-lock.json`.
+  `node_modules/`; do not hand-edit `pnpm-lock.yaml`.
 
 ## Reporting issues
 
