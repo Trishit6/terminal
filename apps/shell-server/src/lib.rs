@@ -20,6 +20,7 @@ pub mod auth;
 pub mod auth_routes;
 pub mod db;
 pub mod error;
+pub mod releases;
 pub mod routes;
 pub mod spa;
 pub mod state;

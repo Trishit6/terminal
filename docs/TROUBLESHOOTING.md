@@ -34,6 +34,24 @@ sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
 
 The CI workflow installs exactly this set.
 
+### No desktop installer for my platform
+
+Desktop installers are published by the
+`.github/workflows/desktop-release.yaml` workflow on version tags. If the
+[releases page](https://github.com/Trishit6/terminal/releases) has no installer
+for your platform, build it from source (`npm run desktop:build` or
+`pnpm --filter @kernext/desktop run build`); macOS and Linux bundles must be
+built on their own operating system. See `docs/RELEASING.md` and
+`docs/DESKTOP.md`.
+
+### The downloaded installer is blocked or flagged as unsafe
+
+Release installers are unsigned unless the maintainers configured signing
+secrets. Windows SmartScreen and macOS Gatekeeper warn on unsigned apps:
+on macOS use Control-click → Open, or allow the app in
+System Settings → Privacy & Security. Verify the download against its
+`.sha256` file first — see `docs/RELEASING.md`.
+
 ### npm says "Missing script: tauri"
 
 The front-end workspace is npm-based. Run the desktop app through the package
@@ -46,8 +64,10 @@ root, or `npm run dev` / `npm run build` from `apps/desktop`. Tauri is a
 `npm ci` requires the committed `package-lock.json` and a Node.js version that
 satisfies the `engines` field in `package.json` (Node.js 22+ and npm 10+).
 Check yours with `kernext doctor`, then install a supported Node.js release
-from <https://nodejs.org>. The lockfile is npm's; a pnpm/yarn/bun lockfile will
-not install it.
+from <https://nodejs.org>. pnpm 12+ is supported too: run
+`pnpm install --frozen-lockfile` against the committed `pnpm-lock.yaml`. Keep
+the two lockfiles in sync when dependencies change; do not add a yarn or bun
+lockfile.
 
 ## Running the shell
 

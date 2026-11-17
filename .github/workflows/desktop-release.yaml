@@ -1,0 +1,305 @@
+name: Desktop Release
+
+# Builds the KERNEXT desktop application for every supported platform,
+# verifies the workspace, and publishes a GitHub Release with the installers
+# and their SHA-256 checksums.
+#
+# Triggers
+#   - pushing a version tag such as `v0.1.0`
+#   - manual dispatch against an existing tag
+#
+# Package manager: pnpm. The repository also supports npm for local work
+# (`package-lock.json`); this workflow uses pnpm exclusively
+# (`pnpm-lock.yaml`, `--frozen-lockfile`). See docs/RELEASING.md.
+#
+# Signing is optional. Without the signing secrets the bundles are produced
+# unsigned, which is a working build that the operating system may warn about
+# on first launch. No secret is required to build.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and publish (for example v0.1.0)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  PNPM_VERSION: '12.18.0'
+
+jobs:
+  verify:
+    name: Verify workspace
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux system dependencies
+        # `cargo test --workspace` compiles the Tauri desktop crate on Linux.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libdbus-1-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Cache cargo target
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/cargo-target
+          key: ${{ runner.os }}-desktop-release-verify-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-desktop-release-verify-
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check the release tag matches the workspace version
+        run: node scripts/check-release-version.mjs "${{ github.event.inputs.tag || github.ref_name }}"
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+
+      - name: Rust tests
+        run: cargo test --workspace
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+
+      - name: Web typecheck
+        run: pnpm run typecheck
+
+      - name: Web tests
+        run: pnpm test
+
+      - name: Web build
+        run: pnpm run build
+
+  desktop:
+    name: Desktop ${{ matrix.name }}
+    needs: verify
+    strategy:
+      # Every platform runs even when one fails, so the log names the real
+      # cause; the release job still requires all of them to succeed.
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-latest
+            platform: windows
+            arch: x64
+            bundles: msi,nsis
+            target: ''
+          - name: Linux x64
+            os: ubuntu-22.04
+            platform: linux
+            arch: x64
+            bundles: appimage,deb
+            target: ''
+          - name: macOS Apple Silicon
+            os: macos-latest
+            platform: macos
+            arch: arm64
+            bundles: dmg
+            target: aarch64-apple-darwin
+          - name: macOS Intel
+            os: macos-15-intel
+            platform: macos
+            arch: x64
+            bundles: dmg
+            target: x86_64-apple-darwin
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libgtk-3-dev \
+            libdbus-1-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Install Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Cache cargo target
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/cargo-target
+          key: ${{ runner.os }}-desktop-release-${{ matrix.arch }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-desktop-release-${{ matrix.arch }}-
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build desktop bundles
+        shell: bash
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/cargo-target
+          # `tauri.conf.json` resolves its front-end hook through this helper,
+          # which selects pnpm here instead of the npm default.
+          KERNEXT_PACKAGE_MANAGER: pnpm
+        run: |
+          set -euo pipefail
+          ARGS=(--bundles "${{ matrix.bundles }}")
+          if [ -n "${{ matrix.target }}" ]; then
+            ARGS+=(--target "${{ matrix.target }}")
+          fi
+          pnpm --filter @kernext/desktop run build -- "${ARGS[@]}"
+
+      - name: Collect installers and checksums
+        run: |
+          node scripts/collect-bundles.mjs \
+            --target "${{ runner.temp }}/cargo-target" \
+            --out "${{ runner.temp }}/desktop-dist" \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ matrix.arch }}"
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/desktop-dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: desktop
+    # Runs for a version tag push or a manual dispatch. A failed platform build
+    # fails `desktop`, which skips this job: no partial release is published.
+    if: ${{ startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download installers
+        uses: actions/download-artifact@v7
+        with:
+          path: release
+          pattern: desktop-*
+          merge-multiple: true
+
+      - name: Verify checksums and list assets
+        run: |
+          set -euo pipefail
+          cd release
+          if ! compgen -G 'kernext-desktop-*' > /dev/null; then
+            echo "::error::No desktop installers were downloaded."
+            exit 1
+          fi
+          echo "Artifacts to publish:"
+          ls -l kernext-desktop-* | grep -v '\.sha256$' || true
+          for file in $(ls kernext-desktop-* | grep -v '\.sha256$'); do
+            sha256sum -c "${file}.sha256"
+          done
+
+      - name: Write release notes
+        env:
+          VERSION: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          cat > release-notes.md <<EOF
+          KERNEXT desktop installers for ${VERSION}.
+
+          ## Downloads
+
+          | Platform | Architecture | Format |
+          | --- | --- | --- |
+          | Windows | x64 | \`.msi\` (MSI) and \`-setup.exe\` (NSIS) |
+          | Linux | x64 | \`.AppImage\` and \`.deb\` |
+          | macOS | Apple Silicon (arm64) | \`.dmg\` |
+          | macOS | Intel (x64) | \`.dmg\` |
+
+          Every installer has a matching \`.sha256\` file.
+
+          ## Verify a download
+
+          \`\`\`sh
+          sha256sum -c kernext-desktop-linux-x64.AppImage.sha256
+          \`\`\`
+
+          \`\`\`powershell
+          Get-FileHash .\kernext-desktop-windows-x64-setup.exe -Algorithm SHA256
+          \`\`\`
+
+          ## Install
+
+          - **Windows**: run the \`.msi\` or the \`-setup.exe\`.
+          - **Linux AppImage**: \`chmod +x kernext-desktop-linux-x64.AppImage\` then run it.
+          - **Linux .deb**: \`sudo apt install ./kernext-desktop-linux-x64.deb\`.
+          - **macOS**: open the \`.dmg\` and drag KERNEXT to Applications.
+
+          ## Signing
+
+          These builds are unsigned unless the release was produced with the
+          optional signing secrets configured. Unsigned builds may trigger a
+          SmartScreen, Gatekeeper, or package-manager warning on first launch.
+          See \`docs/RELEASING.md\` for how to enable signing.
+          EOF
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          gh release create "$TAG" release/kernext-desktop-* \
+            --title "KERNEXT ${TAG}" \
+            --notes-file release-notes.md \
+            --latest

@@ -243,6 +243,42 @@ must keep using `lex_spanned` + `parse`.
   `main.tsx`: production respects the OS Reduced Motion preference, while
   development keeps animations visible without the console warning (see
   motion.dev/troubleshooting/reduced-motion-disabled). Do not remove this.
+- Browser `Origin` headers are checked against `ALLOWED_ORIGINS` in
+  `apps/shell-server/src/auth.rs` (5173, 4173, 7878, and the Tauri origins). A
+  page served from any other origin gets a 401 on `/api` and on the terminal
+  WebSocket — set `KERNEXT_ALLOWED_ORIGINS` (comma-separated) instead of
+  debugging a phantom failure.
+
+## Web front end, design system, and the 3D hero
+
+- The site-wide visual system is `apps/web/src/art-direction.css`, layered over
+  the Tailwind theme in `apps/web/src/styles.css` (plus
+  `apps/web/src/lib/design-tokens.css`). Change palette and type scale there,
+  not per component.
+- Fonts are **self-hosted** woff2 files in `apps/web/public/fonts/` because the
+  server's CSP is `font-src 'self' data:` (`apps/shell-server/src/routes.rs`).
+  Never load a remote font (Google Fonts, a CDN). `--font-display` is Space
+  Grotesk → Manrope, `--font-sans` is Inter, `--font-mono` is IBM Plex Mono; a
+  new face needs both the file and an `@font-face` block.
+- The homepage hero is a real Three.js scene in
+  `apps/web/src/components/site/orbital-hero.tsx`, lazy-loaded with
+  `React.lazy`/`Suspense`. `CoreSceneFallback` in
+  `apps/web/src/components/site/core-fallback.tsx` is deliberately
+  dependency-free and is reused by the Suspense fallback, the R3F `Canvas
+  fallback`, and the error boundary — keep it that way so the fallback never
+  pulls in the 3D chunk.
+- The hero imports `three`, `@react-three/fiber`, and `gsap`. They are declared
+  in the **root** `package.json`, not `apps/web/package.json`, and resolve by
+  npm workspace hoisting; do not move or delete them without rebuilding.
+  `@react-three/drei` is declared and pre-bundled but not imported by any source
+  file.
+- Keep the render gating: `frameloop` is `'always'` only when `!reducedMotion &&
+  inView && pageVisible`, and the scene honours `usePrefersReducedMotion`
+  (`apps/web/src/hooks/use-prefers-reduced-motion.ts`).
+- Keep the Vite workarounds in `apps/web/vite.config.ts`: `optimizeDeps.include`
+  plus `force: true`, `server.forwardConsole: false`, `rollupOptions.input =
+  ./src/main.tsx`, and `build.sourcemap: false`. They work around Vite 8 /
+  rolldown behaviour and are not incidental.
 
 ## Canonical checkout and duplicate-copy hazard
 
@@ -311,6 +347,37 @@ used by `cargo metadata --no-deps`.
 - Desktop commands execute through the local Rust runtime only — never the
   public web server, never a JavaScript simulation of the shell.
 
+## Desktop distribution and release scripts
+
+- `scripts/build-web.mjs` is the Tauri `beforeBuildCommand`. It runs the web
+  production build with the selected package manager. Keep it
+  package-manager-neutral and keep `tauri.conf.json` pointing at it.
+- `scripts/collect-bundles.mjs` finds installers under the Cargo target's Tauri
+  `bundle` directory, renames them to the canonical release names, writes a
+  sha256sum-compatible `.sha256` per file, and exits non-zero when a platform
+  produced none. Canonical names are
+  `kernext-desktop-{windows-x64.msi,windows-x64-setup.exe,linux-x64.AppImage,linux-x64.deb,macos-arm64.dmg,macos-x64.dmg}`.
+  Keep the naming and the workflow matrix in sync; do not invent a second
+  naming scheme.
+- `scripts/check-release-version.mjs` requires the release tag to equal the
+  version in `Cargo.toml` `[workspace.package]`, `tauri.conf.json`, and the
+  three `package.json` files. Do not remove this guard; it is what prevents
+  installers whose embedded version disagrees with the release tag.
+- `apps/shell-server/src/releases.rs` backs `GET /api/v1/releases/latest`. It
+  caches for 600 s, serves the last good payload during an outage, and returns
+  `200` with `available: false` plus a reason instead of an error. Asset
+  classification lives here, not in the front end. Env: `KERNEXT_REPOSITORY`
+  (default `Trishit6/terminal`), `KERNEXT_GITHUB_TOKEN` (optional, never
+  logged), `KERNEXT_RELEASES_DISABLED=1`.
+- `apps/web/src/routes/downloads.tsx` renders only assets the endpoint reports.
+  Never fabricate a download URL, never render a button for a file that does not
+  exist, and keep the loading, error, and no-release states. The same-origin
+  endpoint is used deliberately because the server CSP is
+  `connect-src 'self' ws: wss:`.
+- Builds are unsigned by default and must stay buildable without any secret.
+  Do not pass empty signing secrets into the Tauri build; document signing
+  changes in `docs/RELEASING.md` instead.
+
 ## Commands
 
 Run from the workspace root of the buildable checkout.
@@ -350,8 +417,8 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo run -p shell-cli
 ```
 
-Front end and desktop (npm workspaces, Node.js 22+, npm 10+; lockfile is
-`package-lock.json`):
+Front end and desktop (npm and pnpm workspaces, Node.js 22+, npm 10+ or pnpm
+12+; both `package-lock.json` and `pnpm-lock.yaml` are tracked):
 
 ```bash
 npm ci                     # install apps/web and apps/desktop from the lockfile
@@ -372,10 +439,35 @@ server; the dev server proxies `/api` and WebSocket upgrades to
 `apps/web/dist` (`router_with_static`), with SPA fallback to `index.html`.
 
 The root `desktop:*` scripts delegate to the `dev`/`build` scripts inside
-`apps/desktop/package.json`. npm workspaces are declared in the root
-`package.json`; never reintroduce `pnpm`, `yarn`, or `bun`, and never add a
-second lockfile. Tauri's build hooks run `npm --prefix ../web run …`, which is
-why the web scripts also exist in `apps/desktop/package.json`.
+`apps/desktop/package.json`. Workspaces are declared in both the root
+`package.json` and `pnpm-workspace.yaml`.
+
+**Both package managers are supported and both lockfiles are authoritative.**
+`package-lock.json` drives `npm ci` and `.github/workflows/ci.yml`;
+`pnpm-lock.yaml` drives `pnpm install --frozen-lockfile` and
+`.github/workflows/desktop-release.yaml`. When a dependency changes, update
+both lockfiles (`npm install` and `pnpm install`) and commit them together. Do
+not delete either lockfile, and do not introduce `yarn` or `bun`.
+
+The Tauri build hook is package-manager-neutral:
+`tauri.conf.json` `beforeBuildCommand` is
+`node ../../scripts/build-web.mjs`, which selects the manager from
+`KERNEXT_PACKAGE_MANAGER`, else pnpm (when `pnpm-lock.yaml` exists and pnpm
+runs), else npm. `beforeDevCommand` stays `npm --prefix ../web run dev` because
+npm ships with Node. Do not hardcode a single package manager back into
+`tauri.conf.json`. `apps/desktop/package.json` keeps its `web:dev`/`web:build`
+npm scripts for the same reason.
+
+`npm run build` runs `tsc --noEmit && vite build && node scripts/build-index.mjs
+&& node scripts/seo.mjs`; the last two regenerate `dist/index.html` and the SEO
+files. `apps/web/dist` is **tracked in Git** — never hand-edit it, run the
+build. `apps/web/package.json`'s dev script forces `--port 5173` even though
+`vite.config.ts` says 5175 (the CLI flag wins); `preview` serves the built
+bundle on 4173 and also proxies `/api` to 7878.
+
+`scripts/e2e-browser.mjs` (CDP headless-Chrome terminal acceptance) and
+`scripts/e2e-terminal.mjs` (engine + PTY acceptance against the real backend)
+are run manually; they are not part of `npm test`.
 
 Focused tests:
 
@@ -397,13 +489,27 @@ particular program. `external_tools.rs` checks common developer tools
 (`git`, `cargo`, `rustc`, `node`, `npm`, `python`, `curl`, `code`,
 `opencode`) through the full engine and skips any that are not installed.
 
-CI lives in `.github/workflows/ci.yml` (fmt, clippy, web job, test matrix
-across Windows x64, Linux x64, macOS Apple Silicon + Intel, and a desktop
-bundling matrix). Releases live in `.github/workflows/release.yaml`
-(`workflow_dispatch` only, draft-only; CLI archives + desktop bundles +
-SHA-256 checksums per artifact). Do not trigger the release workflow without
-explicit authorization, and do not claim a workflow passed unless its run
-completed.
+CI lives in `.github/workflows/ci.yml` (jobs: `lint`, `web`, `auth-db`, `test`
+across Windows x64, Linux x64, macOS Apple Silicon + Intel, and `desktop`). The
+Linux legs install WebKitGTK/GTK/appindicator/librsvg/dbus dev packages before
+building the Tauri crate — that is why `--workspace` works there.
+
+Two release workflows exist and both must keep working:
+
+- `.github/workflows/desktop-release.yaml` is the public path. A `v*` tag push
+  (or a manual dispatch with a tag) runs `verify` → a four-leg `desktop` matrix
+  (Windows `msi,nsis`; Linux `appimage,deb`; macOS `dmg` for arm64 and x64) →
+  `release`, which publishes a non-draft GitHub Release marked Latest with the
+  installers and their checksums. It uses pnpm exclusively and sets
+  `KERNEXT_PACKAGE_MANAGER=pnpm`. No step may use `continue-on-error`, and a
+  failed platform leg must keep failing `desktop` so no partial release is
+  published.
+- `.github/workflows/release.yaml` is `workflow_dispatch` only, draft-only, and
+  builds CLI archives plus desktop bundles with SHA-256 checksums per artifact.
+
+Do not trigger either workflow without explicit authorization, and do not claim
+a workflow passed unless its run completed. The maintainer runbook is
+`docs/RELEASING.md`.
 
 The interactive shell requires a real TTY. Piping input directly into
 `cargo run` is rejected because KERNEXT is interactive. Use a terminal, or
@@ -608,13 +714,13 @@ The interactive shell requires a real TTY. Piping input directly into
 - Startup tests live in `apps/shell-cli/src/startup.rs`; clear/Ctrl+L tests live
   in `apps/shell-cli/tests/repl.rs` and
   `crates/shell-line-editor/src/editor.rs`.
-- The full suite currently has 469 tests on Windows (467 unit/integration plus
-  2 `shell-core` doc-tests), including 20 in
-  `crates/shell-builtins/tests/windows_scripts.rs`, 2 in `external_tools.rs`,
-  16 in `shell-desktop`, and 17 in `shell-server` (unit, `api`, `consistency`,
-  and `ws` integration suites). Unix runs
-  signal/abort tests instead of the Windows launcher and ConPTY suites; do not
-  weaken or delete tests to make a build pass.
+- Run `cargo test --workspace` for the current total; do not hardcode the count
+  in docs. Suites to know: `crates/shell-builtins/tests/windows_scripts.rs`
+  (Windows launcher), `external.rs`/`external_tools.rs`, `pipeline.rs`,
+  `builtins.rs`; `shell-server` unit plus `api`/`consistency`/`ws` integration
+  tests; and `shell-desktop`. Unix runs signal/abort tests instead of the
+  Windows launcher and ConPTY suites; never weaken or delete a test to make a
+  build pass.
 
 ## Git and uncommitted work
 
@@ -631,10 +737,15 @@ repo.
 
 Keep `README.md`, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`,
 `RELEASE_NOTES.md`, `docs/BRANDING.md`, `docs/ARCHITECTURE.md`,
-`docs/COMMANDS.md`, `docs/DESKTOP.md`, `docs/SECURITY.md`,
-`docs/DEPLOYMENT.md`, `docs/TROUBLESHOOTING.md`, and
-`docs/PROJECT_STATUS.md` in sync with behavior. Trust the source and tests if
-docs disagree. Web and Desktop are implemented surfaces now; describe their
+`docs/COMMANDS.md`, `docs/DESKTOP.md`, `docs/RELEASING.md`, `docs/SECURITY.md`,
+`docs/DEPLOYMENT.md`, `docs/TROUBLESHOOTING.md`,
+`docs/AUTHENTICATION.md`, `docs/BACKEND_ARCHITECTURE.md`, `docs/DATABASE.md`,
+and `docs/PROJECT_STATUS.md` in sync with behavior. Trust the source and tests
+if docs disagree. Web and Desktop are implemented surfaces now; describe their
 actual behavior and their verification state rather than calling them future
 plans. The built-in count in prose must always match
 `crates/shell-builtins/src/registry.rs` (`DEFAULT_BUILTINS`).
+
+`AGENTS.md` is the authoritative instruction file. `CLAUDE.md`, `knowledge.md`,
+and `.github/copilot-instructions.md` overlap it and may lag behind; reconcile
+them when you change behavior.

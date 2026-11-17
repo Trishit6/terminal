@@ -117,8 +117,8 @@ shell-desktop ─> shell-server (engine sessions) + shell-cli (embedded worker)
 6. **`$?`** updated after every command/pipeline/assignment: 0 success, external exit code, 1 built-in failure, 2 syntax/lex errors, 128+signal for signal termination
 7. **Background `&`** spawns real detached work tracked by job table (`crates/shell-runtime/src/jobs.rs`); job IDs are shell numbers, never OS PIDs
 8. **Desktop executes locally** — commands run through local Tauri Rust runtime only; never public web server, never JS simulation. `apps/desktop/src-tauri/build.rs` must keep shadowing MinGW `default-manifest.o` on `*-pc-windows-gnu`; removing it causes `STATUS_ENTRYPOINT_NOT_FOUND` at startup
-9. **Front end uses npm** — workspaces in root `package.json`; lockfile `package-lock.json`; CI runs `npm ci`; never pnpm/yarn/bun and never second lockfile
-10. **Root desktop scripts delegate** — `desktop:dev`/`desktop:build` call `dev`/`build` in `apps/desktop/package.json` with `npm run … -w @kernext/desktop`; Tauri hooks use `npm --prefix ../web run …`
+9. **Front end supports npm and pnpm** — workspaces in root `package.json` and `pnpm-workspace.yaml`; both `package-lock.json` and `pnpm-lock.yaml` are tracked and authoritative; `ci.yml` runs `npm ci`, `desktop-release.yaml` runs `pnpm install --frozen-lockfile`; never yarn/bun, never delete a lockfile
+10. **Root desktop scripts delegate** — `desktop:dev`/`desktop:build` call `dev`/`build` in `apps/desktop/package.json` with `npm run … -w @kernext/desktop`; the Tauri build hook is the package-manager-neutral `node ../../scripts/build-web.mjs` (dev hook stays `npm --prefix ../web run dev`)
 11. **`kernext` project commands wrap Cargo** (`apps/shell-cli/src/dev.rs`); they never build shell command strings and always propagate child exit code
 
 ## Git Discipline
@@ -131,7 +131,7 @@ Canonical checkout: `D:\projects\React-Ts\terminal` (Windows). A second checkout
 
 `README.md`, `AGENTS.md`, `RELEASE_NOTES.md`, `CONTRIBUTING.md`,
 `docs/BRANDING.md`, `docs/ARCHITECTURE.md`, `docs/COMMANDS.md`,
-`docs/DESKTOP.md`, `docs/DEPLOYMENT.md`, `docs/TROUBLESHOOTING.md`,
+`docs/DESKTOP.md`, `docs/RELEASING.md`, `docs/DEPLOYMENT.md`, `docs/TROUBLESHOOTING.md`,
 `docs/SECURITY.md`, and `docs/PROJECT_STATUS.md` should stay consistent with behavior. Trust source and tests over docs when they disagree.
 
 ## Not Yet Implemented

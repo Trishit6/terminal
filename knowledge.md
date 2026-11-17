@@ -84,7 +84,7 @@ Interactive shell needs a real TTY; piping stdin is rejected. Use a terminal, `s
 - Keep Rust `tauri` crate and npm `@tauri-apps/api` on the same major/minor. `tauri.conf.json` `frontendDist` is `../../web/dist`.
 
 ### Front end conventions
-- npm workspaces only (`package-lock.json`); never pnpm, yarn, bun, or a second lockfile. Root scripts: `npm run dev`, `npm run build`, `npm test`, `npm run typecheck`.
+- npm and pnpm are both supported; both `package-lock.json` and `pnpm-lock.yaml` are tracked and authoritative. Update both when dependencies change; never yarn, bun, or a single-lockfile-only change. Root scripts: `npm run dev`, `npm run build`, `npm test`, `npm run typecheck` (pnpm runs the same scripts).
 - Design tokens/base styles: `apps/web/src/styles.css`; art direction and layout: `apps/web/src/art-direction.css`. `DESIGN.md` and `PRODUCT.md` hold the design brief.
 - Home hero 3D scene: `apps/web/src/components/site/orbital-hero.tsx` (React Three Fiber + Three.js). Keep the live scene; the WebGL fallback is only for missing/broken WebGL.
 - Backend-free visual fixtures: `/terminal/render-test` (DOM terminal) and `/orbital/render-test` (homepage core, motion frozen with size/backdrop controls). Check the emblem, exactly three orbits, and metal shading there before changing the hero.

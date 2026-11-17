@@ -1,8 +1,10 @@
 # KERNEXT Project Status
 
-Status snapshot after the Phase 15 visual redesign, which builds on
-Phase 14 (responsive hardening) and Phase 13 (responsive Web Terminal and site
-layouts). The CLI, Web, and Desktop
+Status snapshot after the Phase 19 desktop-distribution work, which builds on
+Phase 18 (typography, core scene, navigation systems), Phase 17 (premium
+redesign), Phase 16 (Three.js hero), Phase 15 (visual redesign), Phase 14
+(responsive hardening), and Phase 13 (responsive Web Terminal and site layouts).
+The CLI, Web, and Desktop
 surfaces share one Rust engine. MariaDB-backed accounts,
 authentication, and per-account web-terminal ownership are implemented. This
 document separates what is **implemented**, **tested**, **partially tested**,
@@ -327,8 +329,85 @@ Node.js + npm. MariaDB is available on `127.0.0.1:3307`.
   column, sidebar column, and `.docs-nav` now set `min-width: 0`, so code blocks
   and the chip row scroll inside their own containers.
 
+### Desktop distribution and release automation (Phase 19)
+
+- **Tag-triggered release workflow**
+  (`.github/workflows/desktop-release.yaml`): pushing a `v*` tag (or a manual
+  `workflow_dispatch` with a tag) runs a `verify` job, then a four-leg
+  `desktop` matrix (`fail-fast: false`), then a `release` job that publishes a
+  GitHub Release marked Latest. `verify` installs the Linux desktop build
+  dependencies, Rust with `clippy`/`rustfmt`, pnpm, and Node, installs the front
+  end with `pnpm install --frozen-lockfile`, and runs `cargo fmt --check`,
+  `cargo clippy --workspace --all-targets -- -D warnings`,
+  `cargo test --workspace`, and the web typecheck, tests, and production build.
+  No step uses `continue-on-error`; a failed platform leg fails `desktop`, which
+  skips `release`, so no partial release is published.
+- **Platforms and formats:** Windows x64 (`msi,nsis`), Linux x64
+  (`appimage,deb` on `ubuntu-22.04`), macOS Apple Silicon (`dmg`,
+  `aarch64-apple-darwin`), and macOS Intel (`dmg`, `x86_64-apple-darwin`).
+- **Canonical installer names and checksums**
+  (`scripts/collect-bundles.mjs`): `kernext-desktop-windows-x64.msi`,
+  `kernext-desktop-windows-x64-setup.exe`, `kernext-desktop-linux-x64.AppImage`,
+  `kernext-desktop-linux-x64.deb`, `kernext-desktop-macos-arm64.dmg`, and
+  `kernext-desktop-macos-x64.dmg`, each with a sha256sum-compatible `.sha256`
+  file. The script fails when a platform produced no installer, and the
+  `release` job re-verifies every checksum before publishing.
+- **Version guard** (`scripts/check-release-version.mjs`): the tag must match
+  `Cargo.toml` `[workspace.package] version`, `tauri.conf.json` `version`, and
+  the three `package.json` versions. It exits `1` with the mismatching files and
+  `2` when called without a tag, and runs in the `verify` job so a mistyped tag
+  cannot publish installers whose embedded version disagrees with the release.
+- **Package-manager-neutral desktop build**: `tauri.conf.json`
+  `beforeBuildCommand` now runs `node ../../scripts/build-web.mjs`, which picks
+  the manager from `KERNEXT_PACKAGE_MANAGER`, else pnpm (when `pnpm-lock.yaml`
+  exists and pnpm runs), else npm. The workflow sets the variable to pnpm; local
+  npm builds still work. Both `package-lock.json` and `pnpm-lock.yaml` remain
+  tracked and valid.
+- **Live downloads page**: `GET /api/v1/releases/latest`
+  (`apps/shell-server/src/releases.rs`) reads the latest GitHub release, caches
+  it for 600 s, serves the last good payload during an outage, and returns
+  `200` with `available: false` and a reason rather than an error when it cannot
+  read one. Assets are classified server-side (`desktop`/`cli`/`other`, with
+  platform, arch, and format, and a link to the matching `.sha256`). The
+  `apps/web` downloads route renders only assets that exist, distinguishes the
+  latest stable release from development builds and unsupported targets, and
+  has loading, error, and no-release states. It never fabricates a download URL.
+  Configuration: `KERNEXT_REPOSITORY` (default `Trishit6/terminal`),
+  `KERNEXT_GITHUB_TOKEN` (optional rate-limit raise, never logged), and
+  `KERNEXT_RELEASES_DISABLED=1` for offline work.
+- **Documentation**: `docs/RELEASING.md` is the maintainer runbook (version
+  bumping, tagging, verification, signing); `docs/DESKTOP.md` documents the
+  installer names and both package managers.
+- **Unsigned builds by default.** The workflow ships unsigned installers, which
+  run normally; Windows SmartScreen and macOS Gatekeeper may warn on first
+  launch. Enabling signing requires the corresponding secrets and is documented
+  in `docs/RELEASING.md`; no signing secret is stored in the repository.
+
 ## Tested
 
+- **Phase 19 Rust gates (Windows 11, Rust 1.100 toolchain):**
+  `cargo fmt --all -- --check` — clean; `cargo clippy --workspace --all-targets
+  -- -D warnings` — clean; `cargo test --workspace` — **535 passed, 0 failed**,
+  including the 6 new `releases::tests` cases (installer classification,
+  checksum linking, CLI-vs-desktop kind, unknown-file handling, and unavailable
+  payloads). One pre-existing `clippy::needless_bool` lint in
+  `crates/shell-runtime/src/history.rs` was fixed with a behavior-preserving
+  simplification so the documented workspace clippy gate passes on the current
+  toolchain.
+- **Phase 19 web checks:** `npm run typecheck` — ok; `npm test` (Vitest) —
+  **72 passed in 10 files**, including 11 new tests for the release-matching
+  helpers in `apps/web/src/lib/releases.test.ts`; `npm run build` — ok
+  (`tsc --noEmit`, `vite build`, index build, and SEO generation; `[seo] wrote
+  routes.json (30 routes)`).
+- **Phase 19 script checks:** `node scripts/build-web.mjs` exits 0 and selects
+  pnpm when `pnpm-lock.yaml` is present; `node scripts/collect-bundles.mjs`
+  was exercised against a synthetic bundle tree for Windows, Linux, and macOS
+  and renamed only installer files (raw binaries excluded); `node
+  scripts/check-release-version.mjs v0.1.0` exits 0, `v9.9.9` exits 1 and names
+  all five mismatching manifests, and no argument exits 2.
+- **Phase 19 lockfile check:** `pnpm install --frozen-lockfile` (pnpm 12.18.0,
+  `lockfileVersion: '9.0'`) reports "Lockfile is up to date", so the release
+  workflow's install step works from the committed lockfile.
 - `cargo fmt --all -- --check` — clean.
 - `cargo check --workspace --all-targets` — clean.
 - `cargo test --workspace` — 470 workspace tests passed before Phase 11
@@ -592,6 +671,18 @@ Node.js + npm. MariaDB is available on `127.0.0.1:3307`.
   not re-tested because no account database was configured in this run.
 - **Hosted CI.** The workflow now includes a MariaDB service container and the
   `auth_db` job, but a hosted run after this change has not been observed.
+- **Desktop release workflow.** `desktop-release.yaml` has been validated
+  locally (YAML parses, `pnpm install --frozen-lockfile` succeeds, the version
+  guard and bundle collector were exercised, and every Rust/web gate it runs
+  passes on Windows), but it has **not** been executed on GitHub Actions. No
+  tag has been pushed, no installer has been produced by a hosted runner, and
+  no GitHub Release has been published from it. Windows bundles are verified
+  locally; Linux and macOS bundles are unverified because no such host is
+  available here.
+- **Downloads page data.** The endpoint, classification, and matching helpers
+  are unit-tested, and the page renders loading/error/no-release states, but the
+  page has not been viewed in a browser against a repository that has a
+  published release (none exists yet).
 - **macOS and Linux GUI.** No macOS host and no mounted Linux checkout were
   used for this verification.
 - **Installer installation.** Bundles were built in earlier phases; installing
@@ -633,6 +724,17 @@ npm test
 npm run build
 ```
 
+Release tooling (no secrets required):
+
+```sh
+pnpm install --frozen-lockfile
+node scripts/build-web.mjs
+node scripts/check-release-version.mjs v0.1.0
+node scripts/collect-bundles.mjs --help
+```
+
+The full release procedure is in [`RELEASING.md`](RELEASING.md).
+
 MariaDB account integration (disposable database; the harness refuses a
 `DATABASE_URL` fallback unless its database name contains `test`):
 
@@ -656,3 +758,9 @@ curl -s http://127.0.0.1:7878/api/auth/status
   `SMTP_PASSWORD`, `SMTP_FROM`) for real verification/reset email.
 - A production `APP_PUBLIC_URL` and `KERNEXT_ALLOWED_ORIGINS` for deployment.
 - A disposable test database or CI service container (CI provides one).
+- Push a version tag (`v0.1.0`) to run the desktop release workflow for the
+  first time and publish the installers. Optionally add the signing secrets
+  described in `docs/RELEASING.md`; unsigned installers are the default and
+  work without them.
+- Optionally set `KERNEXT_GITHUB_TOKEN` on the deployed server to raise the
+  GitHub API rate limit for `/api/v1/releases/latest`.

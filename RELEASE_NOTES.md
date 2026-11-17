@@ -76,6 +76,25 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
   release workflow builds MSVC artifacts on GitHub runners and the GNU build
   is verified on the development host.
 
+### Desktop distribution
+- `.github/workflows/desktop-release.yaml` publishes desktop installers for
+  Windows x64 (`kernext-desktop-windows-x64.msi`,
+  `kernext-desktop-windows-x64-setup.exe`), Linux x64
+  (`kernext-desktop-linux-x64.AppImage`, `kernext-desktop-linux-x64.deb`), and
+  macOS (`kernext-desktop-macos-arm64.dmg`, `kernext-desktop-macos-x64.dmg`).
+  It runs on a `v*` tag push or manual dispatch, verifies the workspace first,
+  and attaches a `.sha256` checksum to every installer.
+- A release tag must match the workspace `Cargo.toml`, `tauri.conf.json`, and
+  `package.json` versions; `scripts/check-release-version.mjs` enforces this
+  before anything is built.
+- Installers are unsigned by default and run without any secret. Windows
+  SmartScreen and macOS Gatekeeper may warn on first launch; see
+  `docs/RELEASING.md` for the optional signing setup.
+- The website's downloads page reads the real release metadata from
+  `GET /api/v1/releases/latest` and only shows files that exist.
+- npm and pnpm are both supported; `package-lock.json` and `pnpm-lock.yaml` are
+  both tracked and authoritative.
+
 ### Security
 - No command injection through a shell wrapper.
 - No `eval` or dynamic code execution.
@@ -110,8 +129,9 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
 - No flag/option completion.
 - Grouped expressions are not supported as pipeline stages.
 - Release workflows are configured for every platform but have not yet been
-  executed on GitHub; they produce draft releases only and never publish on
-  their own.
+  executed on GitHub. `desktop-release.yaml` publishes a real release for a
+  version tag; `release.yaml` is manual and draft-only. No hosted run has been
+  observed, and no installer has been produced by a hosted runner yet.
 
 ---
 
@@ -144,8 +164,11 @@ OPEN • POWERFUL • INDEPENDENT — Build. Execute. Innovate.
   public web server, never a JavaScript shell simulation.
 - Windows release bundles (MSI and NSIS installers) build successfully through
   `npm run desktop:build`; the release binary passes a launch smoke test.
-- Verified on Windows; interactive Linux/macOS verification and macOS
-  bundling remain open. See `docs/PROJECT_STATUS.md`.
+- Desktop installers for Windows, Linux, and macOS are built and published by
+  `.github/workflows/desktop-release.yaml`; see `docs/RELEASING.md`.
+- Verified on Windows; interactive Linux/macOS verification, a first hosted
+  release run, and macOS bundle verification remain open. See
+  `docs/PROJECT_STATUS.md`.
 
 ### Product integration (Phase 6)
 - **New built-ins**: `host` (system-resolver DNS lookup) and `sysinfo`

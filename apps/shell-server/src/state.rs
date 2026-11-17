@@ -2,6 +2,7 @@
 
 use crate::db::{AuthConfig, Database, Mailer, RateLimiter};
 use crate::error::ApiError;
+use crate::releases::ReleaseFeed;
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use shell_api::{
@@ -504,6 +505,7 @@ pub struct AppState {
     pty_sessions: Arc<Mutex<HashMap<u64, Arc<PtySessionEntry>>>>,
     next_pty_id: Arc<AtomicUsize>,
     ws_connections: Arc<AtomicUsize>,
+    releases: Arc<ReleaseFeed>,
 }
 
 impl AppState {
@@ -534,6 +536,7 @@ impl AppState {
             pty_sessions: Arc::new(Mutex::new(HashMap::new())),
             next_pty_id: Arc::new(AtomicUsize::new(1)),
             ws_connections: Arc::new(AtomicUsize::new(0)),
+            releases: Arc::new(ReleaseFeed::from_env()),
         }
     }
 
@@ -562,6 +565,12 @@ impl AppState {
         self.token.as_deref()
     }
 
+    /// Cached GitHub release metadata backing the public downloads page.
+    #[must_use]
+    pub fn releases(&self) -> Arc<ReleaseFeed> {
+        Arc::clone(&self.releases)
+    }
+
     /// Builds a local-only state with no authentication token.
     ///
     /// The desktop application embeds the session registry directly and never
@@ -578,6 +587,7 @@ impl AppState {
             pty_sessions: Arc::new(Mutex::new(HashMap::new())),
             next_pty_id: Arc::new(AtomicUsize::new(1)),
             ws_connections: Arc::new(AtomicUsize::new(0)),
+            releases: Arc::new(ReleaseFeed::from_env()),
         }
     }
 

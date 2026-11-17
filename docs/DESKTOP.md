@@ -9,8 +9,9 @@ simulates the shell in JavaScript.
 ## Prerequisites
 
 - Rust 1.85+ (Rust 2024 edition) with a working platform linker.
-- Node.js 22+ and npm 10+ (npm workspaces are declared in the root
-  `package.json`).
+- Node.js 22+ and either npm 10+ or pnpm 12+. Both lockfiles are tracked
+  (`package-lock.json`, `pnpm-lock.yaml`) and both are supported; workspaces are
+  declared in the root `package.json` and `pnpm-workspace.yaml`.
 - On Windows: the WebView2 runtime (preinstalled on Windows 10/11).
 - On Linux: webkit2gtk and related system libraries; on macOS: Xcode command
   line tools.
@@ -23,6 +24,14 @@ From the repository root:
 npm ci
 npm run desktop:dev      # tauri dev  (vite dev server + debug window)
 npm run desktop:build    # tauri build (production bundle)
+```
+
+The same commands with pnpm:
+
+```sh
+pnpm install --frozen-lockfile
+pnpm --filter @kernext/desktop run dev
+pnpm --filter @kernext/desktop run build
 ```
 
 From `apps/desktop` directly:
@@ -49,8 +58,10 @@ Tauri configuration lives in `apps/desktop/src-tauri/tauri.conf.json`:
 `npm run desktop:build` (equivalently `tauri build` from `apps/desktop`)
 performs, in order:
 
-1. `beforeBuildCommand` — `npm --prefix ../web run build` regenerates
-   `apps/web/dist`. The bundle embeds those assets through
+1. `beforeBuildCommand` — `node ../../scripts/build-web.mjs` regenerates
+   `apps/web/dist`. The helper picks the package manager (`KERNEXT_PACKAGE_MANAGER`,
+   else pnpm when `pnpm-lock.yaml` is present, else npm) so the same Tauri config
+   works under either manager. The bundle embeds those assets through
    `frontendDist`, so a release-mode build always carries the front end it
    was built with.
 2. A release-profile compile of `shell-desktop` (`kernext-desktop`).
@@ -70,11 +81,31 @@ workspace routes target output to an external ext4 directory through
 `.cargo/config.toml`; on the Windows checkout that is
 `D:\home\trishit\.cache\terminal-target\release\bundle`).
 
-The release workflow (`.github/workflows/release.yaml`) builds desktop
-bundles for Windows, Linux, and macOS (both architectures), renames each
-artifact with a platform prefix, and attaches a SHA-256 checksum to every
-file. It only ever creates a **draft** GitHub Release via manual
-`workflow_dispatch`; publishing a release is always a deliberate human step.
+The release workflow
+[`.github/workflows/desktop-release.yaml`](../.github/workflows/desktop-release.yaml)
+builds desktop bundles on Windows x64, Linux x64, macOS Apple Silicon, and
+macOS Intel. It is triggered by a version tag (`v*`) or by manual
+`workflow_dispatch`, verifies the workspace first, and publishes a GitHub
+Release with the installers and a SHA-256 checksum per file. Canonical names are
+produced by [`scripts/collect-bundles.mjs`](../scripts/collect-bundles.mjs):
+
+```text
+kernext-desktop-windows-x64.msi        kernext-desktop-windows-x64-setup.exe
+kernext-desktop-linux-x64.AppImage     kernext-desktop-linux-x64.deb
+kernext-desktop-macos-arm64.dmg        kernext-desktop-macos-x64.dmg
+```
+
+Each has a matching `.sha256` file. Builds are unsigned unless the optional
+signing secrets are configured; unsigned installers are complete and run, and
+the operating system may show a first-launch warning. The full maintainer
+runbook — version bumping, tagging, verification, and signing — is
+[`docs/RELEASING.md`](RELEASING.md).
+
+The older
+[`release.yaml`](../.github/workflows/release.yaml) workflow is
+`workflow_dispatch`-only, builds the CLI archives as well as desktop bundles,
+and only ever creates a **draft** GitHub Release. Use `desktop-release.yaml`
+for a public desktop release.
 
 Rules to keep releases working:
 
@@ -86,6 +117,9 @@ Rules to keep releases working:
 - Desktop commands execute through the local Rust runtime only — the public
   web server is never involved, so a desktop bundle has no server
   dependency.
+- A release tag must match `Cargo.toml`, `tauri.conf.json`, and the three
+  `package.json` versions; `scripts/check-release-version.mjs` enforces this in
+  CI.
 
 ## Architecture
 

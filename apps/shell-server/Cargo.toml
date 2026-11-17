@@ -25,6 +25,7 @@ shell-builtins = { workspace = true }
 shell-config = { workspace = true }
 shell-core = { workspace = true }
 rand = { workspace = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 shell-runtime = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }

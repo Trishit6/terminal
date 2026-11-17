@@ -4,6 +4,7 @@ use crate::auth::{allowed_origins, authorize_request};
 use crate::auth_routes;
 use crate::db::AuthUser;
 use crate::error::ApiError;
+use crate::releases::LatestRelease;
 use crate::spa;
 use crate::state::{AppState, MAX_COMMAND_BYTES, ShellSession};
 use crate::ws;
@@ -44,6 +45,7 @@ pub fn router_with_static(state: AppState, web_dir: Option<PathBuf>) -> Router {
         .merge(crate::admin::router())
         .route("/api/v1/health", get(health))
         .route("/api/v1/health/database", get(health_database))
+        .route("/api/v1/releases/latest", get(latest_release))
         .route("/api/v1/sessions", get(list_sessions).post(create_session))
         .route(
             "/api/v1/sessions/{id}",
@@ -186,6 +188,15 @@ async fn health_database(
         "database": "mariadb",
         "latency_ms": started.elapsed().as_millis() as u64,
     })))
+}
+
+/// Latest published GitHub release for the public downloads page.
+///
+/// Deliberately public: it exposes only metadata GitHub already serves, and the
+/// page must work before a visitor signs in. GitHub failures return `200` with
+/// `available: false` so the page can explain itself instead of erroring.
+async fn latest_release(State(state): State<AppState>) -> Json<LatestRelease> {
+    Json(state.releases().latest().await)
 }
 
 async fn create_session(

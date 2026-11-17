@@ -102,11 +102,7 @@ fn is_sensitive_word(word: &str) -> bool {
     }
 
     // A bare `--password` is followed by its value in the next argument.
-    if had_option_prefix && SENSITIVE_NAMES.contains(&normalized.as_str()) {
-        return true;
-    }
-
-    false
+    had_option_prefix && SENSITIVE_NAMES.contains(&normalized.as_str())
 }
 
 fn split_key_value(word: &str) -> Option<(&str, &str)> {

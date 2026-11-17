@@ -101,9 +101,10 @@ platform-specific code isolated:
 - Rust 1.85 or newer (Rust 2024 edition).
 - A working platform linker (a C toolchain on Linux/macOS, MSVC Build Tools or
   MinGW-w64 on Windows).
-- Node.js 22+ and npm 10+ for the Web front end and Desktop shell
-  (declared in `package.json` under `engines`; npm workspaces live in
-  `apps/web` and `apps/desktop`).
+- Node.js 22+ and either npm 10+ or pnpm 12+ for the Web front end and Desktop
+  shell (declared in `package.json` under `engines`; workspaces live in
+  `apps/web` and `apps/desktop` and both `package-lock.json` and
+  `pnpm-lock.yaml` are tracked).
 - A real terminal for the interactive shell. Piping input into KERNEXT reports
   that standard input is not a terminal.
 
@@ -159,11 +160,37 @@ npm run desktop:dev      # tauri dev: vite + debug desktop window
 npm run desktop:build    # tauri build: production bundle
 ```
 
+pnpm works too: `pnpm install --frozen-lockfile` followed by
+`pnpm --filter @kernext/desktop run dev` or `run build`.
+
 The desktop application embeds the same React front end and executes commands
 through the local Tauri runtime only — it never calls the public web server and
 never simulates the shell in JavaScript. See
 [`docs/DESKTOP.md`](docs/DESKTOP.md) for configuration, architecture, and the
 Windows MinGW manifest handling.
+
+### Desktop downloads
+
+Prebuilt desktop installers are published as GitHub Releases:
+
+| Platform | Installer |
+| --- | --- |
+| Windows x64 | `kernext-desktop-windows-x64.msi`, `kernext-desktop-windows-x64-setup.exe` |
+| Linux x64 | `kernext-desktop-linux-x64.AppImage`, `kernext-desktop-linux-x64.deb` |
+| macOS Apple Silicon | `kernext-desktop-macos-arm64.dmg` |
+| macOS Intel | `kernext-desktop-macos-x64.dmg` |
+
+Every installer ships with a matching `.sha256` checksum. Download the latest
+release from <https://github.com/Trishit6/terminal/releases>, or use the site's
+[downloads page](https://github.com/Trishit6/terminal/blob/main/apps/web/src/routes/downloads.tsx),
+which reads the real release metadata from the server's
+`GET /api/v1/releases/latest` endpoint and never shows a button for a file that
+does not exist.
+
+Builds are unsigned unless the optional signing secrets are configured. An
+unsigned installer still runs; Windows SmartScreen and macOS Gatekeeper may
+warn on first launch. The release workflow, version bumping, and signing
+instructions are in [`docs/RELEASING.md`](docs/RELEASING.md).
 
 ### Accounts and authentication
 
@@ -210,10 +237,12 @@ verification, sessions, preferences); administrators can read
 never reads `DATABASE_URL`; local execution remains independent of database
 availability.
 
-The home page hero is a three-layer CSS 3D composition: independently rotating
-outer and inner orbital planes, a stationary sphere and emblem, and labels
-outside the 3D transform so they stay readable. Reduced Motion stops the
-orbits; the terminal preview never rotates. See
+The home page hero is a real Three.js scene, lazy-loaded after the hero copy
+paints: a metal sphere with the KERNEXT emblem, four independently rotating
+orbital rings, travelling particles, and a fresnel atmosphere. It honours
+`prefers-reduced-motion`, pauses when off-screen or the tab is hidden, and falls
+back to a dependency-free static composition when WebGL is unavailable. See
+[`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) for the scene details, and
 [`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md),
 [`docs/DATABASE.md`](docs/DATABASE.md), and
 [`docs/BACKEND_ARCHITECTURE.md`](docs/BACKEND_ARCHITECTURE.md).
@@ -246,13 +275,21 @@ automatically for piped output, `NO_COLOR`, and `TERM=dumb`. Set
 `KERNEXT_VERSION` (or pass `-Version` on Windows) to install a different
 release.
 
-The `.github/workflows/release.yaml` workflow builds CLI archives for Linux
-(GNU and musl), Windows, and macOS (Apple Silicon and Intel), plus desktop
-bundles per platform, and attaches a SHA-256 checksum for every artifact. It
-creates only a **draft** GitHub Release, is triggered manually through
-`workflow_dispatch`, and never publishes or tags on its own. macOS and Windows
-installers expect matching archives; until a release is actually published,
-download from <https://github.com/Trishit6/terminal/releases> or
+Two workflows produce release artifacts:
+
+- `.github/workflows/desktop-release.yaml` is the public path. Pushing a
+  version tag (`v*`) or running it manually verifies the workspace, builds the
+  Windows, Linux, and macOS desktop installers, checks every SHA-256, and
+  publishes a GitHub Release marked Latest. See
+  [`docs/RELEASING.md`](docs/RELEASING.md).
+- `.github/workflows/release.yaml` builds CLI archives for Linux (GNU and musl),
+  Windows, and macOS (Apple Silicon and Intel), plus desktop bundles, and
+  attaches a SHA-256 checksum for every artifact. It creates only a **draft**
+  GitHub Release, is triggered manually through `workflow_dispatch`, and never
+  publishes or tags on its own.
+
+Until a release is published, download from
+<https://github.com/Trishit6/terminal/releases> or
 [build from source](#build-and-run).
 ### VFAT / `showexec` mount note
 
@@ -956,6 +993,10 @@ engine), `desktop:dev`, `desktop:build`, plus the short aliases `typecheck`,
 `build`, and `test`. `npm ci` installs both workspaces from
 `package-lock.json`.
 
+pnpm is supported as an alternative: `pnpm install --frozen-lockfile`, then the
+same root scripts (`pnpm run typecheck`, `pnpm test`, `pnpm run build`). Both
+lockfiles are tracked and must both stay valid when dependencies change.
+
 Focused test commands:
 
 ```sh
@@ -979,6 +1020,8 @@ installed on the host.
 CI (`.github/workflows/ci.yml`) runs fmt, clippy, and tests on Windows x64,
 Linux x64, and macOS (Apple Silicon and Intel), a web job (typecheck, Vitest,
 production build), and a desktop bundling job across the same operating systems.
+Releases are produced by `.github/workflows/desktop-release.yaml`
+(tag-triggered) and `.github/workflows/release.yaml` (manual draft).
 
 ### Further documentation
 
@@ -992,6 +1035,8 @@ production build), and a desktop bundling job across the same operating systems.
   CSRF, recovery, and terminal authorization.
 - [`docs/DESKTOP.md`](docs/DESKTOP.md) — desktop build, packaging, and MinGW
   manifest handling.
+- [`docs/RELEASING.md`](docs/RELEASING.md) — version bumping, tagging, release
+  workflow, checksum verification, and optional signing.
 - [`docs/SECURITY.md`](docs/SECURITY.md) — web terminal security model.
 - [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) — deploying the web server.
 - [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — common problems.
@@ -1042,6 +1087,13 @@ production build), and a desktop bundling job across the same operating systems.
   `lint`/`run`/`clean`/`doctor`/`version`/`help` project commands, a branded
   doctor report, npm workspaces with a committed `package-lock.json`, and
   npm-based CI and release workflows.
+- **Desktop distribution (Phase 8):** tag-triggered `desktop-release.yaml`
+  publishing Windows (MSI + NSIS), Linux (AppImage + deb), and macOS
+  (Apple Silicon + Intel dmg) installers with SHA-256 checksums; canonical
+  installer naming (`scripts/collect-bundles.mjs`); a tag/manifest version
+  guard (`scripts/check-release-version.mjs`); a package-manager-neutral Tauri
+  front-end build hook (`scripts/build-web.mjs`); and a live downloads page
+  backed by `GET /api/v1/releases/latest`.
 
 ## Roadmap
 
@@ -1070,8 +1122,10 @@ session caps, and idle cleanup, all documented in
 The native desktop application runs on Tauri 2 (`apps/desktop`) and reuses the
 web front end. It offers a multi-tab interactive terminal (engine or PTY
 modes), dashboard, command explorer, file explorer, sessions, settings, and
-about screens. Remaining work: interactive verification on Linux and macOS,
-macOS bundling on a macOS host, and desktop release automation.
+about screens. Installers for Windows, Linux, and macOS are built and published
+by `.github/workflows/desktop-release.yaml`. Remaining work: interactive
+verification on Linux and macOS hosts, and a first successful hosted run of the
+release workflow.
 
 ## License
 
